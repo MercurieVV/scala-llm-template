@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "scala-semantic": {
+      "command": "/Users/viktorskalinins/.local/bin/scalasemantic-mcp.sh",
+      "args": ["/Users/viktorskalinins/IdeaProjects/my/scala-llm-template"]
+    }
+  }
+}

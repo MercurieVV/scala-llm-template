@@ -520,6 +520,25 @@ object Setup:
         os.write(ciFile, ciContent)
         println("✓ Created GitHub CI workflow (.github/workflows/ci.yml)")
 
+    // Write project-local .agents/mcp_config.json if the launcher script exists
+    val localLauncher = os.home / ".local" / "bin" / "scalasemantic-mcp.sh"
+    if os.exists(localLauncher) then
+      val agentsDir = target / ".agents"
+      os.makeDir.all(agentsDir)
+      val mcpConfig = agentsDir / "mcp_config.json"
+      val configContent =
+        s"""{
+           |  "mcpServers": {
+           |    "scala-semantic": {
+           |      "command": "${localLauncher.toString}",
+           |      "args": ["${target.toString}"]
+           |    }
+           |  }
+           |}
+           |""".stripMargin
+      os.write.over(mcpConfig, configContent)
+      println("✓ Configured local scala-semantic MCP server (.agents/mcp_config.json)")
+
   def updateBuildSc(
     buildFile: os.Path,
     projectName: String,
