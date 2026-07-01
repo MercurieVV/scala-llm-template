@@ -88,23 +88,26 @@ object Setup:
     // 4. Setup Project Structure (folders, configs)
     setupStructure(targetDir, answers)
 
-    // 5. Create/Update Build Files based on selected Build Tool
+    // 5. Resolve dependencies dynamically once
     val selectedScalaVer = answers.getOrElse("scala-version", defaultScalaVersion)
+    val (resolvedDeps, resolvedTestDeps, resolvedPlugins) = getDependenciesAndPlugins(answers, selectedScalaVer)
+
+    // 6. Create/Update Build Files based on selected Build Tool
     val buildTool = answers.getOrElse("build-tool", "mill").toLowerCase
 
     if buildTool == "sbt" then
-      updateBuildSbt(targetDir / "build.sbt", projectName, selectedScalaVer, answers)
+      updateBuildSbt(targetDir / "build.sbt", projectName, selectedScalaVer, answers, resolvedDeps, resolvedTestDeps, resolvedPlugins)
     else
-      updateBuildSc(buildFile, projectName, selectedScalaVer, answers)
+      updateBuildSc(buildFile, projectName, selectedScalaVer, answers, resolvedDeps, resolvedTestDeps, resolvedPlugins)
 
     // Setup Scala CLI config if selected
     if answers.getOrElse("scripts", "none").toLowerCase == "scala-cli" then
-      updateScalaCli(targetDir / "project.scala", selectedScalaVer, answers)
+      updateScalaCli(targetDir / "project.scala", selectedScalaVer, resolvedDeps, resolvedTestDeps, resolvedPlugins)
     else
       val psc = targetDir / "project.scala"
       if os.exists(psc) then os.remove(psc)
 
-    // 6. Setup Git (Stage changes)
+    // 7. Setup Git (Stage changes)
     setupGit(targetDir)
 
     println(s"\n=== Setup Completed Successfully! ===")
@@ -150,7 +153,7 @@ object Setup:
           println("✓ Initialized fallback master rules locally.")
 
   def clippyFetch(url: String): String =
-    val p = os.proc("curl", "-fsSL", "--connect-timeout", "3", url).call()
+    val p = os.proc("curl", "-fsSL", "--connect-timeout", "3", url).call(stderr = os.Pipe)
     if p.exitCode == 0 then p.out.text()
     else throw new RuntimeException("Fetch failed")
 
@@ -223,12 +226,11 @@ object Setup:
       dep
 
   // Retrieve dependencies and plugins based on choices
-  def getDependenciesAndPlugins(answers: Map[String, String]): (List[String], List[String], List[String]) =
+  def getDependenciesAndPlugins(answers: Map[String, String], scalaVer: String): (List[String], List[String], List[String]) =
     var deps = List.empty[String]
     var testDeps = List.empty[String]
     var plugins = List.empty[String]
 
-    val scalaVer = answers.getOrElse("scala-version", defaultScalaVersion)
     val eco = answers.getOrElse("ecosystem", "typelevel").toLowerCase
     val isZIO = eco == "zio"
     val isTypelevel = eco == "typelevel"
@@ -386,7 +388,10 @@ object Setup:
     buildFile: os.Path,
     projectName: String,
     scalaVer: String,
-    answers: Map[String, String]
+    answers: Map[String, String],
+    deps: List[String],
+    testDeps: List[String],
+    plugins: List[String]
   ): Unit =
     val crossComp = answers.getOrElse("cross-version", "no").toLowerCase == "yes"
     
@@ -464,8 +469,6 @@ object Setup:
       else if content.contains("extends CrossScalaModule") then
         content = content.replace("extends CrossScalaModule {", "extends CrossScalaModule {\n  def scalacOptions = Seq(\"-Ysemanticdb\")")
 
-    val (deps, testDeps, plugins) = getDependenciesAndPlugins(answers)
-
     def addDepToContent(section: String, dep: String): Unit =
       val depPart = dep.split("::").head
       if !content.contains(depPart) then
@@ -484,7 +487,10 @@ object Setup:
     sbtFile: os.Path,
     projectName: String,
     scalaVer: String,
-    answers: Map[String, String]
+    answers: Map[String, String],
+    deps: List[String],
+    testDeps: List[String],
+    plugins: List[String]
   ): Unit =
     val crossComp = answers.getOrElse("cross-version", "no").toLowerCase == "yes"
     val scalaVersionsStr = if crossComp then s"""Seq("$scalaVer", "2.13.12")""" else s"""Seq("$scalaVer")"""
@@ -522,7 +528,6 @@ object Setup:
       if os.exists(buildSc) then os.remove(buildSc)
 
     var content = os.read(sbtFile)
-    val (deps, testDeps, plugins) = getDependenciesAndPlugins(answers)
 
     def addDepToSbt(section: String, dep: String): Unit =
       val depPart = dep.split("::").head
@@ -572,9 +577,10 @@ object Setup:
   def updateScalaCli(
     projectFile: os.Path,
     scalaVer: String,
-    answers: Map[String, String]
+    deps: List[String],
+    testDeps: List[String],
+    plugins: List[String]
   ): Unit =
-    val (deps, testDeps, plugins) = getDependenciesAndPlugins(answers)
     var lines = List(
       s"//> using scala $scalaVer",
       "//> using options -Ysemanticdb"
