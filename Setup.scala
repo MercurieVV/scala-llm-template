@@ -16,7 +16,7 @@ case class Feature(
 object Setup:
   val rulesDir = os.home / ".config" / "llm-rules"
   val masterRulesFile = rulesDir / "scala-rules.md"
-  val githubRulesUrl = "https://raw.githubusercontent.com/your-username/my-scala-rules/main/scala-rules.md"
+  val githubRulesUrl = "https://raw.githubusercontent.com/MercurieVV/scala-llm-template/master/scala-rules.md"
 
   // Defined and grouped features
   val featuresList = List(
