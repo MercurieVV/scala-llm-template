@@ -24,33 +24,33 @@ object Setup:
     // 1. Language & Compiler Core
     Feature("scala-version", "Core", "Scala Version", "Enter Scala version", defaultScalaVersion),
     Feature("cross-version", "Core", "Cross Version Compilation", "Enable cross version compilation? (yes/no)", "no"),
-    Feature("build-tool", "Core", "Build Tool", "Primary build tool (mill/sbt)", "mill"),
-    Feature("scripts", "Core", "Scripting Tool", "Scripting wrapper (scala-cli/none)", "scala-cli"),
-    Feature("github-flow", "Core", "GitHub Flow Integration", "Enable GitHub Flow (CI Workflow)? (yes/no)", "yes"),
+    Feature("build-tool", "Core", "Build Tool", "Primary build tool (mill/sbt/scala-cli)", "mill"),
+    Feature("scripts", "Core", "Scripting Tool", "Scripting wrapper (scala-cli/none)", "none"),
+    Feature("github-flow", "Core", "GitHub Flow Integration", "Enable GitHub Flow (CI Workflow)? (yes/no)", "no"),
 
     // 2. Ecosystem & Frameworks
-    Feature("ecosystem", "Ecosystem", "Primary Ecosystem", "Ecosystem (typelevel, zio, none)", "typelevel"),
+    Feature("ecosystem", "Ecosystem", "Primary Ecosystem", "Ecosystem (typelevel, zio, none)", "none"),
     Feature("web-server", "Ecosystem", "Web Server", "Enable Web Server? (yes/no)", "no"),
     Feature("web-client", "Ecosystem", "Web Client", "Enable Web Client? (yes/no)", "no"),
     Feature("db-access", "Ecosystem", "Database Access", "Enable Database Access? (yes/no)", "no"),
     Feature("serverless-run", "Ecosystem", "Serverless Deployment", "Enable Serverless run? (yes/no)", "no"),
 
     // 3. Verification & Quality Assurance
-    Feature("test-tools", "Quality Assurance", "Testing Framework", "Test tools (munit+shapeless, zio-test, none)", "munit+shapeless"),
-    Feature("stainless", "Quality Assurance", "Stainless Verification", "Enable Stainless formal verification? (yes/no)", "yes"),
-    Feature("stryker", "Quality Assurance", "Stryker Mutation Testing", "Enable Stryker mutation testing? (yes/no)", "yes"),
+    Feature("test-tools", "Quality Assurance", "Testing Framework", "Test tools (munit+shapeless, zio-test, none)", "none"),
+    Feature("stainless", "Quality Assurance", "Stainless Verification", "Enable Stainless formal verification? (yes/no)", "no"),
+    Feature("stryker", "Quality Assurance", "Stryker Mutation Testing", "Enable Stryker mutation testing? (yes/no)", "no"),
     Feature("performance-testing", "Quality Assurance", "JMH Performance Testing", "Enable JMH performance testing? (yes/no)", "no"),
 
     // 4. Proposed Utilities (Additions)
     Feature("formatting", "Developer Tooling", "Scalafmt Formatting", "Enable Scalafmt configuration? (yes/no)", "yes"),
-    Feature("linting", "Developer Tooling", "Scalafix Linter", "Enable Scalafix? (yes/no)", "yes"),
+    Feature("linting", "Developer Tooling", "Scalafix Linter", "Enable Scalafix? (yes/no)", "no"),
     Feature("optics", "Data Utilities", "Monocle Optics", "Enable Monocle (lenses/optics for immutable structures)? (yes/no)", "no"),
     Feature("dto-mapping", "Data Utilities", "Chimney DTO Mapping", "Enable Chimney (type-safe data transformation)? (yes/no)", "no"),
     Feature("api-docs", "Ecosystem", "Tapir API Documentation", "Enable Tapir (declarative endpoints)? (yes/no)", "no")
   )
 
   def main(args: Array[String]): Unit =
-    println("=== Scala Project Setup & Update (Mill/SBT + Global Rules) ===")
+    println("=== Scala Project Setup & Update (Mill/SBT/Scala-CLI + Global Rules) ===")
 
     // Determine target directory
     val targetDir = args.headOption match
@@ -62,7 +62,9 @@ object Setup:
 
     val projectName = targetDir.last
     val buildFile = targetDir / "build.sc"
-    val isExisting = os.exists(buildFile) || os.exists(targetDir / "build.sbt")
+    val buildSbtFile = targetDir / "build.sbt"
+    val projectScalaFile = targetDir / "project.scala"
+    val isExisting = os.exists(buildFile) || os.exists(buildSbtFile) || os.exists(projectScalaFile)
 
     if isExisting then
       println(s"Found existing project in $targetDir. Switching to update mode.")
@@ -98,11 +100,23 @@ object Setup:
 
     if buildTool == "sbt" then
       updateBuildSbt(targetDir / "build.sbt", projectName, selectedScalaVer, answers, resolvedDeps, resolvedTestDeps, resolvedPlugins)
+      val buildSc = targetDir / "build.sc"
+      if os.exists(buildSc) then os.remove(buildSc)
+    else if buildTool == "scala-cli" then
+      updateScalaCli(targetDir / "project.scala", selectedScalaVer, resolvedDeps, resolvedTestDeps, resolvedPlugins)
+      val buildSc = targetDir / "build.sc"
+      if os.exists(buildSc) then os.remove(buildSc)
+      val buildSbt = targetDir / "build.sbt"
+      if os.exists(buildSbt) then os.remove(buildSbt)
     else
+      // mill
       updateBuildSc(buildFile, projectName, selectedScalaVer, answers, resolvedDeps, resolvedTestDeps, resolvedPlugins)
+      val buildSbt = targetDir / "build.sbt"
+      if os.exists(buildSbt) then os.remove(buildSbt)
 
-    // Setup Scala CLI config if selected
-    if answers.getOrElse("scripts", "none").toLowerCase == "scala-cli" then
+    // Setup Scala CLI config if selected separately
+    val hasScalaCli = answers.getOrElse("scripts", "none").toLowerCase == "scala-cli" || buildTool == "scala-cli"
+    if hasScalaCli then
       updateScalaCli(targetDir / "project.scala", selectedScalaVer, resolvedDeps, resolvedTestDeps, resolvedPlugins)
     else
       val psc = targetDir / "project.scala"
@@ -120,6 +134,8 @@ object Setup:
     println("\nNo symlinks or rule files were created inside the project folder.")
     if buildTool == "sbt" then
       println("Run 'sbt test' to verify and compile.")
+    else if buildTool == "scala-cli" then
+      println("Run 'scala-cli test .' to verify and compile.")
     else
       println("Run 'mill app.test' to verify and compile.")
 
@@ -192,7 +208,10 @@ object Setup:
       val detectedDefault = f.id match
         // 1. Build Tool
         case "build-tool" =>
-          if os.exists(buildSbtFile) then "sbt" else "mill"
+          if os.exists(buildScFile) then "mill"
+          else if os.exists(buildSbtFile) then "sbt"
+          else if os.exists(projectScalaFile) then "scala-cli"
+          else "mill"
           
         // 2. Scala Version
         case "scala-version" =>
@@ -210,7 +229,13 @@ object Setup:
 
         // 4. Scripting Tool
         case "scripts" =>
-          if os.exists(projectScalaFile) then "scala-cli" else "none"
+          if os.exists(projectScalaFile) && !os.exists(buildScFile) && !os.exists(buildSbtFile) then
+            // If it's scala-cli build tool, scripts is none
+            "none"
+          else if os.exists(projectScalaFile) then
+            "scala-cli"
+          else
+            "none"
 
         // 5. GitHub Flow
         case "github-flow" =>
@@ -470,7 +495,9 @@ object Setup:
       val ciFile = workflowDir / "ci.yml"
       if !os.exists(ciFile) then
         val buildTool = answers.getOrElse("build-tool", "mill").toLowerCase
-        val testCmd = if buildTool == "sbt" then "sbt test" else "mill app.test"
+        val testCmd = if buildTool == "sbt" then "sbt test"
+                      else if buildTool == "scala-cli" then "scala-cli test ."
+                      else "mill app.test"
         val ciContent = s"""name: CI
                            |on:
                            |  push:
