@@ -82,8 +82,9 @@ object Setup:
     // 2. Fetch/Update Master Rules in the SHARED folder
     updateMasterRules()
 
-    // 3. Q&A Loop for Features (Grouped output)
-    val answers = promptFeaturesGrouped(getFeaturesList)
+    // 3. Q&A Loop for Features (Grouped output, with detected defaults)
+    val featuresToPrompt = detectExistingDefaults(targetDir, getFeaturesList)
+    val answers = promptFeaturesGrouped(featuresToPrompt)
 
     // 4. Setup Project Structure (folders, configs)
     setupStructure(targetDir, answers)
@@ -176,6 +177,117 @@ object Setup:
     }
     answers
 
+  def detectExistingDefaults(target: os.Path, features: List[Feature]): List[Feature] =
+    val buildScFile = target / "build.sc"
+    val buildSbtFile = target / "build.sbt"
+    val projectScalaFile = target / "project.scala"
+    
+    val buildScContent = if os.exists(buildScFile) then os.read(buildScFile) else ""
+    val buildSbtContent = if os.exists(buildSbtFile) then os.read(buildSbtFile) else ""
+    val projectScalaContent = if os.exists(projectScalaFile) then os.read(projectScalaFile) else ""
+    
+    val combinedBuildContent = buildScContent + "\n" + buildSbtContent + "\n" + projectScalaContent
+
+    features.map { f =>
+      val detectedDefault = f.id match
+        // 1. Build Tool
+        case "build-tool" =>
+          if os.exists(buildSbtFile) then "sbt" else "mill"
+          
+        // 2. Scala Version
+        case "scala-version" =>
+          val scalaVerRegex = """(?:def\s+scalaVersion\s*=\s*"|scalaVersion\s*:=\s*")([^"]+)"""".r
+          scalaVerRegex.findFirstMatchIn(combinedBuildContent) match
+            case Some(m) => m.group(1)
+            case None => f.defaultValue
+
+        // 3. Cross Version Compilation
+        case "cross-version" =>
+          val hasCross = combinedBuildContent.contains("CrossScalaModule") || 
+                         combinedBuildContent.contains("crossScalaVersions") ||
+                         combinedBuildContent.contains("Cross[AppModule]")
+          if hasCross then "yes" else "no"
+
+        // 4. Scripting Tool
+        case "scripts" =>
+          if os.exists(projectScalaFile) then "scala-cli" else "none"
+
+        // 5. GitHub Flow
+        case "github-flow" =>
+          if os.exists(target / ".github" / "workflows" / "ci.yml") then "yes" else "no"
+
+        // 6. Ecosystem
+        case "ecosystem" =>
+          if combinedBuildContent.contains("cats-core") then "typelevel"
+          else if combinedBuildContent.contains("zio") then "zio"
+          else "none"
+
+        // 7. Web Server
+        case "web-server" =>
+          val hasWebServer = combinedBuildContent.contains("http4s-ember-server") || 
+                             combinedBuildContent.contains("zio-http")
+          if hasWebServer then "yes" else "no"
+
+        // 8. Web Client
+        case "web-client" =>
+          val hasWebClient = combinedBuildContent.contains("http4s-ember-client") || 
+                             combinedBuildContent.contains("sttp.client")
+          if hasWebClient then "yes" else "no"
+
+        // 9. Database Access
+        case "db-access" =>
+          val hasDb = combinedBuildContent.contains("doobie") || 
+                      combinedBuildContent.contains("quill-jdbc") || 
+                      combinedBuildContent.contains("postgresql")
+          if hasDb then "yes" else "no"
+
+        // 10. Serverless
+        case "serverless-run" =>
+          if combinedBuildContent.contains("aws-lambda-java-core") then "yes" else "no"
+
+        // 11. Testing Framework
+        case "test-tools" =>
+          if combinedBuildContent.contains("munit") then "munit+shapeless"
+          else if combinedBuildContent.contains("zio-test") then "zio-test"
+          else "none"
+
+        // 12. Stainless
+        case "stainless" =>
+          if combinedBuildContent.contains("stainless-compiler-plugin") then "yes" else "no"
+
+        // 13. Stryker
+        case "stryker" =>
+          if os.exists(target / "stryker4s.conf") then "yes" else "no"
+
+        // 14. JMH Performance Testing
+        case "performance-testing" =>
+          if combinedBuildContent.contains("jmh-core") then "yes" else "no"
+
+        // 15. Formatting
+        case "formatting" =>
+          if os.exists(target / ".scalafmt.conf") then "yes" else "no"
+
+        // 16. Linting
+        case "linting" =>
+          if os.exists(target / ".scalafix.conf") then "yes" else "no"
+
+        // 17. Optics (Monocle)
+        case "optics" =>
+          if combinedBuildContent.contains("monocle-core") then "yes" else "no"
+
+        // 18. DTO Mapping (Chimney)
+        case "dto-mapping" =>
+          if combinedBuildContent.contains("chimney") then "yes" else "no"
+
+        // 19. API Docs (Tapir)
+        case "api-docs" =>
+          if combinedBuildContent.contains("tapir-core") then "yes" else "no"
+
+        case _ => f.defaultValue
+
+      f.copy(defaultValue = detectedDefault)
+    }
+
   def fetchLatestStableVersion(group: String, artifact: String): Option[String] =
     val groupPath = group.replace('.', '/')
     val url = s"https://repo1.maven.org/maven2/$groupPath/$artifact/maven-metadata.xml"
@@ -184,10 +296,7 @@ object Setup:
       val versionRegex = """<version>([^<]+)</version>""".r
       val versions = versionRegex.findAllMatchIn(xml).map(_.group(1)).toList
       val stableVersions = versions.filter { v =>
-        val vl = v.toLowerCase
-        !vl.contains("-rc") && !vl.contains("-m") && !vl.contains("-alpha") && 
-        !vl.contains("-beta") && !vl.contains("nightly") && !vl.contains("bin") && 
-        !vl.contains("snapshot")
+        v.matches("^[0-9]+(\\.[0-9]+)*$")
       }
       if stableVersions.nonEmpty then Some(stableVersions.last)
       else
