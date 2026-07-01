@@ -112,3 +112,9 @@ hs_err_pid*
 project/metals.sbt
 
 /scala-llm-template.iml
+/.scala-build/scala-llm-template_1e7b4b816a-57f5925c95/classes/main/Feature.tasty
+/.scala-build/scala-llm-template_1e7b4b816a-57f5925c95/classes/main/Setup.tasty
+/.scala-build/ide-envs.json
+/.scala-build/ide-inputs.json
+/.scala-build/ide-launcher-options.json
+/.scala-build/ide-options-v2.json
