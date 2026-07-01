@@ -164,7 +164,8 @@ object Setup:
       grouped.get(groupName).foreach { list =>
         println(s"\n--- $groupName Options ---")
         list.foreach { f =>
-          val response = readLine(s"  ${f.name} [${f.prompt}] (default: ${f.defaultValue}): ").trim
+          val rawInput = readLine(s"  ${f.name} [${f.prompt}] (default: ${f.defaultValue}): ")
+          val response = if rawInput == null then "" else rawInput.trim
           val finalVal = if response.isEmpty then f.defaultValue else response
           answers = answers + (f.id -> finalVal)
         }
