@@ -29,7 +29,7 @@ The project is generated and updated dynamically using an interactive Scala CLI 
     ```
 *   **Run command (internet remote):**
     ```bash
-    scala-cli run https://raw.githubusercontent.com/your-username/my-scala-rules/main/Setup.scala -- .
+    scala-cli run https://raw.githubusercontent.com/MercurieVV/scala-llm-template/master/Setup.scala -- .
     ```
 
 ### Idempotent Updates:
