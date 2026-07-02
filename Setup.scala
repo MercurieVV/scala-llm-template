@@ -588,7 +588,7 @@ object Setup:
          |
          |object app extends Cross[AppModule](scala3, scala213)
          |trait AppModule extends CrossScalaModule {
-         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe")
+         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe", "-Werror")
          |  def ivyDeps = Agg(
          |    // [dependencies-start]
          |    // [dependencies-end]
@@ -613,7 +613,7 @@ object Setup:
          |
          |object app extends ScalaModule {
          |  def scalaVersion = "$scalaVer"
-         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe")
+         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe", "-Werror")
          |  def ivyDeps = Agg(
          |    // [dependencies-start]
          |    // [dependencies-end]
@@ -650,10 +650,15 @@ object Setup:
 
     if !content.contains("scalacOptions") then
       if content.contains("extends ScalaModule") then
-        content = content.replace("extends ScalaModule {", "extends ScalaModule {\n  def scalacOptions = Seq(\"-Ysemanticdb\", \"-P:wartremover:traverser:org.wartremover.warts.Unsafe\")")
+        content = content.replace("extends ScalaModule {", "extends ScalaModule {\n  def scalacOptions = Seq(\"-Ysemanticdb\", \"-P:wartremover:traverser:org.wartremover.warts.Unsafe\", \"-Werror\")")
       else if content.contains("extends CrossScalaModule") then
-        content = content.replace("extends CrossScalaModule {", "extends CrossScalaModule {\n  def scalacOptions = Seq(\"-Ysemanticdb\", \"-P:wartremover:traverser:org.wartremover.warts.Unsafe\")")
-    else if !content.contains("wartremover") then
+        content = content.replace("extends CrossScalaModule {", "extends CrossScalaModule {\n  def scalacOptions = Seq(\"-Ysemanticdb\", \"-P:wartremover:traverser:org.wartremover.warts.Unsafe\", \"-Werror\")")
+    else if !content.contains("-Werror") then
+      if content.contains("traverser:org.wartremover.warts.Unsafe") then
+        content = content.replace("Seq(\"-Ysemanticdb\", \"-P:wartremover:traverser:org.wartremover.warts.Unsafe\")", "Seq(\"-Ysemanticdb\", \"-P:wartremover:traverser:org.wartremover.warts.Unsafe\", \"-Werror\")")
+      else
+        content = content.replace("Seq(\"-Ysemanticdb\")", "Seq(\"-Ysemanticdb\", \"-Werror\")")
+    if !content.contains("wartremover") then
       content = content.replace("Seq(\"-Ysemanticdb\")", "Seq(\"-Ysemanticdb\", \"-P:wartremover:traverser:org.wartremover.warts.Unsafe\")")
 
     def addDepToContent(section: String, dep: String): Unit =
@@ -689,7 +694,7 @@ object Setup:
          |scalaVersion := "$scalaVer"
          |crossScalaVersions := $scalaVersionsStr
          |
-         |scalacOptions ++= Seq("-Ysemanticdb")
+         |scalacOptions ++= Seq("-Ysemanticdb", "-Werror")
          |
          |wartremoverErrors ++= Warts.unsafe
          |
@@ -720,6 +725,9 @@ object Setup:
 
     if !content.contains("wartremoverErrors") then
       content = content.replace("scalacOptions ++= Seq(\"-Ysemanticdb\")", "scalacOptions ++= Seq(\"-Ysemanticdb\")\n\nwartremoverErrors ++= Warts.unsafe")
+
+    if !content.contains("-Werror") then
+      content = content.replace("scalacOptions ++= Seq(\"-Ysemanticdb\")", "scalacOptions ++= Seq(\"-Ysemanticdb\", \"-Werror\")")
 
     def addDepToSbt(section: String, dep: String): Unit =
       val depPart = dep.split("::").head
@@ -794,6 +802,7 @@ object Setup:
       s"//> using scala $scalaVer",
       "//> using options -Ysemanticdb",
       "//> using options -P:wartremover:traverser:org.wartremover.warts.Unsafe",
+      "// //> using options -Werror",
       "//> using exclude Setup.scala"
     )
 
