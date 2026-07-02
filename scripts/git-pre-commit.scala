@@ -7,22 +7,17 @@ import os._
 
 object GitPreCommit:
   def main(args: Array[String]): Unit =
-    val repoRoot = os.Path(
-      os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim
-    )
+    val repoRoot = os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
 
-    val buildTool =
-      if os.exists(repoRoot / "build.sbt") then "sbt"
-      else if os.exists(repoRoot / "build.sc") then "mill"
-      else "scala-cli"
+    val buildTool = if os.exists(repoRoot / "build.sbt") then "sbt"
+                    else if os.exists(repoRoot / "build.sc") then "mill"
+                    else "scala-cli"
 
     val hasScalafmt = os.exists(repoRoot / ".scalafmt.conf")
-    val hasScalafix = false // os.exists(repoRoot / ".scalafix.conf")
+    val hasScalafix = os.exists(repoRoot / ".scalafix.conf")
 
     if !hasScalafmt && !hasScalafix then
-      println(
-        "No formatting or linting configuration found. Pre-commit check skipped."
-      )
+      println("No formatting or linting configuration found. Pre-commit check skipped.")
       sys.exit(0)
 
     println("=== Git Pre-Commit Quality Checks ===")
@@ -31,54 +26,38 @@ object GitPreCommit:
       println("Checking code formatting (Scalafmt)...")
       val fmtExit = buildTool match
         case "sbt" =>
-          os.proc("sbt", "scalafmtCheckAll")
-            .call(cwd = repoRoot, check = false)
-            .exitCode
+          os.proc("sbt", "scalafmtCheckAll").call(cwd = repoRoot, check = false).exitCode
         case "scala-cli" =>
-          os.proc("scala-cli", "fmt", "--check", ".")
-            .call(cwd = repoRoot, check = false)
-            .exitCode
+          os.proc("scala-cli", "fmt", "--check", ".").call(cwd = repoRoot, check = false).exitCode
         case "mill" =>
-          os.proc(
-            "mill",
-            "mill.scalalib.scalafmt.ScalafmtModule/checkFormatAll"
-          ).call(cwd = repoRoot, check = false)
-            .exitCode
+          os.proc("mill", "mill.scalalib.scalafmt.ScalafmtModule/checkFormatAll").call(cwd = repoRoot, check = false).exitCode
 
       if fmtExit != 0 then
         println("\n[ERROR] Code formatting check failed!")
         println("Please run the formatting tool to fix it:")
         buildTool match
-          case "sbt"       => println("  sbt scalafmtAll")
+          case "sbt" => println("  sbt scalafmtAll")
           case "scala-cli" => println("  scala-cli fmt .")
-          case "mill"      =>
-            println("  mill mill.scalalib.scalafmt.ScalafmtModule/reformatAll")
+          case "mill" => println("  mill mill.scalalib.scalafmt.ScalafmtModule/reformatAll")
         sys.exit(1)
 
     if hasScalafix then
       println("Checking code linting (Scalafix)...")
       val lintExit = buildTool match
         case "sbt" =>
-          os.proc("sbt", "scalafixAll --check")
-            .call(cwd = repoRoot, check = false)
-            .exitCode
+          os.proc("sbt", "scalafixAll --check").call(cwd = repoRoot, check = false).exitCode
         case "scala-cli" =>
-          os.proc("scala-cli", "--power", "scalafix", "--check", ".")
-            .call(cwd = repoRoot, check = false)
-            .exitCode
+          os.proc("scala-cli", "--power", "scalafix", "--check", ".").call(cwd = repoRoot, check = false).exitCode
         case "mill" =>
-          os.proc("mill", "mill.scalalib.contrib.ScalafixModule/fix", "--check")
-            .call(cwd = repoRoot, check = false)
-            .exitCode
+          os.proc("mill", "mill.scalalib.contrib.ScalafixModule/fix", "--check").call(cwd = repoRoot, check = false).exitCode
 
       if lintExit != 0 then
         println("\n[ERROR] Code linting check failed!")
         println("Please run linting to fix it:")
         buildTool match
-          case "sbt"       => println("  sbt scalafixAll")
+          case "sbt" => println("  sbt scalafixAll")
           case "scala-cli" => println("  scala-cli --power scalafix .")
-          case "mill"      =>
-            println("  mill mill.scalalib.contrib.ScalafixModule/fix")
+          case "mill" => println("  mill mill.scalalib.contrib.ScalafixModule/fix")
         sys.exit(1)
 
     println("✓ All pre-commit checks passed successfully!")

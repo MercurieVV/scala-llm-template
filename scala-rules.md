@@ -10,7 +10,7 @@ You are acting as an expert Scala engineer. When writing, refactoring, or review
 * **Consequences**: Avoid mutable state (`var`), handle all side effects explicitly, never return or use `null`, and represent errors explicitly using type-safe structures like `Either`, `Try`, or monadic effects.
 
 ## 3. Scala 3 Features
-* Feel free to use advanced Scala 3 features: `given`/`using` for implicits, `enum` for ADTs, extension methods, type lambdas, and union/intersection , opaque types.
+* Feel free to use advanced Scala 3 features: `given`/`using` for implicits, `enum` for ADTs, extension methods, type lambdas, and union/intersection types.
 
 ## 4. Standard Library Concurrency & IO
 * Use standard library concurrency primitives, prefer `scala.concurrent.Future` or pure state transitions.

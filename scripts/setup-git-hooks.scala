@@ -1,0 +1,581 @@
+#!/usr/bin/env scala-cli
+
+//> using scala 3.3.4
+//> using dep com.lihaoyi::os-lib:0.11.8
+//> using dep com.lihaoyi::ujson:3.1.4
+
+import os._
+
+object SetupGitHooks:
+  def main(args: Array[String]): Unit =
+    val repoRoot = os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
+    val configPath = repoRoot / ".agents" / "setup_config.json"
+    
+    val answers = if os.exists(configPath) then
+      try
+        ujson.read(os.read(configPath)).obj.map((k, v) => k -> v.str).toMap
+      catch
+        case _: Exception => Map.empty[String, String]
+    else
+      Map.empty[String, String]
+
+    val scriptsDir = repoRoot / "scripts"
+    os.makeDir.all(scriptsDir)
+
+    // 1. Write worktree scripts (always enabled)
+    setupWorktreeScripts(scriptsDir)
+
+    // 2. Setup/Remove LLM Interaction Hook
+    setupInteractionHook(scriptsDir, answers)
+
+    // 3. Setup/Remove Version Bump script
+    setupVersionBump(scriptsDir, answers)
+
+    // 4. Setup Git Hooks (pre-commit and pre-push)
+    setupHooks(repoRoot, scriptsDir, answers)
+
+  def setupWorktreeScripts(scriptsDir: os.Path): Unit =
+    val oldStart = scriptsDir / "worktree-start.sh"
+    if os.exists(oldStart) then os.remove(oldStart)
+    val oldFinish = scriptsDir / "worktree-finish.sh"
+    if os.exists(oldFinish) then os.remove(oldFinish)
+
+    val wtStartScript = scriptsDir / "worktree-start.scala"
+    val wtStartContent =
+      """#!/usr/bin/env scala-cli
+        |
+        |//> using scala 3.3.4
+        |//> using dep com.lihaoyi::os-lib:0.11.8
+        |
+        |import os._
+        |
+        |object WorktreeStart:
+        |  def main(args: Array[String]): Unit =
+        |    if args.isEmpty then
+        |      println("Error: task branch name required")
+        |      sys.exit(1)
+        |
+        |    val branch = args.head
+        |    val repoRoot = os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
+        |    
+        |    // Detect default branch
+        |    val base = try {
+        |      val raw = os.proc("git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD").call(cwd = repoRoot).out.text().trim
+        |      raw.stripPrefix("origin/")
+        |    } catch {
+        |      case _: Exception => "main"
+        |    }
+        |
+        |    val finalBase = if os.proc("git", "show-ref", "--verify", "--quiet", s"refs/heads/$base").call(cwd = repoRoot, check = false).exitCode == 0 then
+        |      base
+        |    else if os.proc("git", "show-ref", "--verify", "--quiet", "refs/heads/master").call(cwd = repoRoot, check = false).exitCode == 0 then
+        |      "master"
+        |    else
+        |      "main"
+        |
+        |    val wt = repoRoot / ".worktrees" / branch
+        |
+        |    if os.exists(wt) then
+        |      println(s"Error: Worktree directory already exists: $wt")
+        |      sys.exit(1)
+        |
+        |    println("Fetching latest changes from origin...")
+        |    try {
+        |      os.proc("git", "fetch", "origin", finalBase, "--quiet").call(cwd = repoRoot)
+        |    } catch {
+        |      case _: Exception => // ignore fetch failures
+        |    }
+        |
+        |    println(s"Creating branch '$branch' off '$finalBase'...")
+        |    val branchCreated = os.proc("git", "branch", branch, s"origin/$finalBase").call(cwd = repoRoot, check = false).exitCode == 0 ||
+        |                        os.proc("git", "branch", branch, finalBase).call(cwd = repoRoot, check = false).exitCode == 0
+        |
+        |    println(s"Adding git worktree at '$wt'...")
+        |    val wtAdded = os.proc("git", "worktree", "add", "-b", branch, wt.toString, finalBase).call(cwd = repoRoot, check = false).exitCode == 0 ||
+        |                  os.proc("git", "worktree", "add", wt.toString, branch).call(cwd = repoRoot, check = false).exitCode == 0
+        |
+        |    if !wtAdded then
+        |      println("Error: Failed to add git worktree")
+        |      sys.exit(1)
+        |
+        |    // Copy untracked config/rules files
+        |    println("Syncing workspace rules and config files to worktree...")
+        |    os.makeDir.all(wt / ".agents")
+        |    val filesToCopy = Seq(
+        |      Path(".agents/mcp_config.json", repoRoot),
+        |      Path(".agents/AGENTS.md", repoRoot),
+        |      Path(".cursorrules", repoRoot),
+        |      Path("scala-rules.md", repoRoot)
+        |    )
+        |
+        |    for f <- filesToCopy if os.exists(f) do
+        |      val relative = f.relativeTo(repoRoot)
+        |      val dest = wt / relative
+        |      os.makeDir.all(dest / os.up)
+        |      os.copy.over(f, dest)
+        |
+        |    println("========================================================================")
+        |    println("Worktree created successfully!")
+        |    println(s"  Path: $wt")
+        |    println(s"  Branch: $branch")
+        |    println("")
+        |    println("To switch to your new worktree, run:")
+        |    println(s"  cd $wt")
+        |    println("========================================================================")
+        |""".stripMargin
+    os.write.over(wtStartScript, wtStartContent)
+    try { os.perms.set(wtStartScript, "rwxr-xr-x") } catch { case _: Exception => }
+    println("✓ Created worktree start script (scripts/worktree-start.scala)")
+
+    val wtFinishScript = scriptsDir / "worktree-finish.scala"
+    val wtFinishContent =
+      """#!/usr/bin/env scala-cli
+        |
+        |//> using scala 3.3.4
+        |//> using dep com.lihaoyi::os-lib:0.11.8
+        |
+        |import os._
+        |
+        |object WorktreeFinish:
+        |  def main(args: Array[String]): Unit =
+        |    val currentDir = os.pwd
+        |    val repoRoot = try {
+        |      os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
+        |    } catch {
+        |      case _: Exception =>
+        |        println("Error: Not inside a git repository")
+        |        sys.exit(1)
+        |    }
+        |
+        |    var branch = ""
+        |    var wtDir: os.Path = os.Path("/")
+        |    var mainRepo: os.Path = os.Path("/")
+        |    val wtPattern = "\\\\.worktrees/([^/]+)".r
+        |
+        |    val currentDirStr = currentDir.toString
+        |    wtPattern.findFirstMatchIn(currentDirStr) match
+        |      case Some(m) =>
+        |        branch = m.group(1)
+        |        wtDir = repoRoot
+        |        val idx = currentDirStr.indexOf("/.worktrees/")
+        |        mainRepo = os.Path(currentDirStr.substring(0, idx))
+        |      case None =>
+        |        if args.isEmpty then
+        |          println("Error: Not in a worktree. Please provide the branch name as an argument.")
+        |          sys.exit(1)
+        |        branch = args.head
+        |        mainRepo = repoRoot
+        |        wtDir = mainRepo / ".worktrees" / branch
+        |
+        |    if !os.exists(wtDir) then
+        |      println(s"Error: Worktree directory not found at $wtDir")
+        |      sys.exit(1)
+        |
+        |    val message = if args.length > 1 then args(1) else s"$branch: automated implementation"
+        |
+        |    // Check for changes in worktree
+        |    val isClean = os.proc("git", "status", "--porcelain").call(cwd = wtDir).out.text().trim.isEmpty
+        |    if !isClean then
+        |      println("Committing changes in worktree...")
+        |      os.proc("git", "add", ".").call(cwd = wtDir)
+        |      os.proc("git", "commit", "-m", message).call(cwd = wtDir)
+        |
+        |    // Detect default branch
+        |    val base = try {
+        |      val raw = os.proc("git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD").call(cwd = mainRepo).out.text().trim
+        |      raw.stripPrefix("origin/")
+        |    } catch {
+        |      case _: Exception => "main"
+        |    }
+        |
+        |    val finalBase = if os.proc("git", "show-ref", "--verify", "--quiet", s"refs/heads/$base").call(cwd = mainRepo, check = false).exitCode == 0 then
+        |      base
+        |    else if os.proc("git", "show-ref", "--verify", "--quiet", "refs/heads/master").call(cwd = mainRepo, check = false).exitCode == 0 then
+        |      "master"
+        |    else
+        |      "main"
+        |
+        |    println(s"Merging branch '$branch' into '$finalBase'...")
+        |    os.proc("git", "checkout", finalBase).call(cwd = mainRepo)
+        |    os.proc("git", "merge", branch, "--no-ff", "-m", s"Merge branch '$branch' into $finalBase").call(cwd = mainRepo)
+        |
+        |    println(s"Removing worktree at '$wtDir'...")
+        |    try {
+        |      os.proc("git", "worktree", "remove", "--force", wtDir.toString).call(cwd = mainRepo)
+        |    } catch {
+        |      case _: Exception => // ignore if already gone
+        |    }
+        |
+        |    println(s"Deleting branch '$branch'...")
+        |    val branchDeleted = os.proc("git", "branch", "-d", branch).call(cwd = mainRepo, check = false).exitCode == 0 ||
+        |                        os.proc("git", "branch", "-D", branch).call(cwd = mainRepo, check = false).exitCode == 0
+        |
+        |    println("========================================================================")
+        |    println("Worktree cleaned up successfully!")
+        |    println(s"  Merged branch: $branch into $finalBase")
+        |    println(s"  Returned to: $mainRepo (branch: $finalBase)")
+        |    println("")
+        |    println("To return your shell to the main repository, run:")
+        |    println(s"  cd $mainRepo")
+        |    println("========================================================================")
+        |""".stripMargin
+    os.write.over(wtFinishScript, wtFinishContent)
+    try { os.perms.set(wtFinishScript, "rwxr-xr-x") } catch { case _: Exception => }
+    println("✓ Created worktree finish script (scripts/worktree-finish.scala)")
+
+  def setupInteractionHook(scriptsDir: os.Path, answers: Map[String, String]): Unit =
+    val hasInteractionHook = answers.getOrElse("interaction-hook", "no").toLowerCase.startsWith("y")
+    val oldLogScript = scriptsDir / "log-scala-interaction.py"
+    if os.exists(oldLogScript) then os.remove(oldLogScript)
+
+    val logScript = scriptsDir / "log-scala-interaction.scala"
+    if hasInteractionHook then
+      val scriptContent =
+        """#!/usr/bin/env scala-cli
+          |
+          |//> using scala 3.3.4
+          |//> using dep com.lihaoyi::upickle:4.4.3
+          |//> using dep com.lihaoyi::os-lib:0.11.8
+          |
+          |import java.io.BufferedReader
+          |import java.io.InputStreamReader
+          |import java.time.LocalDateTime
+          |import java.time.format.DateTimeFormatter
+          |import ujson.Value
+          |
+          |object LogScalaInteraction:
+          |  def main(args: Array[String]): Unit =
+          |    try {
+          |      val reader = new BufferedReader(new InputStreamReader(System.in))
+          |      val sb = new StringBuilder()
+          |      var line = reader.readLine()
+          |      while line != null do
+          |        sb.append(line)
+          |        line = reader.readLine()
+          |
+          |      val jsonStr = sb.toString()
+          |      if jsonStr.trim.isEmpty then sys.exit(0)
+          |
+          |      val data = ujson.read(jsonStr)
+          |      val tool = data.obj.get("tool_name").flatMap(_.strOpt).getOrElse("")
+          |      val inp = data.obj.get("tool_input").map(_.obj).getOrElse(Map.empty[String, Value])
+          |      val cwd = data.obj.get("cwd").flatMap(_.strOpt).getOrElse("")
+          |
+          |      def checkTarget(): Option[String] =
+          |        tool match
+          |          case "Read" | "Edit" | "Write" | "MultiEdit" | "NotebookEdit" =>
+          |            inp.get("file_path").flatMap { v =>
+          |              v.strOpt.flatMap { str =>
+          |                if str.endsWith(".scala") then Some(str) else None
+          |              }
+          |            }
+          |          case "Grep" | "Glob" =>
+          |            val pattern = inp.get("pattern").map(_.toString).getOrElse("")
+          |            val glob = inp.get("glob").map(_.toString).getOrElse("")
+          |            val path = inp.get("path").map(_.toString).getOrElse("")
+          |            val combined = s"$pattern $glob $path"
+          |            if combined.toLowerCase.contains("scala") then Some(combined.trim) else None
+          |          case "Bash" =>
+          |            inp.get("command").flatMap { v =>
+          |              v.strOpt.flatMap { str =>
+          |                if str.contains(".scala") then Some(str) else None
+          |              }
+          |            }
+          |          case _ => None
+          |
+          |      checkTarget() match
+          |        case Some(target) =>
+          |          val op = tool match
+          |            case "Read" => "read"
+          |            case "Grep" | "Glob" => "search"
+          |            case "Bash" => "bash"
+          |            case _ => "write"
+          |
+          |          val ts = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+          |          val record = ujson.Obj(
+          |            "ts" -> ts,
+          |            "tool" -> tool,
+          |            "op" -> op,
+          |            "target" -> target.take(500),
+          |            "cwd" -> cwd
+          |          )
+          |
+          |          val logPathStr = System.getenv().getOrDefault(
+          |            "SCALA_INTERACTION_LOG",
+          |            s"${System.getProperty("user.home")}/.claude/scala-interactions.jsonl"
+          |          )
+          |          val logPath = os.Path(logPathStr)
+          |          os.makeDir.all(logPath / os.up)
+          |          os.write.append(logPath, record.render() + "\n")
+          |        case None => ()
+          |    } catch {
+          |      case _: Exception => ()
+          |    }
+          |    sys.exit(0)
+          |""".stripMargin
+      os.write.over(logScript, scriptContent)
+      try { os.perms.set(logScript, "rwxr-xr-x") } catch { case _: Exception => }
+      println("✓ Created LLM interaction logging script (scripts/log-scala-interaction.scala)")
+    else
+      if os.exists(logScript) then
+        os.remove(logScript)
+        println("✓ Removed LLM interaction logging script")
+
+  def setupVersionBump(scriptsDir: os.Path, answers: Map[String, String]): Unit =
+    val hasVersionBump = answers.getOrElse("version-bump", "no").toLowerCase.startsWith("y")
+    val bumpScript = scriptsDir / "version-bump.scala"
+    if hasVersionBump then
+      val bumpContent =
+        """#!/usr/bin/env scala-cli
+          |
+          |//> using scala 3.3.4
+          |//> using dep com.lihaoyi::os-lib:0.11.8
+          |
+          |import os._
+          |
+          |object VersionBump:
+          |  def main(args: Array[String]): Unit =
+          |    if args.isEmpty then
+          |      println("Error: bump type required (major, minor, patch)")
+          |      sys.exit(1)
+          |
+          |    val bumpType = args.head.toLowerCase
+          |    if !Seq("major", "minor", "patch").contains(bumpType) then
+          |      println("Error: invalid bump type. Must be: major, minor, patch")
+          |      sys.exit(1)
+          |
+          |    val repoRoot = os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
+          |    val buildSbt = repoRoot / "build.sbt"
+          |    val buildSc = repoRoot / "build.sc"
+          |    val projectScala = repoRoot / "project.scala"
+          |
+          |    var currentVersionOpt: Option[String] = None
+          |    var targetFileOpt: Option[os.Path] = None
+          |    var content = ""
+          |
+          |    if os.exists(buildSbt) then
+          |      targetFileOpt = Some(buildSbt)
+          |      content = os.read(buildSbt)
+          |      val regex = "(?i)version\\s*:=\\s*\"(.*?)\"".r
+          |      regex.findFirstMatchIn(content).foreach { m =>
+          |        currentVersionOpt = Some(m.group(1))
+          |      }
+          |    else if os.exists(buildSc) then
+          |      targetFileOpt = Some(buildSc)
+          |      content = os.read(buildSc)
+          |      val regex = "(?i)def\\s*publishVersion\\s*=\\s*\"(.*?)\"".r
+          |      val regex2 = "(?i)val\\s*version\\s*=\\s*\"(.*?)\"".r
+          |      regex.findFirstMatchIn(content).orElse(regex2.findFirstMatchIn(content)).foreach { m =>
+          |        currentVersionOpt = Some(m.group(1))
+          |      }
+          |    else if os.exists(projectScala) then
+          |      targetFileOpt = Some(projectScala)
+          |      content = os.read(projectScala)
+          |      val regex = "(?i)//\\s*version\\s*:=\\s*\"(.*?)\"".r
+          |      regex.findFirstMatchIn(content).foreach { m =>
+          |        currentVersionOpt = Some(m.group(1))
+          |      }
+          |
+          |    val (currentVersion, targetFile) = (currentVersionOpt, targetFileOpt) match
+          |      case (Some(v), Some(f)) => (v, f)
+          |      case _ =>
+          |        val defaultVer = "0.1.0"
+          |        if os.exists(projectScala) then
+          |          val updated = s"// version := \"$defaultVer\"\n" + os.read(projectScala)
+          |          os.write.over(projectScala, updated)
+          |          content = updated
+          |          (defaultVer, projectScala)
+          |        else if os.exists(buildSbt) then
+          |          val updated = s"version := \"$defaultVer\"\n" + os.read(buildSbt)
+          |          os.write.over(buildSbt, updated)
+          |          content = updated
+          |          (defaultVer, buildSbt)
+          |        else
+          |          println("Error: Could not locate build.sbt, build.sc, or project.scala to find version")
+          |          sys.exit(1)
+          |
+          |    println(s"Current version: $currentVersion")
+          |
+          |    val parts = currentVersion.split('.').flatMap(_.toIntOption)
+          |    if parts.length < 3 then
+          |      println(s"Error: Version '$currentVersion' is not in standard semantic versioning format (X.Y.Z)")
+          |      sys.exit(1)
+          |
+          |    val Array(major, minor, patch) = parts.take(3)
+          |    val nextVersion = bumpType match
+          |      case "major" => s"${major + 1}.0.0"
+          |      case "minor" => s"$major.${minor + 1}.0"
+          |      case "patch" => s"$major.$minor.${patch + 1}"
+          |
+          |    println(s"Bumping version to: $nextVersion")
+          |
+          |    val updatedContent = targetFile match
+          |      case f if f == buildSbt =>
+          |        content.replaceFirst("version\\s*:=\\s*\".*?\"", s"version := \"$nextVersion\"")
+          |      case f if f == buildSc =>
+          |        if content.contains("def publishVersion") then
+          |          content.replaceFirst("def\\s*publishVersion\\s*=\\s*\".*?\"", s"def publishVersion = \"$nextVersion\"")
+          |        else
+          |          content.replaceFirst("val\\s*version\\s*=\\s*\".*?\"", s"val version = \"$nextVersion\"")
+          |      case f if f == projectScala =>
+          |        content.replaceFirst("//\\s*version\\s*:=\\s*\".*?\"", s"// version := \"$nextVersion\"")
+          |      case _ => content
+          |
+          |    os.write.over(targetFile, updatedContent)
+          |    println(s"✓ Updated version in ${targetFile.relativeTo(repoRoot)}")
+          |""".stripMargin
+      os.write.over(bumpScript, bumpContent)
+      try { os.perms.set(bumpScript, "rwxr-xr-x") } catch { case _: Exception => }
+      println("✓ Created version bumping utility script (scripts/version-bump.scala)")
+    else
+      if os.exists(bumpScript) then
+        os.remove(bumpScript)
+        println("✓ Removed version bumping utility script")
+
+  def setupHooks(repoRoot: os.Path, scriptsDir: os.Path, answers: Map[String, String]): Unit =
+    val hasGitHooks = answers.getOrElse("git-hooks", "no").toLowerCase.startsWith("y")
+    val preCommitScript = scriptsDir / "git-pre-commit.scala"
+    val prePushScript = scriptsDir / "git-pre-push.scala"
+
+    val gitHooksDir = repoRoot / ".git" / "hooks"
+    val gitPreCommitHook = gitHooksDir / "pre-commit"
+    val gitPrePushHook = gitHooksDir / "pre-push"
+
+    if hasGitHooks then
+      // 1. Write scripts/git-pre-commit.scala
+      val preCommitContent =
+        """#!/usr/bin/env scala-cli
+          |
+          |//> using scala 3.3.4
+          |//> using dep com.lihaoyi::os-lib:0.11.8
+          |
+          |import os._
+          |
+          |object GitPreCommit:
+          |  def main(args: Array[String]): Unit =
+          |    val repoRoot = os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
+          |
+          |    val buildTool = if os.exists(repoRoot / "build.sbt") then "sbt"
+          |                    else if os.exists(repoRoot / "build.sc") then "mill"
+          |                    else "scala-cli"
+          |
+          |    val hasScalafmt = os.exists(repoRoot / ".scalafmt.conf")
+          |    val hasScalafix = os.exists(repoRoot / ".scalafix.conf")
+          |
+          |    if !hasScalafmt && !hasScalafix then
+          |      println("No formatting or linting configuration found. Pre-commit check skipped.")
+          |      sys.exit(0)
+          |
+          |    println("=== Git Pre-Commit Quality Checks ===")
+          |
+          |    if hasScalafmt then
+          |      println("Checking code formatting (Scalafmt)...")
+          |      val fmtExit = buildTool match
+          |        case "sbt" =>
+          |          os.proc("sbt", "scalafmtCheckAll").call(cwd = repoRoot, check = false).exitCode
+          |        case "scala-cli" =>
+          |          os.proc("scala-cli", "fmt", "--check", ".").call(cwd = repoRoot, check = false).exitCode
+          |        case "mill" =>
+          |          os.proc("mill", "mill.scalalib.scalafmt.ScalafmtModule/checkFormatAll").call(cwd = repoRoot, check = false).exitCode
+          |
+          |      if fmtExit != 0 then
+          |        println("\n[ERROR] Code formatting check failed!")
+          |        println("Please run the formatting tool to fix it:")
+          |        buildTool match
+          |          case "sbt" => println("  sbt scalafmtAll")
+          |          case "scala-cli" => println("  scala-cli fmt .")
+          |          case "mill" => println("  mill mill.scalalib.scalafmt.ScalafmtModule/reformatAll")
+          |        sys.exit(1)
+          |
+          |    if hasScalafix then
+          |      println("Checking code linting (Scalafix)...")
+          |      val lintExit = buildTool match
+          |        case "sbt" =>
+          |          os.proc("sbt", "scalafixAll --check").call(cwd = repoRoot, check = false).exitCode
+          |        case "scala-cli" =>
+          |          os.proc("scala-cli", "--power", "scalafix", "--check", ".").call(cwd = repoRoot, check = false).exitCode
+          |        case "mill" =>
+          |          os.proc("mill", "mill.scalalib.contrib.ScalafixModule/fix", "--check").call(cwd = repoRoot, check = false).exitCode
+          |
+          |      if lintExit != 0 then
+          |        println("\n[ERROR] Code linting check failed!")
+          |        println("Please run linting to fix it:")
+          |        buildTool match
+          |          case "sbt" => println("  sbt scalafixAll")
+          |          case "scala-cli" => println("  scala-cli --power scalafix .")
+          |          case "mill" => println("  mill mill.scalalib.contrib.ScalafixModule/fix")
+          |        sys.exit(1)
+          |
+          |    println("✓ All pre-commit checks passed successfully!")
+          |""".stripMargin
+      os.write.over(preCommitScript, preCommitContent)
+      try { os.perms.set(preCommitScript, "rwxr-xr-x") } catch { case _: Exception => }
+      println("✓ Created pre-commit script (scripts/git-pre-commit.scala)")
+
+      // 2. Write scripts/git-pre-push.scala
+      val prePushContent =
+        """#!/usr/bin/env scala-cli
+          |
+          |//> using scala 3.3.4
+          |//> using dep com.lihaoyi::os-lib:0.11.8
+          |
+          |import os._
+          |
+          |object GitPrePush:
+          |  def main(args: Array[String]): Unit =
+          |    val repoRoot = os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
+          |
+          |    val buildTool = if os.exists(repoRoot / "build.sbt") then "sbt"
+          |                    else if os.exists(repoRoot / "build.sc") then "mill"
+          |                    else "scala-cli"
+          |
+          |    println("=== Git Pre-Push Verification Checks ===")
+          |    println(s"Running compilation and tests using $buildTool...")
+          |
+          |    val exitCode = buildTool match
+          |      case "sbt" =>
+          |        val hasPrePushAlias = os.read(repoRoot / "build.sbt").contains("addCommandAlias(\"prePush\"")
+          |        val cmd = if hasPrePushAlias then Seq("sbt", "prePush") else Seq("sbt", "compile", "test")
+          |        os.proc(cmd).call(cwd = repoRoot, check = false).exitCode
+          |
+          |      case "mill" =>
+          |        val buildScContent = os.read(repoRoot / "build.sc")
+          |        val cmd = if buildScContent.contains("def prePush") then Seq("mill", "app.prePush") else Seq("mill", "app.test")
+          |        os.proc(cmd).call(cwd = repoRoot, check = false).exitCode
+          |
+          |      case "scala-cli" =>
+          |        os.proc("scala-cli", "test", ".").call(cwd = repoRoot, check = false).exitCode
+          |
+          |    if exitCode != 0 then
+          |      println("\n[ERROR] Pre-push verification failed! Push aborted.")
+          |      sys.exit(1)
+          |
+          |    println("✓ All pre-push checks passed successfully!")
+          |""".stripMargin
+      os.write.over(prePushScript, prePushContent)
+      try { os.perms.set(prePushScript, "rwxr-xr-x") } catch { case _: Exception => }
+      println("✓ Created pre-push script (scripts/git-pre-push.scala)")
+
+      // 3. Write Git delegate hooks in .git/hooks/ if .git exists
+      if os.exists(gitHooksDir) then
+        val gitPreCommitContent =
+          """#!/bin/sh
+            |scala-cli run scripts/git-pre-commit.scala -- "$@"
+            |""".stripMargin
+        os.write.over(gitPreCommitHook, gitPreCommitContent)
+        try { os.perms.set(gitPreCommitHook, "rwxr-xr-x") } catch { case _: Exception => }
+
+        val gitPrePushContent =
+          """#!/bin/sh
+            |scala-cli run scripts/git-pre-push.scala -- "$@"
+            |""".stripMargin
+        os.write.over(gitPrePushHook, gitPrePushContent)
+        try { os.perms.set(gitPrePushHook, "rwxr-xr-x") } catch { case _: Exception => }
+        println("✓ Installed git pre-commit and pre-push hooks to .git/hooks/")
+    else
+      // Cleanup
+      if os.exists(preCommitScript) then os.remove(preCommitScript)
+      if os.exists(prePushScript) then os.remove(prePushScript)
+      if os.exists(gitPreCommitHook) then os.remove(gitPreCommitHook)
+      if os.exists(gitPrePushHook) then os.remove(gitPrePushHook)
+      println("✓ Cleaned up git hooks")

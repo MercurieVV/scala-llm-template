@@ -1,4 +1,3 @@
-// version := "0.1.2"
 //> using scala 3.8.4
 //> using options -Ysemanticdb
 //> using options -P:wartremover:traverser:org.wartremover.warts.Unsafe
