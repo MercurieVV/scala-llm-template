@@ -10,20 +10,22 @@ object SetupMdoc:
   def main(args: Array[String]): Unit =
     val repoRoot = args.headOption match
       case Some(path) => os.Path(path, os.pwd)
-      case None =>
+      case None       =>
         try
-          os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
-        catch
-          case _: Exception => os.pwd
+          os.Path(
+            os.proc("git", "rev-parse", "--show-toplevel")
+              .call()
+              .out
+              .text()
+              .trim
+          )
+        catch case _: Exception => os.pwd
     val configPath = repoRoot / ".agents" / "setup_config.json"
-    
+
     val answers = if os.exists(configPath) then
-      try
-        ujson.read(os.read(configPath)).obj.map((k, v) => k -> v.str).toMap
-      catch
-        case _: Exception => Map.empty[String, String]
-    else
-      Map.empty[String, String]
+      try ujson.read(os.read(configPath)).obj.map((k, v) => k -> v.str).toMap
+      catch case _: Exception => Map.empty[String, String]
+    else Map.empty[String, String]
 
     val docsDir = repoRoot / "docs"
     val hasMdoc = answers.getOrElse("mdoc", "no").toLowerCase.startsWith("y")
@@ -35,7 +37,8 @@ object SetupMdoc:
       os.makeDir.all(docsDir)
       val docIndex = docsDir / "index.md"
       if !os.exists(docIndex) then
-        os.write(docIndex,
+        os.write(
+          docIndex,
           """# Welcome to the Project Documentation
             |
             |This documentation is compiled and type-checked using **mdoc**.
@@ -46,7 +49,8 @@ object SetupMdoc:
             |val message = "Hello from Scala 3 type-checked docs!"
             |println(message)
             |```
-            |""".stripMargin)
+            |""".stripMargin
+        )
         println("✓ Created initial documentation file (docs/index.md)")
 
       // 2. Create mdoc-docs/src/main/scala/DocsMain.scala
@@ -72,7 +76,9 @@ object SetupMdoc:
           |    if exitCode != 0 then sys.exit(exitCode)
           |""".stripMargin
       os.write.over(docsMainFile, docsMainContent)
-      println("✓ Created mdoc documentation runner (mdoc-docs/src/main/scala/DocsMain.scala)")
+      println(
+        "✓ Created mdoc documentation runner (mdoc-docs/src/main/scala/DocsMain.scala)"
+      )
     else
       // Cleanup if mdoc is disabled
       val docsMainFile = docsSrcDir / "DocsMain.scala"

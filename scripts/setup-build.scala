@@ -12,27 +12,31 @@ object SetupBuild:
   def main(args: Array[String]): Unit =
     val repoRoot = args.headOption match
       case Some(path) => os.Path(path, os.pwd)
-      case None =>
+      case None       =>
         try
-          os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
-        catch
-          case _: Exception => os.pwd
+          os.Path(
+            os.proc("git", "rev-parse", "--show-toplevel")
+              .call()
+              .out
+              .text()
+              .trim
+          )
+        catch case _: Exception => os.pwd
     val configPath = repoRoot / ".agents" / "setup_config.json"
-    
+
     val answers = if os.exists(configPath) then
-      try
-        ujson.read(os.read(configPath)).obj.map((k, v) => k -> v.str).toMap
-      catch
-        case _: Exception => Map.empty[String, String]
-    else
-      Map.empty[String, String]
+      try ujson.read(os.read(configPath)).obj.map((k, v) => k -> v.str).toMap
+      catch case _: Exception => Map.empty[String, String]
+    else Map.empty[String, String]
 
     val projectName = repoRoot.last
-    val selectedScalaVer = answers.getOrElse("scala-version", defaultScalaVersion)
+    val selectedScalaVer =
+      answers.getOrElse("scala-version", defaultScalaVersion)
     val buildTool = answers.getOrElse("build-tool", "mill").toLowerCase
 
     // 1. Resolve dependencies dynamically
-    val (resolvedDeps, resolvedTestDeps, resolvedPlugins) = getDependenciesAndPlugins(answers, selectedScalaVer)
+    val (resolvedDeps, resolvedTestDeps, resolvedPlugins) =
+      getDependenciesAndPlugins(answers, selectedScalaVer)
 
     // 2. Generate build files based on selected build tool
     val buildFile = repoRoot / "build.sc"
@@ -40,31 +44,67 @@ object SetupBuild:
     val projectScalaFile = repoRoot / "project.scala"
 
     if buildTool == "sbt" then
-      updateBuildSbt(buildSbtFile, projectName, selectedScalaVer, answers, resolvedDeps, resolvedTestDeps, resolvedPlugins)
+      updateBuildSbt(
+        buildSbtFile,
+        projectName,
+        selectedScalaVer,
+        answers,
+        resolvedDeps,
+        resolvedTestDeps,
+        resolvedPlugins
+      )
       if os.exists(buildFile) then os.remove(buildFile)
     else if buildTool == "scala-cli" then
-      updateScalaCli(projectScalaFile, selectedScalaVer, resolvedDeps, resolvedTestDeps, resolvedPlugins)
+      updateScalaCli(
+        projectScalaFile,
+        selectedScalaVer,
+        resolvedDeps,
+        resolvedTestDeps,
+        resolvedPlugins
+      )
       if os.exists(buildFile) then os.remove(buildFile)
       if os.exists(buildSbtFile) then os.remove(buildSbtFile)
     else
       // mill
-      updateBuildSc(buildFile, projectName, selectedScalaVer, answers, resolvedDeps, resolvedTestDeps, resolvedPlugins)
+      updateBuildSc(
+        buildFile,
+        projectName,
+        selectedScalaVer,
+        answers,
+        resolvedDeps,
+        resolvedTestDeps,
+        resolvedPlugins
+      )
       if os.exists(buildSbtFile) then os.remove(buildSbtFile)
 
     // 3. Setup Scala CLI config if selected separately for scripting
-    val hasScalaCli = answers.getOrElse("scripts", "none").toLowerCase == "scala-cli" || buildTool == "scala-cli"
+    val hasScalaCli = answers
+      .getOrElse("scripts", "none")
+      .toLowerCase == "scala-cli" || buildTool == "scala-cli"
     if hasScalaCli then
-      updateScalaCli(projectScalaFile, selectedScalaVer, resolvedDeps, resolvedTestDeps, resolvedPlugins)
-    else
-      if buildTool != "scala-cli" && os.exists(projectScalaFile) then
-        os.remove(projectScalaFile)
+      updateScalaCli(
+        projectScalaFile,
+        selectedScalaVer,
+        resolvedDeps,
+        resolvedTestDeps,
+        resolvedPlugins
+      )
+    else if buildTool != "scala-cli" && os.exists(projectScalaFile) then
+      os.remove(projectScalaFile)
 
-  def fetchLatestStableVersion(group: String, artifact: String): Option[String] =
+  def fetchLatestStableVersion(
+      group: String,
+      artifact: String
+  ): Option[String] =
     val groupPath = group.replace('.', '/')
-    val url = s"https://repo1.maven.org/maven2/$groupPath/$artifact/maven-metadata.xml"
+    val url =
+      s"https://repo1.maven.org/maven2/$groupPath/$artifact/maven-metadata.xml"
     try
-      val p = os.proc("curl", "-fsSL", "--connect-timeout", "3", url).call(stderr = os.Pipe)
-      val xml = if p.exitCode == 0 then p.out.text() else throw new RuntimeException("Fetch failed")
+      val p = os
+        .proc("curl", "-fsSL", "--connect-timeout", "3", url)
+        .call(stderr = os.Pipe)
+      val xml = if p.exitCode == 0 then p.out.text()
+      else throw new RuntimeException("Fetch failed")
       val versionRegex = """<version>([^<]+)</version>""".r
       val versions = versionRegex.findAllMatchIn(xml).map(_.group(1)).toList
       val stableVersions = versions.filter(_.matches("^[0-9]+(\\.[0-9]+)*$"))
@@ -72,7 +112,9 @@ object SetupBuild:
       else
         val ReleaseRegex = """<release>([^<]+)</release>""".r
         val LatestRegex = """<latest>([^<]+)</latest>""".r
-        ReleaseRegex.findFirstMatchIn(xml).map(_.group(1))
+        ReleaseRegex
+          .findFirstMatchIn(xml)
+          .map(_.group(1))
           .orElse(LatestRegex.findFirstMatchIn(xml).map(_.group(1)))
     catch case _: Exception => None
 
@@ -84,7 +126,10 @@ object SetupBuild:
       val rest = parts(1).split(":")
       val artifactName = rest(0).stripPrefix(":")
       val defaultVer = if rest.length > 1 then rest.last else "latest"
-      val scalaSuffix = if isScalaDep then (if scalaVer.startsWith("3") then "_3" else "_2.13") else ""
+      val scalaSuffix = if isScalaDep then
+        (if scalaVer.startsWith("3") then "_3" else "_2.13"
+      )
+      else ""
       val fullArtifact = s"$artifactName$scalaSuffix"
 
       print(s"Resolving latest version for $group:$fullArtifact... ")
@@ -98,7 +143,10 @@ object SetupBuild:
           dep
     else dep
 
-  def getDependenciesAndPlugins(answers: Map[String, String], scalaVer: String): (List[String], List[String], List[String]) =
+  def getDependenciesAndPlugins(
+      answers: Map[String, String],
+      scalaVer: String
+  ): (List[String], List[String], List[String]) =
     var deps = List.empty[String]
     var testDeps = List.empty[String]
     var plugins = List.empty[String]
@@ -114,39 +162,39 @@ object SetupBuild:
       deps = deps :+ "dev.zio::zio:2.0.21"
       deps = deps :+ "dev.zio::zio-streams:2.0.21"
 
-    val hasWebServer = answers.getOrElse("web-server", "no").toLowerCase.startsWith("y")
+    val hasWebServer =
+      answers.getOrElse("web-server", "no").toLowerCase.startsWith("y")
     if hasWebServer then
       if isTypelevel then
         deps = deps :+ "org.http4s::http4s-ember-server:0.23.27"
         deps = deps :+ "org.http4s::http4s-dsl:0.23.27"
-      else if isZIO then
-        deps = deps :+ "dev.zio::zio-http:3.0.0-RC6"
+      else if isZIO then deps = deps :+ "dev.zio::zio-http:3.0.0-RC6"
 
-    val hasWebClient = answers.getOrElse("web-client", "no").toLowerCase.startsWith("y")
+    val hasWebClient =
+      answers.getOrElse("web-client", "no").toLowerCase.startsWith("y")
     if hasWebClient then
       if isTypelevel then
         deps = deps :+ "org.http4s::http4s-ember-client:0.23.27"
       else if isZIO then
         deps = deps :+ "com.softwaremill.sttp.client4::zio:4.0.0-RC1"
-      else
-        deps = deps :+ "com.softwaremill.sttp.client4::core:4.0.0-RC1"
+      else deps = deps :+ "com.softwaremill.sttp.client4::core:4.0.0-RC1"
 
     val hasDb = answers.getOrElse("db-access", "no").toLowerCase.startsWith("y")
     if hasDb then
       if isTypelevel then
         deps = deps :+ "org.tpolecat::doobie-core:1.0.0-RC5"
         deps = deps :+ "org.tpolecat::doobie-hikari:1.0.0-RC5"
-      else if isZIO then
-        deps = deps :+ "io.getquill::quill-jdbc-zio:4.8.4"
-      else
-        deps = deps :+ "org.postgresql:postgresql:42.7.3"
+      else if isZIO then deps = deps :+ "io.getquill::quill-jdbc-zio:4.8.4"
+      else deps = deps :+ "org.postgresql:postgresql:42.7.3"
 
-    val hasServerless = answers.getOrElse("serverless-run", "no").toLowerCase.startsWith("y")
+    val hasServerless =
+      answers.getOrElse("serverless-run", "no").toLowerCase.startsWith("y")
     if hasServerless then
       deps = deps :+ "com.amazonaws:aws-lambda-java-core:1.2.3"
       deps = deps :+ "com.amazonaws:aws-lambda-java-events:3.11.4"
 
-    val testTools = answers.getOrElse("test-tools", "munit+shapeless").toLowerCase
+    val testTools =
+      answers.getOrElse("test-tools", "munit+shapeless").toLowerCase
     if testTools.contains("munit") then
       testDeps = testDeps :+ "org.scalameta::munit:1.0.0"
     if testTools.contains("shapeless") then
@@ -155,45 +203,52 @@ object SetupBuild:
       testDeps = testDeps :+ "dev.zio::zio-test:2.0.21"
       testDeps = testDeps :+ "dev.zio::zio-test-sbt:2.0.21"
 
-    val hasStainless = answers.getOrElse("stainless", "no").toLowerCase.startsWith("y")
+    val hasStainless =
+      answers.getOrElse("stainless", "no").toLowerCase.startsWith("y")
     if hasStainless then
       plugins = plugins :+ "ch.epfl.lara::stainless-compiler-plugin:0.9.8.1"
 
-    val hasJmh = answers.getOrElse("performance-testing", "no").toLowerCase.startsWith("y")
-    if hasJmh then
-      deps = deps :+ "org.openjdk.jmh:jmh-core:1.37"
+    val hasJmh =
+      answers.getOrElse("performance-testing", "no").toLowerCase.startsWith("y")
+    if hasJmh then deps = deps :+ "org.openjdk.jmh:jmh-core:1.37"
 
-    val hasOptics = answers.getOrElse("optics", "no").toLowerCase.startsWith("y")
-    if hasOptics then
-      deps = deps :+ "dev.optics::monocle-core:3.2.0"
+    val hasOptics =
+      answers.getOrElse("optics", "no").toLowerCase.startsWith("y")
+    if hasOptics then deps = deps :+ "dev.optics::monocle-core:3.2.0"
 
-    val hasDto = answers.getOrElse("dto-mapping", "no").toLowerCase.startsWith("y")
-    if hasDto then
-      deps = deps :+ "io.scalaland::chimney:0.8.5"
+    val hasDto =
+      answers.getOrElse("dto-mapping", "no").toLowerCase.startsWith("y")
+    if hasDto then deps = deps :+ "io.scalaland::chimney:0.8.5"
 
-    val hasApiDocs = answers.getOrElse("api-docs", "no").toLowerCase.startsWith("y")
+    val hasApiDocs =
+      answers.getOrElse("api-docs", "no").toLowerCase.startsWith("y")
     if hasApiDocs then
       deps = deps :+ "com.softwaremill.sttp.tapir::tapir-core:1.10.0"
 
     val buildTool = answers.getOrElse("build-tool", "mill").toLowerCase
-    val finalPlugins = if buildTool != "sbt" then plugins :+ "org.wartremover::wartremover:3.2.5" else plugins
+    val finalPlugins = if buildTool != "sbt" then
+      plugins :+ "org.wartremover::wartremover:3.2.5"
+    else plugins
 
     val resolvedDeps = deps.map(dep => resolveLatestVersion(dep, scalaVer))
-    val resolvedTestDeps = testDeps.map(dep => resolveLatestVersion(dep, scalaVer))
-    val resolvedPlugins = finalPlugins.map(plugin => resolveLatestVersion(plugin, scalaVer))
+    val resolvedTestDeps =
+      testDeps.map(dep => resolveLatestVersion(dep, scalaVer))
+    val resolvedPlugins =
+      finalPlugins.map(plugin => resolveLatestVersion(plugin, scalaVer))
 
     (resolvedDeps, resolvedTestDeps, resolvedPlugins)
 
   def updateBuildSc(
-    buildFile: os.Path,
-    projectName: String,
-    scalaVer: String,
-    answers: Map[String, String],
-    deps: List[String],
-    testDeps: List[String],
-    plugins: List[String]
+      buildFile: os.Path,
+      projectName: String,
+      scalaVer: String,
+      answers: Map[String, String],
+      deps: List[String],
+      testDeps: List[String],
+      plugins: List[String]
   ): Unit =
-    val crossComp = answers.getOrElse("cross-version", "no").toLowerCase == "yes"
+    val crossComp =
+      answers.getOrElse("cross-version", "no").toLowerCase == "yes"
     val template = if crossComp then
       s"""import mill._, scalalib._
          |
@@ -202,7 +257,7 @@ object SetupBuild:
          |
          |object app extends Cross[AppModule](scala3, scala213)
          |trait AppModule extends CrossScalaModule {
-         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe", "-Werror")
+         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe", "-Wunused:imports", "-Werror")
          |  def ivyDeps = Agg(
          |    // [dependencies-start]
          |    // [dependencies-end]
@@ -227,7 +282,7 @@ object SetupBuild:
          |
          |object app extends ScalaModule {
          |  def scalaVersion = "$scalaVer"
-         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe", "-Werror")
+         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe", "-Wunused:imports", "-Werror")
          |  def ivyDeps = Agg(
          |    // [dependencies-start]
          |    // [dependencies-end]
@@ -256,7 +311,10 @@ object SetupBuild:
     var content = os.read(buildFile)
 
     if !content.contains("-Werror") then
-      content = content.replace("Seq(\"-Ysemanticdb\")", "Seq(\"-Ysemanticdb\", \"-Werror\")")
+      content = content.replace(
+        "Seq(\"-Ysemanticdb\")",
+        "Seq(\"-Ysemanticdb\", \"-Werror\")"
+      )
 
     def convertToMillDep(dep: String): String =
       val parts = dep.split("::")
@@ -268,14 +326,16 @@ object SetupBuild:
         s"$org::$name:$ver"
       else
         val parts2 = dep.split(":")
-        if parts2.length >= 2 then s"${parts2(0)}:${parts2(1)}:${parts2.last}" else dep
+        if parts2.length >= 2 then s"${parts2(0)}:${parts2(1)}:${parts2.last}"
+        else dep
 
     def addDepToContent(section: String, dep: String): Unit =
       val depPart = dep.split("::").head
       if !content.contains(depPart) then
         val startMarker = s"// [$section-start]"
         if content.contains(startMarker) then
-          content = content.replace(startMarker, s"$startMarker\n    ivy\"$dep\",")
+          content =
+            content.replace(startMarker, s"$startMarker\n    ivy\"$dep\",")
           println(s"✓ Added dependency to build.sc: $dep")
 
     deps.foreach(dep => addDepToContent("dependencies", dep))
@@ -295,15 +355,13 @@ object SetupBuild:
         content = content + "\n" + millMdocModule
 
     if !content.contains("def prePush") then
-      val prePushTask = if crossComp then
-        """
+      val prePushTask = if crossComp then """
           |def prePush() = T.command {
           |  app(scala3).compile()
           |  app(scala3).test.test()()
           |}
           |""".stripMargin
-      else
-        """
+      else """
           |def prePush() = T.command {
           |  app.compile()
           |  app.test.test()()
@@ -314,16 +372,18 @@ object SetupBuild:
     os.write.over(buildFile, content)
 
   def updateBuildSbt(
-    sbtFile: os.Path,
-    projectName: String,
-    scalaVer: String,
-    answers: Map[String, String],
-    deps: List[String],
-    testDeps: List[String],
-    plugins: List[String]
+      sbtFile: os.Path,
+      projectName: String,
+      scalaVer: String,
+      answers: Map[String, String],
+      deps: List[String],
+      testDeps: List[String],
+      plugins: List[String]
   ): Unit =
-    val crossComp = answers.getOrElse("cross-version", "no").toLowerCase == "yes"
-    val scalaVersionsStr = if crossComp then s"""Seq("$scalaVer", "2.13.12")""" else s"""Seq("$scalaVer")"""
+    val crossComp =
+      answers.getOrElse("cross-version", "no").toLowerCase == "yes"
+    val scalaVersionsStr = if crossComp then s"""Seq("$scalaVer", "2.13.12")"""
+    else s"""Seq("$scalaVer")"""
 
     val template =
       s"""name := "$projectName"
@@ -332,7 +392,7 @@ object SetupBuild:
          |scalaVersion := "$scalaVer"
          |crossScalaVersions := $scalaVersionsStr
          |
-         |scalacOptions ++= Seq("-Ysemanticdb", "-Werror")
+         |scalacOptions ++= Seq("-Ysemanticdb", "-Wunused:imports", "-Werror")
          |
          |wartremoverErrors ++= Warts.unsafe
          |
@@ -362,10 +422,16 @@ object SetupBuild:
     var content = os.read(sbtFile)
 
     if !content.contains("wartremoverErrors") then
-      content = content.replace("scalacOptions ++= Seq(\"-Ysemanticdb\")", "scalacOptions ++= Seq(\"-Ysemanticdb\")\n\nwartremoverErrors ++= Warts.unsafe")
+      content = content.replace(
+        "scalacOptions ++= Seq(\"-Ysemanticdb\")",
+        "scalacOptions ++= Seq(\"-Ysemanticdb\")\n\nwartremoverErrors ++= Warts.unsafe"
+      )
 
     if !content.contains("-Werror") then
-      content = content.replace("scalacOptions ++= Seq(\"-Ysemanticdb\")", "scalacOptions ++= Seq(\"-Ysemanticdb\", \"-Werror\")")
+      content = content.replace(
+        "scalacOptions ++= Seq(\"-Ysemanticdb\")",
+        "scalacOptions ++= Seq(\"-Ysemanticdb\", \"-Werror\")"
+      )
 
     def addDepToSbt(section: String, dep: String): Unit =
       val depPart = dep.split("::").head
@@ -380,7 +446,8 @@ object SetupBuild:
     testDeps.foreach(dep => addDepToSbt("test-dependencies", dep))
 
     val pluginsSbt = sbtFile / os.up / "project" / "plugins.sbt"
-    var pluginsContent = if os.exists(pluginsSbt) then os.read(pluginsSbt) else ""
+    var pluginsContent =
+      if os.exists(pluginsSbt) then os.read(pluginsSbt) else ""
 
     val requiredPlugins = List(
       "addSbtPlugin(\"ch.epfl.scala\" % \"sbt-scalafix\" % \"0.11.1\")",
@@ -426,7 +493,8 @@ object SetupBuild:
         content = content + "\n" + sbtMdocProject
 
     if !content.contains("addCommandAlias(\"prePush\"") then
-      content = content + "\n\naddCommandAlias(\"prePush\", \"; compile ; test\")"
+      content =
+        content + "\n\naddCommandAlias(\"prePush\", \"; compile ; test\")"
 
     os.write.over(sbtFile, content)
 
@@ -449,15 +517,16 @@ object SetupBuild:
     s"compilerPlugin($sbtDep)"
 
   def updateScalaCli(
-    projectFile: os.Path,
-    scalaVer: String,
-    deps: List[String],
-    testDeps: List[String],
-    plugins: List[String]
+      projectFile: os.Path,
+      scalaVer: String,
+      deps: List[String],
+      testDeps: List[String],
+      plugins: List[String]
   ): Unit =
     var lines = List(
       s"//> using scala $scalaVer",
       "//> using options -Ysemanticdb",
+      "//> using options -Wunused:imports",
       "//> using options -P:wartremover:traverser:org.wartremover.warts.Unsafe",
       "// //> using options -Werror",
       "//> using exclude Setup.scala",

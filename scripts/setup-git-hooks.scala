@@ -10,20 +10,22 @@ object SetupGitHooks:
   def main(args: Array[String]): Unit =
     val repoRoot = args.headOption match
       case Some(path) => os.Path(path, os.pwd)
-      case None =>
+      case None       =>
         try
-          os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
-        catch
-          case _: Exception => os.pwd
+          os.Path(
+            os.proc("git", "rev-parse", "--show-toplevel")
+              .call()
+              .out
+              .text()
+              .trim
+          )
+        catch case _: Exception => os.pwd
     val configPath = repoRoot / ".agents" / "setup_config.json"
-    
+
     val answers = if os.exists(configPath) then
-      try
-        ujson.read(os.read(configPath)).obj.map((k, v) => k -> v.str).toMap
-      catch
-        case _: Exception => Map.empty[String, String]
-    else
-      Map.empty[String, String]
+      try ujson.read(os.read(configPath)).obj.map((k, v) => k -> v.str).toMap
+      catch case _: Exception => Map.empty[String, String]
+    else Map.empty[String, String]
 
     val scriptsDir = repoRoot / "scripts"
     os.makeDir.all(scriptsDir)
@@ -130,7 +132,8 @@ object SetupGitHooks:
         |    println("========================================================================")
         |""".stripMargin
     os.write.over(wtStartScript, wtStartContent)
-    try { os.perms.set(wtStartScript, "rwxr-xr-x") } catch { case _: Exception => }
+    try { os.perms.set(wtStartScript, "rwxr-xr-x") }
+    catch { case _: Exception => }
     println("✓ Created worktree start script (scripts/worktree-start.scala)")
 
     val wtFinishScript = scriptsDir / "worktree-finish.scala"
@@ -226,11 +229,16 @@ object SetupGitHooks:
         |    println("========================================================================")
         |""".stripMargin
     os.write.over(wtFinishScript, wtFinishContent)
-    try { os.perms.set(wtFinishScript, "rwxr-xr-x") } catch { case _: Exception => }
+    try { os.perms.set(wtFinishScript, "rwxr-xr-x") }
+    catch { case _: Exception => }
     println("✓ Created worktree finish script (scripts/worktree-finish.scala)")
 
-  def setupInteractionHook(scriptsDir: os.Path, answers: Map[String, String]): Unit =
-    val hasInteractionHook = answers.getOrElse("interaction-hook", "no").toLowerCase.startsWith("y")
+  def setupInteractionHook(
+      scriptsDir: os.Path,
+      answers: Map[String, String]
+  ): Unit =
+    val hasInteractionHook =
+      answers.getOrElse("interaction-hook", "no").toLowerCase.startsWith("y")
     val oldLogScript = scriptsDir / "log-scala-interaction.py"
     if os.exists(oldLogScript) then os.remove(oldLogScript)
 
@@ -320,15 +328,21 @@ object SetupGitHooks:
           |    sys.exit(0)
           |""".stripMargin
       os.write.over(logScript, scriptContent)
-      try { os.perms.set(logScript, "rwxr-xr-x") } catch { case _: Exception => }
-      println("✓ Created LLM interaction logging script (scripts/log-scala-interaction.scala)")
-    else
-      if os.exists(logScript) then
-        os.remove(logScript)
-        println("✓ Removed LLM interaction logging script")
+      try { os.perms.set(logScript, "rwxr-xr-x") }
+      catch { case _: Exception => }
+      println(
+        "✓ Created LLM interaction logging script (scripts/log-scala-interaction.scala)"
+      )
+    else if os.exists(logScript) then
+      os.remove(logScript)
+      println("✓ Removed LLM interaction logging script")
 
-  def setupVersionBump(scriptsDir: os.Path, answers: Map[String, String]): Unit =
-    val hasVersionBump = answers.getOrElse("version-bump", "no").toLowerCase.startsWith("y")
+  def setupVersionBump(
+      scriptsDir: os.Path,
+      answers: Map[String, String]
+  ): Unit =
+    val hasVersionBump =
+      answers.getOrElse("version-bump", "no").toLowerCase.startsWith("y")
     val bumpScript = scriptsDir / "version-bump.scala"
     if hasVersionBump then
       val bumpContent =
@@ -431,15 +445,22 @@ object SetupGitHooks:
           |    println(s"✓ Updated version in ${targetFile.relativeTo(repoRoot)}")
           |""".stripMargin
       os.write.over(bumpScript, bumpContent)
-      try { os.perms.set(bumpScript, "rwxr-xr-x") } catch { case _: Exception => }
-      println("✓ Created version bumping utility script (scripts/version-bump.scala)")
-    else
-      if os.exists(bumpScript) then
-        os.remove(bumpScript)
-        println("✓ Removed version bumping utility script")
+      try { os.perms.set(bumpScript, "rwxr-xr-x") }
+      catch { case _: Exception => }
+      println(
+        "✓ Created version bumping utility script (scripts/version-bump.scala)"
+      )
+    else if os.exists(bumpScript) then
+      os.remove(bumpScript)
+      println("✓ Removed version bumping utility script")
 
-  def setupHooks(repoRoot: os.Path, scriptsDir: os.Path, answers: Map[String, String]): Unit =
-    val hasGitHooks = answers.getOrElse("git-hooks", "no").toLowerCase.startsWith("y")
+  def setupHooks(
+      repoRoot: os.Path,
+      scriptsDir: os.Path,
+      answers: Map[String, String]
+  ): Unit =
+    val hasGitHooks =
+      answers.getOrElse("git-hooks", "no").toLowerCase.startsWith("y")
     val preCommitScript = scriptsDir / "git-pre-commit.scala"
     val prePushScript = scriptsDir / "git-pre-push.scala"
 
@@ -499,7 +520,11 @@ object SetupGitHooks:
           |        case "sbt" =>
           |          os.proc("sbt", "scalafixAll --check").call(cwd = repoRoot, check = false).exitCode
           |        case "scala-cli" =>
-          |          os.proc("scala-cli", "--power", "scalafix", "--check", ".").call(cwd = repoRoot, check = false).exitCode
+          |          val targets = Seq("app/src", "app/test/src").filter(p => os.exists(repoRoot / os.RelPath(p)))
+          |          if targets.nonEmpty then
+          |            os.proc("scala-cli", "--power", "fix", "--check" +: targets).call(cwd = repoRoot, check = false).exitCode
+          |          else
+          |            0
           |        case "mill" =>
           |          os.proc("mill", "mill.scalalib.contrib.ScalafixModule/fix", "--check").call(cwd = repoRoot, check = false).exitCode
           |
@@ -508,14 +533,15 @@ object SetupGitHooks:
           |        println("Please run linting to fix it:")
           |        buildTool match
           |          case "sbt" => println("  sbt scalafixAll")
-          |          case "scala-cli" => println("  scala-cli --power scalafix .")
+          |          case "scala-cli" => println("  scala-cli --power fix .")
           |          case "mill" => println("  mill mill.scalalib.contrib.ScalafixModule/fix")
           |        sys.exit(1)
           |
           |    println("✓ All pre-commit checks passed successfully!")
           |""".stripMargin
       os.write.over(preCommitScript, preCommitContent)
-      try { os.perms.set(preCommitScript, "rwxr-xr-x") } catch { case _: Exception => }
+      try { os.perms.set(preCommitScript, "rwxr-xr-x") }
+      catch { case _: Exception => }
       println("✓ Created pre-commit script (scripts/git-pre-commit.scala)")
 
       // 2. Write scripts/git-pre-push.scala
@@ -559,7 +585,8 @@ object SetupGitHooks:
           |    println("✓ All pre-push checks passed successfully!")
           |""".stripMargin
       os.write.over(prePushScript, prePushContent)
-      try { os.perms.set(prePushScript, "rwxr-xr-x") } catch { case _: Exception => }
+      try { os.perms.set(prePushScript, "rwxr-xr-x") }
+      catch { case _: Exception => }
       println("✓ Created pre-push script (scripts/git-pre-push.scala)")
 
       // 3. Write Git delegate hooks in .git/hooks/ if .git exists
@@ -569,14 +596,16 @@ object SetupGitHooks:
             |scala-cli run scripts/git-pre-commit.scala -- "$@"
             |""".stripMargin
         os.write.over(gitPreCommitHook, gitPreCommitContent)
-        try { os.perms.set(gitPreCommitHook, "rwxr-xr-x") } catch { case _: Exception => }
+        try { os.perms.set(gitPreCommitHook, "rwxr-xr-x") }
+        catch { case _: Exception => }
 
         val gitPrePushContent =
           """#!/bin/sh
             |scala-cli run scripts/git-pre-push.scala -- "$@"
             |""".stripMargin
         os.write.over(gitPrePushHook, gitPrePushContent)
-        try { os.perms.set(gitPrePushHook, "rwxr-xr-x") } catch { case _: Exception => }
+        try { os.perms.set(gitPrePushHook, "rwxr-xr-x") }
+        catch { case _: Exception => }
         println("✓ Installed git pre-commit and pre-push hooks to .git/hooks/")
     else
       // Cleanup

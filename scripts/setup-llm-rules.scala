@@ -9,25 +9,28 @@ import os._
 object SetupLlmRules:
   val rulesDir = os.home / ".config" / "llm-rules"
   val masterRulesFile = rulesDir / "scala-rules.md"
-  val githubRulesUrl = "https://raw.githubusercontent.com/MercurieVV/scala-llm-template/master/scala-rules.md"
+  val githubRulesUrl =
+    "https://raw.githubusercontent.com/MercurieVV/scala-llm-template/master/scala-rules.md"
 
   def main(args: Array[String]): Unit =
     val repoRoot = args.headOption match
       case Some(path) => os.Path(path, os.pwd)
-      case None =>
+      case None       =>
         try
-          os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
-        catch
-          case _: Exception => os.pwd
+          os.Path(
+            os.proc("git", "rev-parse", "--show-toplevel")
+              .call()
+              .out
+              .text()
+              .trim
+          )
+        catch case _: Exception => os.pwd
     val configPath = repoRoot / ".agents" / "setup_config.json"
-    
+
     val answers = if os.exists(configPath) then
-      try
-        ujson.read(os.read(configPath)).obj.map((k, v) => k -> v.str).toMap
-      catch
-        case _: Exception => Map.empty[String, String]
-    else
-      Map.empty[String, String]
+      try ujson.read(os.read(configPath)).obj.map((k, v) => k -> v.str).toMap
+      catch case _: Exception => Map.empty[String, String]
+    else Map.empty[String, String]
 
     val scalaVer = answers.getOrElse("scala-version", "3.8.4")
 
@@ -62,7 +65,9 @@ object SetupLlmRules:
       println("✓ Rules synchronized from GitHub.")
     catch
       case _: Exception =>
-        println("⚠️ Could not fetch rules from GitHub. Using/creating local cache.")
+        println(
+          "⚠️ Could not fetch rules from GitHub. Using/creating local cache."
+        )
         if !os.exists(masterRulesFile) then
           val defaultRules =
             """# Scala 3 LLM Guidelines & Coding Rules
@@ -85,7 +90,9 @@ object SetupLlmRules:
           println("✓ Initialized fallback master rules locally.")
 
   def clippyFetch(url: String): String =
-    val p = os.proc("curl", "-fsSL", "--connect-timeout", "3", url).call(stderr = os.Pipe)
+    val p = os
+      .proc("curl", "-fsSL", "--connect-timeout", "3", url)
+      .call(stderr = os.Pipe)
     if p.exitCode == 0 then p.out.text()
     else throw new RuntimeException("Fetch failed")
 
@@ -473,6 +480,38 @@ object SetupLlmRules:
           content =
             content.substring(0, startIdx) + newCommandsSection + "\n" + content
               .substring(endIdx)
+
+      val newSetupSection =
+        s"""## 2. Project Generation & Update Tool
+           |
+           |The project is generated and updated dynamically using an interactive Scala CLI script.
+           |
+           |*   **Setup Script:** `Setup.scala` (runs on Scala 3 + `os-lib`).
+           |*   **Run command (local script):**
+           |    ```bash
+           |    scala-cli run /path/to/Setup.scala -- .
+           |    ```
+           |*   **Run command (internet remote):**
+           |    ```bash
+           |    scala-cli run https://raw.githubusercontent.com/MercurieVV/scala-llm-template/master/Setup.scala -- .
+           |    ```
+           |""".stripMargin
+
+      val startSetupIdx = content.indexOf("## 2. Project Generation")
+      if startSetupIdx != -1 then
+        val endSetupIdx = {
+          val idx1 = content.indexOf("\n---", startSetupIdx)
+          val idx2 = content.indexOf("\r\n---", startSetupIdx)
+          if idx1 != -1 && idx2 != -1 then Math.min(idx1, idx2)
+          else if idx1 != -1 then idx1
+          else idx2
+        }
+        if endSetupIdx != -1 then
+          content = content.substring(
+            0,
+            startSetupIdx
+          ) + newSetupSection + "\n" + content
+            .substring(endSetupIdx)
 
       val mcpEnabled =
         answers.getOrElse("mcp-tools", "no").toLowerCase.startsWith("y")

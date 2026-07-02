@@ -37,12 +37,6 @@ The project is generated and updated dynamically using an interactive Scala CLI 
     scala-cli run https://raw.githubusercontent.com/MercurieVV/scala-llm-template/master/Setup.scala -- .
     ```
 
-### Idempotent Updates:
-If you run `Setup.scala` in an existing project, it automatically updates configurations without breaking your custom code:
-1.  Allows selecting new features/dependencies.
-2.  Updates `scalaVersion` using regex pattern matching.
-3.  Injects new `ivyDeps` or compiler plugins only if they do not already exist in [build.sc](file:///Users/viktorskalinins/IdeaProjects/my/scala-llm-template/build.sc).
-4.  Stages all modifications in Git (`git add .`) for user verification.
 
 ---
 

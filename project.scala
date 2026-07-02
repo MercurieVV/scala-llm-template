@@ -1,5 +1,6 @@
 //> using scala 3.8.4
 //> using options -Ysemanticdb
+//> using options -Wunused:imports
 //> using options -P:wartremover:traverser:org.wartremover.warts.Unsafe
 // //> using options -Werror
 //> using exclude Setup.scala

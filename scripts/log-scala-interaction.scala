@@ -25,7 +25,10 @@ object LogScalaInteraction:
 
       val data = ujson.read(jsonStr)
       val tool = data.obj.get("tool_name").flatMap(_.strOpt).getOrElse("")
-      val inp = data.obj.get("tool_input").map(_.obj).getOrElse(Map.empty[String, Value])
+      val inp = data.obj
+        .get("tool_input")
+        .map(_.obj)
+        .getOrElse(Map.empty[String, Value])
       val cwd = data.obj.get("cwd").flatMap(_.strOpt).getOrElse("")
 
       def checkTarget(): Option[String] =
@@ -41,7 +44,8 @@ object LogScalaInteraction:
             val glob = inp.get("glob").map(_.toString).getOrElse("")
             val path = inp.get("path").map(_.toString).getOrElse("")
             val combined = s"$pattern $glob $path"
-            if combined.toLowerCase.contains("scala") then Some(combined.trim) else None
+            if combined.toLowerCase.contains("scala") then Some(combined.trim)
+            else None
           case "Bash" =>
             inp.get("command").flatMap { v =>
               v.strOpt.flatMap { str =>
@@ -53,12 +57,13 @@ object LogScalaInteraction:
       checkTarget() match
         case Some(target) =>
           val op = tool match
-            case "Read" => "read"
+            case "Read"          => "read"
             case "Grep" | "Glob" => "search"
-            case "Bash" => "bash"
-            case _ => "write"
+            case "Bash"          => "bash"
+            case _               => "write"
 
-          val ts = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+          val ts =
+            LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
           val record = ujson.Obj(
             "ts" -> ts,
             "tool" -> tool,
@@ -67,10 +72,12 @@ object LogScalaInteraction:
             "cwd" -> cwd
           )
 
-          val logPathStr = System.getenv().getOrDefault(
-            "SCALA_INTERACTION_LOG",
-            s"${System.getProperty("user.home")}/.claude/scala-interactions.jsonl"
-          )
+          val logPathStr = System
+            .getenv()
+            .getOrDefault(
+              "SCALA_INTERACTION_LOG",
+              s"${System.getProperty("user.home")}/.claude/scala-interactions.jsonl"
+            )
           val logPath = os.Path(logPathStr)
           os.makeDir.all(logPath / os.up)
           os.write.append(logPath, record.render() + "\n")
