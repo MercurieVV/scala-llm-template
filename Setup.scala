@@ -134,23 +134,29 @@ object Setup:
     val scriptsDir = targetDir / "scripts"
     os.makeDir.all(scriptsDir)
 
-    // Copy Setup.scala and setup scripts if initializing a different folder
-    if targetDir != os.pwd then
-      os.copy.over(os.pwd / "Setup.scala", targetDir / "Setup.scala")
+    // Copy Setup.scala and setup scripts to global shared cache directory to keep it synchronized
+    val globalShareDir = os.home / ".local" / "share" / "scala-llm-template"
+    try {
+      os.makeDir.all(globalShareDir)
+      os.makeDir.all(globalShareDir / "scripts")
+      os.copy.over(os.pwd / "Setup.scala", globalShareDir / "Setup.scala")
       val setupScripts = List("setup-build.scala", "setup-git-hooks.scala", "setup-llm-rules.scala", "setup-mdoc.scala")
       setupScripts.foreach { name =>
         val src = os.pwd / "scripts" / name
         if os.exists(src) then
-          os.copy.over(src, scriptsDir / name)
-          try { os.perms.set(scriptsDir / name, "rwxr-xr-x") } catch { case _: Exception => }
+          os.copy.over(src, globalShareDir / "scripts" / name)
       }
-      println("✓ Copied setup orchestrator and scripts to target project")
+      println(s"✓ Synchronized global setup tools cache at $globalShareDir")
+    } catch {
+      case _: Exception => // ignore if permission issues
+    }
 
-    // Execute sub-scripts via scala-cli run
-    os.proc("scala-cli", "run", (scriptsDir / "setup-build.scala").toString, "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
-    os.proc("scala-cli", "run", (scriptsDir / "setup-git-hooks.scala").toString, "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
-    os.proc("scala-cli", "run", (scriptsDir / "setup-llm-rules.scala").toString, "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
-    os.proc("scala-cli", "run", (scriptsDir / "setup-mdoc.scala").toString, "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
+    // Execute sub-scripts via scala-cli run from the template's scripts folder
+    val templateScriptsDir = os.pwd / "scripts"
+    os.proc("scala-cli", "run", (templateScriptsDir / "setup-build.scala").toString, "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
+    os.proc("scala-cli", "run", (templateScriptsDir / "setup-git-hooks.scala").toString, "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
+    os.proc("scala-cli", "run", (templateScriptsDir / "setup-llm-rules.scala").toString, "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
+    os.proc("scala-cli", "run", (templateScriptsDir / "setup-mdoc.scala").toString, "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
 
     // 7. Stage everything to Git
     if !os.exists(targetDir / ".git") then
