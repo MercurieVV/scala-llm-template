@@ -10,11 +10,12 @@ Use the following commands to build, test, and format the project:
 
 | Operation | Command |
 | :--- | :--- |
-| **Compile Project** | `mill app.compile` |
-| **Run Application** | `mill app.run` |
-| **Run Unit Tests** | `mill app.test` |
+| **Compile Project** | `scala-cli compile .` |
+| **Run Application** | `scala-cli run .` |
+| **Run Unit Tests** | `scala-cli test .` |
 | **Run Mutation Tests** | `stryker4s run` |
-| **Format Code** | `mill mill.scalalib.ScalafmtModule/reformat` |
+| **Format Code** | `scala-cli fmt .` |
+| **Lint Code** | `scala-cli --power scalafix .` |
 
 ---
 
@@ -41,9 +42,11 @@ If you run `Setup.scala` in an existing project, it automatically updates config
 
 ---
 
-## 3. LLM Configuration & Shared Rules
+## 3. LLM Configuration & Workspace Rules
 
-This repository avoids local rule files (`.cursorrules`, `.agents/AGENTS.md`) to prevent codebase clutter.
+This project uses local LLM instructions and workspace rules tailored to the selected features:
+*   **Antigravity/Gemini Rules:** [.agents/AGENTS.md](.agents/AGENTS.md)
+*   **Cursor Rules:** [.cursorrules](.cursorrules)
+*   **Global/Generic Rules:** [scala-rules.md](scala-rules.md)
 
-*   **Master Rules File:** Located globally in the shared directory: `~/.config/llm-rules/scala-rules.md`
-*   **Applying Guidelines:** When writing Scala code in this project, you must fetch and follow the rules stored in `~/.config/llm-rules/scala-rules.md` (or write code matching Scala 3 optional braces syntax, pure immutability, and explicit type-safe error handling using `Either` or `Try`).
+All rules and guidelines are automatically kept in sync by the `Setup.scala` tool when features are added or removed.

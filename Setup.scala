@@ -122,6 +122,27 @@ object Setup:
       val psc = targetDir / "project.scala"
       if os.exists(psc) then os.remove(psc)
 
+    // Generate and write LLM rules/instructions
+    val llmRulesContent = generateLlmRules(answers, selectedScalaVer)
+    
+    // 1. Project root rules file
+    os.write.over(targetDir / "scala-rules.md", llmRulesContent)
+    println("✓ Updated scala-rules.md in project root")
+
+    // 2. Cursor rules file
+    os.write.over(targetDir / ".cursorrules", llmRulesContent)
+    println("✓ Updated .cursorrules in project root")
+
+    // 3. Workspace agent rules file
+    val agentsDir = targetDir / ".agents"
+    os.makeDir.all(agentsDir)
+    os.write.over(agentsDir / "AGENTS.md", llmRulesContent)
+    println("✓ Updated .agents/AGENTS.md")
+
+    // 4. Update CLAUDE.md and CONVENTIONS.md
+    updateGuideFile(targetDir / "CLAUDE.md", answers)
+    updateGuideFile(targetDir / "CONVENTIONS.md", answers)
+
     // 7. Setup Git (Stage changes)
     setupGit(targetDir)
 
@@ -129,9 +150,10 @@ object Setup:
     println(s"Project Location: $targetDir")
     println(s"Selected Scala Version: $selectedScalaVer")
     println(s"Build Tool Configured: ${buildTool.toUpperCase}")
-    println("\nRules have been configured globally in the shared folder:")
-    println(s"  $masterRulesFile")
-    println("\nNo symlinks or rule files were created inside the project folder.")
+    println("\nRules have been configured locally in the project folder:")
+    println(s"  - scala-rules.md (generic)")
+    println(s"  - .cursorrules (Cursor)")
+    println(s"  - .agents/AGENTS.md (Antigravity/Gemini)")
     if buildTool == "sbt" then
       println("Run 'sbt test' to verify and compile.")
     else if buildTool == "scala-cli" then
@@ -464,21 +486,31 @@ object Setup:
     if !os.exists(gitignore) then
       os.write(gitignore, "out/\n.bsp/\n.metals/\n.vscode/\n.idea/\n.DS_Store\n")
 
-    // Write .scalafmt.conf if enabled and missing
+    // Write/Remove .scalafmt.conf
+    val scalafmt = target / ".scalafmt.conf"
     if answers.getOrElse("formatting", "no").toLowerCase == "yes" then
-      val scalafmt = target / ".scalafmt.conf"
       if !os.exists(scalafmt) then
         os.write(scalafmt, "version = \"3.8.1\"\nrunner.dialect = scala3\n")
+        println("✓ Created Scalafmt configuration (.scalafmt.conf)")
+    else
+      if os.exists(scalafmt) then
+        os.remove(scalafmt)
+        println("✓ Removed Scalafmt configuration (.scalafmt.conf)")
 
-    // Write Stryker4s config if enabled and missing
+    // Write/Remove Stryker4s config
+    val strykerConf = target / "stryker4s.conf"
     if answers.getOrElse("stryker", "no").toLowerCase == "yes" then
-      val strykerConf = target / "stryker4s.conf"
       if !os.exists(strykerConf) then
         os.write(strykerConf, "stryker4s {\n  mutate: [ \"app/src/**/*.scala\" ]\n}\n")
+        println("✓ Created Stryker4s configuration (stryker4s.conf)")
+    else
+      if os.exists(strykerConf) then
+        os.remove(strykerConf)
+        println("✓ Removed Stryker4s configuration (stryker4s.conf)")
 
-    // Write .scalafix.conf if enabled and missing
+    // Write/Remove .scalafix.conf
+    val scalafixConf = target / ".scalafix.conf"
     if answers.getOrElse("linting", "no").toLowerCase == "yes" then
-      val scalafixConf = target / ".scalafix.conf"
       if !os.exists(scalafixConf) then
         os.write(scalafixConf, """rules = [
                                  |  OrganizeImports,
@@ -487,12 +519,17 @@ object Setup:
                                  |  NoValInForComprehension
                                  |]
                                  |""".stripMargin)
+        println("✓ Created Scalafix configuration (.scalafix.conf)")
+    else
+      if os.exists(scalafixConf) then
+        os.remove(scalafixConf)
+        println("✓ Removed Scalafix configuration (.scalafix.conf)")
 
-    // Setup GitHub Flow CI Workflow if enabled
+    // Setup/Remove GitHub Flow CI Workflow
+    val workflowDir = target / ".github" / "workflows"
+    val ciFile = workflowDir / "ci.yml"
     if answers.getOrElse("github-flow", "no").toLowerCase == "yes" then
-      val workflowDir = target / ".github" / "workflows"
       os.makeDir.all(workflowDir)
-      val ciFile = workflowDir / "ci.yml"
       if !os.exists(ciFile) then
         val buildTool = answers.getOrElse("build-tool", "mill").toLowerCase
         val testCmd = if buildTool == "sbt" then "sbt test"
@@ -519,6 +556,15 @@ object Setup:
                            |""".stripMargin
         os.write(ciFile, ciContent)
         println("✓ Created GitHub CI workflow (.github/workflows/ci.yml)")
+    else
+      if os.exists(ciFile) then
+        os.remove(ciFile)
+        println("✓ Removed GitHub CI workflow (.github/workflows/ci.yml)")
+      if os.exists(workflowDir) && os.list(workflowDir).isEmpty then
+        os.remove(workflowDir)
+      val githubDir = target / ".github"
+      if os.exists(githubDir) && os.list(githubDir).isEmpty then
+        os.remove(githubDir)
 
     // Write project-local .agents/mcp_config.json if the launcher script exists
     val localLauncher = os.home / ".local" / "bin" / "scalasemantic-mcp.sh"
@@ -745,7 +791,7 @@ object Setup:
       lines = lines :+ s"//> using dep $dep"
     }
     testDeps.foreach { dep =>
-      lines = lines :+ s"//> using dep --test $dep"
+      lines = lines :+ s"//> using test.dep $dep"
     }
     plugins.foreach { plugin =>
       lines = lines :+ s"//> using plugin $plugin"
@@ -758,3 +804,238 @@ object Setup:
     if !os.exists(target / ".git") then
       os.proc("git", "init").call(cwd = target)
     os.proc("git", "add", ".").call(cwd = target)
+
+  def generateLlmRules(answers: Map[String, String], scalaVer: String): String =
+    val sb = new java.lang.StringBuilder()
+    sb.append("# Scala 3 LLM Guidelines & Coding Rules\n\n")
+    sb.append("You are acting as an expert Scala engineer. When writing, refactoring, or reviewing Scala code in this codebase, you must follow these rules strictly:\n\n")
+    
+    sb.append("## 1. Syntax & Style (Scala 3)\n")
+    sb.append("* Use the new Scala 3 optional braces syntax (significant indentation).\n")
+    sb.append("* Do not write curly braces `{}` for packages, classes, methods, or control flow unless necessary.\n")
+    sb.append("* Indentation size: 2 spaces.\n")
+    sb.append("* Avoid using semicolons.\n\n")
+
+    sb.append("## 2. Functional Programming Standards\n")
+    sb.append("* **Immutability First**: Use `val` for all variables. Do not use `var` unless absolutely required for performance in a local loop.\n")
+    sb.append("* **Immutable Collections**: Always use standard immutable collections (`List`, `Vector`, `Map`, `Set`).\n")
+    sb.append("* **No Nulls**: Do not return `null` or use `Option.get`. Always handle optionals safely using pattern matching.\n")
+    sb.append("* **Error Handling**: Do not throw custom exceptions. Instead, return failures explicitly using `Either` or `Try`.\n\n")
+
+    val crossComp = answers.getOrElse("cross-version", "no").toLowerCase == "yes"
+    if crossComp then
+      sb.append("## 3. Cross-Version Compilation (Scala 2.13 & Scala 3)\n")
+      sb.append("* Ensure all code is compatible with both Scala 2.13 and Scala 3.\n")
+      sb.append("* Avoid using Scala 3 exclusive features (such as `enum`, `given`/`using` (unless backported or conditionally compiled), export clauses, parameter untupling) that break Scala 2.13 compilation.\n")
+      sb.append("* Use cross-compatible styles for syntax where possible.\n\n")
+    else
+      sb.append("## 3. Scala 3 Features\n")
+      sb.append("* Feel free to use advanced Scala 3 features: `given`/`using` for implicits, `enum` for ADTs, extension methods, type lambdas, and union/intersection types.\n\n")
+
+    val eco = answers.getOrElse("ecosystem", "none").toLowerCase
+    if eco == "typelevel" then
+      sb.append("## 4. Cats & Cats Effect (Typelevel Ecosystem)\n")
+      sb.append("* Use `cats.effect.IO` to model all side effects. Do not use `scala.concurrent.Future`.\n")
+      sb.append("* Avoid running IO unsafely (never call `unsafeRunSync`). Let the runtime execute the IO at the application entry point (`IOApp`).\n")
+      sb.append("* Use cats syntax import (`import cats.syntax.all.*`) for map, flatMap, traverse, sequence, etc.\n")
+      sb.append("* Leverage typeclasses (`Monad`, `Applicative`, `Functor`) where appropriate for abstraction.\n\n")
+    else if eco == "zio" then
+      sb.append("## 4. ZIO Ecosystem\n")
+      sb.append("* Use `zio.ZIO` to model all side effects. Do not use `scala.concurrent.Future`.\n")
+      sb.append("* Prefer `ZIO[R, E, A]` to represent environment `R`, error `E`, and value `A`.\n")
+      sb.append("* Manage dependencies and application services using `ZLayer`.\n")
+      sb.append("* Handle errors using ZIO's built-in error channels (failures vs. defects).\n")
+      sb.append("* Avoid unsafe execution of ZIO effects (never use `Runtime.default.unsafe.run`).\n\n")
+    else
+      sb.append("## 4. Standard Library Concurrency & IO\n")
+      sb.append("* Use standard library concurrency primitives, prefer `scala.concurrent.Future` or pure state transitions.\n")
+      sb.append("* If using `Future`, ensure an implicit `ExecutionContext` is provided correctly.\n\n")
+
+    val hasWebServer = answers.getOrElse("web-server", "no").toLowerCase.startsWith("y")
+    if hasWebServer then
+      sb.append("## 5. Web Server\n")
+      if eco == "typelevel" then
+        sb.append("* Use **Http4s Ember** for defining routes and serving HTTP.\n")
+        sb.append("* Use http4s DSL (`import org.http4s.dsl.io.*`) for routing.\n")
+        sb.append("* Integrate with Circe for JSON serialization/deserialization.\n\n")
+      else if eco == "zio" then
+        sb.append("* Use **ZIO-HTTP** for defining routes and serving HTTP.\n")
+        sb.append("* Compose routes using ZIO-HTTP's DSL (`Routes` / `Method` pattern).\n\n")
+      else
+        sb.append("* Use standard web framework library APIs configured in the build tool.\n\n")
+
+    val hasWebClient = answers.getOrElse("web-client", "no").toLowerCase.startsWith("y")
+    if hasWebClient then
+      sb.append("## 6. Web Client\n")
+      if eco == "typelevel" then
+        sb.append("* Use **Http4s Ember Client** or **STTP** with Http4s backend for outgoing HTTP requests.\n")
+        sb.append("* Manage client lifecycle properly using `Resource`.\n\n")
+      else if eco == "zio" then
+        sb.append("* Use **STTP** with ZIO backend (`SttpBackend[Task, ...]` or similar) or ZIO-HTTP client.\n\n")
+      else
+        sb.append("* Use **STTP Core** or standard HTTP client for outgoing HTTP requests.\n\n")
+
+    val hasDb = answers.getOrElse("db-access", "no").toLowerCase.startsWith("y")
+    if hasDb then
+      sb.append("## 7. Database Access\n")
+      if eco == "typelevel" then
+        sb.append("* Use **Doobie** for type-safe database queries.\n")
+        sb.append("* Write SQL queries using the `sql` interpolator.\n")
+        sb.append("* Use `transact` to run connection IOs inside a transaction.\n\n")
+      else if eco == "zio" then
+        sb.append("* Use **Quill** with JDBC ZIO for database access.\n")
+        sb.append("* Define queries using Quill's compile-time quotations.\n\n")
+      else
+        sb.append("* Use **PostgreSQL JDBC** or standard database libraries.\n\n")
+
+    val hasServerless = answers.getOrElse("serverless-run", "no").toLowerCase.startsWith("y")
+    if hasServerless then
+      sb.append("## 8. Serverless Deployment (AWS Lambda)\n")
+      sb.append("* Structure handlers using AWS Lambda Java Core (`RequestHandler` or `RequestStreamHandler`).\n")
+      sb.append("* Keep initialization logic outside the handler to minimize cold starts.\n\n")
+
+    val testTools = answers.getOrElse("test-tools", "none").toLowerCase
+    if testTools.contains("munit") || testTools.contains("shapeless") then
+      sb.append("## 9. Testing Guidelines (MUnit)\n")
+      sb.append("* Write tests using **MUnit**. Extend `munit.FunSuite`.\n")
+      sb.append("* Leverage MUnit assertions like `assertEquals`, `assertNotEquals`, `intercept`.\n\n")
+    else if testTools.contains("zio") then
+      sb.append("## 9. Testing Guidelines (ZIO Test)\n")
+      sb.append("* Write tests using **ZIO Test**. Extend `ZIOSpecDefault`.\n")
+      sb.append("* Use assertion macros like `assertZIO`, `assertTrue`.\n\n")
+
+    val hasStainless = answers.getOrElse("stainless", "no").toLowerCase.startsWith("y")
+    if hasStainless then
+      sb.append("## 10. Formal Verification (Stainless)\n")
+      sb.append("* Write pure mathematical specifications.\n")
+      sb.append("* Annotate verified code with `@pure`, `@ghost`, or `@extern` where appropriate.\n")
+      sb.append("* Avoid mutable state or unsupported Scala features in verified code sections.\n\n")
+
+    val hasStryker = answers.getOrElse("stryker", "no").toLowerCase.startsWith("y")
+    if hasStryker then
+      sb.append("## 11. Mutation Testing (Stryker)\n")
+      sb.append("* Write comprehensive tests that verify behavior under mutation.\n")
+      sb.append("* Ensure tests are not brittle or order-dependent.\n\n")
+
+    val hasJmh = answers.getOrElse("performance-testing", "no").toLowerCase.startsWith("y")
+    if hasJmh then
+      sb.append("## 12. Performance & JMH Benchmarking\n")
+      sb.append("* Use JMH for microbenchmarks.\n")
+      sb.append("* Annotate benchmark classes with `@State(Scope.Thread)` and methods with `@Benchmark`.\n")
+      sb.append("* Avoid side effects or compiler optimizations (like dead code elimination) from skewing benchmark results (use `Blackhole` if necessary).\n\n")
+
+    val hasFormatting = answers.getOrElse("formatting", "no").toLowerCase.startsWith("y")
+    val hasLinting = answers.getOrElse("linting", "no").toLowerCase.startsWith("y")
+    if hasFormatting || hasLinting then
+      sb.append("## 13. Code Quality (Scalafmt & Scalafix)\n")
+      if hasFormatting then
+        sb.append("* Keep code formatted via Scalafmt rules.\n")
+      if hasLinting then
+        sb.append("* Use Scalafix to organize imports and remove unused imports or syntax warnings automatically.\n")
+      sb.append("\n")
+
+    val hasOptics = answers.getOrElse("optics", "no").toLowerCase.startsWith("y")
+    if hasOptics then
+      sb.append("## 14. Immutable Data Optics (Monocle)\n")
+      sb.append("* Use Monocle lenses, prisms, and optionals to modify deeply nested immutable structures instead of nested `copy` calls.\n\n")
+
+    val hasDto = answers.getOrElse("dto-mapping", "no").toLowerCase.startsWith("y")
+    if hasDto then
+      sb.append("## 15. Data Transformation (Chimney)\n")
+      sb.append("* Use Chimney for type-safe data transformations (`transformInto`) between DTOs, API models, and Domain models.\n\n")
+
+    val hasApiDocs = answers.getOrElse("api-docs", "no").toLowerCase.startsWith("y")
+    if hasApiDocs then
+      sb.append("## 16. API Specifications (Tapir)\n")
+      sb.append("* Define endpoints using Tapir for declarative, type-safe API descriptions.\n")
+      sb.append("* Generate OpenAPI documentation from Tapir endpoints.\n\n")
+
+    sb.toString()
+
+  def updateGuideFile(file: os.Path, answers: Map[String, String]): Unit =
+    if os.exists(file) then
+      var content = os.read(file)
+      
+      val buildTool = answers.getOrElse("build-tool", "mill").toLowerCase
+      val hasStryker = answers.getOrElse("stryker", "no").toLowerCase.startsWith("y")
+      val hasFormatting = answers.getOrElse("formatting", "no").toLowerCase.startsWith("y")
+      val hasLinting = answers.getOrElse("linting", "no").toLowerCase.startsWith("y")
+
+      val compileCmd = if buildTool == "sbt" then "sbt compile"
+                       else if buildTool == "scala-cli" then "scala-cli compile ."
+                       else "mill app.compile"
+
+      val runCmd = if buildTool == "sbt" then "sbt run"
+                   else if buildTool == "scala-cli" then "scala-cli run ."
+                   else "mill app.run"
+
+      val testCmd = if buildTool == "sbt" then "sbt test"
+                    else if buildTool == "scala-cli" then "scala-cli test ."
+                    else "mill app.test"
+
+      val strykerRow = if hasStryker then
+        val cmd = if buildTool == "sbt" then "sbt stryker" else "stryker4s run"
+        s"\n| **Run Mutation Tests** | `$cmd` |"
+      else ""
+
+      val formatRow = if hasFormatting then
+        val cmd = if buildTool == "sbt" then "sbt scalafmtAll"
+                  else if buildTool == "scala-cli" then "scala-cli fmt ."
+                  else "mill mill.scalalib.ScalafmtModule/reformat"
+        s"\n| **Format Code** | `$cmd` |"
+      else ""
+
+      val lintRow = if hasLinting then
+        val cmd = if buildTool == "sbt" then "sbt scalafixAll"
+                  else if buildTool == "scala-cli" then "scala-cli --power scalafix ."
+                  else "mill mill.scalalib.contrib.ScalafixModule/fix"
+        s"\n| **Lint Code** | `$cmd` |"
+      else ""
+
+      val newCommandsSection =
+        s"""## 1. Key Commands
+           |
+           |Use the following commands to build, test, and format the project:
+           |
+           || Operation | Command |
+           || :--- | :--- |
+           || **Compile Project** | `$compileCmd` |
+           || **Run Application** | `$runCmd` |
+           || **Run Unit Tests** | `$testCmd` |""".stripMargin + strykerRow + formatRow + lintRow
+
+      // Replace from "## 1. Key Commands" to the next "---" (skipping the "---" inside the table header)
+      val startIdx = content.indexOf("## 1. Key Commands")
+      if startIdx != -1 then
+        val endIdx = {
+          val idx1 = content.indexOf("\n---", startIdx)
+          val idx2 = content.indexOf("\r\n---", startIdx)
+          if idx1 != -1 && idx2 != -1 then Math.min(idx1, idx2)
+          else if idx1 != -1 then idx1
+          else idx2
+        }
+        if endIdx != -1 then
+          content = content.substring(0, startIdx) + newCommandsSection + "\n" + content.substring(endIdx)
+
+      val newLlmSection =
+        s"""## 3. LLM Configuration & Workspace Rules
+           |
+           |This project uses local LLM instructions and workspace rules tailored to the selected features:
+           |*   **Antigravity/Gemini Rules:** [.agents/AGENTS.md](.agents/AGENTS.md)
+           |*   **Cursor Rules:** [.cursorrules](.cursorrules)
+           |*   **Global/Generic Rules:** [scala-rules.md](scala-rules.md)
+           |
+           |All rules and guidelines are automatically kept in sync by the `Setup.scala` tool when features are added or removed.
+           |""".stripMargin
+
+      val startRulesIdx = content.indexOf("## 3. LLM Configuration")
+      if startRulesIdx != -1 then
+        content = content.substring(0, startRulesIdx) + newLlmSection
+      else
+        // Try fallback with the old section name
+        val startRulesIdxFallback = content.indexOf("## 3. LLM Configuration & Shared Rules")
+        if startRulesIdxFallback != -1 then
+          content = content.substring(0, startRulesIdxFallback) + newLlmSection
+
+      val finalContent = content.replace("$$targetDir", ".")
+      os.write.over(file, finalContent)
+      println(s"✓ Updated key commands and LLM instructions section in ${file.last}")
