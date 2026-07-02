@@ -42,8 +42,6 @@ object Setup:
     Feature("performance-testing", "Quality Assurance", "JMH Performance Testing", "Enable JMH performance testing? (yes/no)", "no"),
 
     // 4. Proposed Utilities (Additions)
-    Feature("formatting", "Developer Tooling", "Scalafmt Formatting", "Enable Scalafmt configuration? (yes/no)", "yes"),
-    Feature("linting", "Developer Tooling", "Scalafix Linter", "Enable Scalafix? (yes/no)", "no"),
     Feature("optics", "Data Utilities", "Monocle Optics", "Enable Monocle (lenses/optics for immutable structures)? (yes/no)", "no"),
     Feature("dto-mapping", "Data Utilities", "Chimney DTO Mapping", "Enable Chimney (type-safe data transformation)? (yes/no)", "no"),
     Feature("api-docs", "Ecosystem", "Tapir API Documentation", "Enable Tapir (declarative endpoints)? (yes/no)", "no")
@@ -310,14 +308,6 @@ object Setup:
         case "performance-testing" =>
           if combinedBuildContent.contains("jmh-core") then "yes" else "no"
 
-        // 15. Formatting
-        case "formatting" =>
-          if os.exists(target / ".scalafmt.conf") then "yes" else "no"
-
-        // 16. Linting
-        case "linting" =>
-          if os.exists(target / ".scalafix.conf") then "yes" else "no"
-
         // 17. Optics (Monocle)
         case "optics" =>
           if combinedBuildContent.contains("monocle-core") then "yes" else "no"
@@ -487,15 +477,11 @@ object Setup:
       os.write(gitignore, "out/\n.bsp/\n.metals/\n.vscode/\n.idea/\n.DS_Store\n")
 
     // Write/Remove .scalafmt.conf
+    // Write .scalafmt.conf (always enabled)
     val scalafmt = target / ".scalafmt.conf"
-    if answers.getOrElse("formatting", "no").toLowerCase == "yes" then
-      if !os.exists(scalafmt) then
-        os.write(scalafmt, "version = \"3.8.1\"\nrunner.dialect = scala3\n")
-        println("✓ Created Scalafmt configuration (.scalafmt.conf)")
-    else
-      if os.exists(scalafmt) then
-        os.remove(scalafmt)
-        println("✓ Removed Scalafmt configuration (.scalafmt.conf)")
+    if !os.exists(scalafmt) then
+      os.write(scalafmt, "version = \"3.8.1\"\nrunner.dialect = scala3\n")
+      println("✓ Created Scalafmt configuration (.scalafmt.conf)")
 
     // Write/Remove Stryker4s config
     val strykerConf = target / "stryker4s.conf"
@@ -508,22 +494,17 @@ object Setup:
         os.remove(strykerConf)
         println("✓ Removed Stryker4s configuration (stryker4s.conf)")
 
-    // Write/Remove .scalafix.conf
+    // Write .scalafix.conf (always enabled)
     val scalafixConf = target / ".scalafix.conf"
-    if answers.getOrElse("linting", "no").toLowerCase == "yes" then
-      if !os.exists(scalafixConf) then
-        os.write(scalafixConf, """rules = [
-                                 |  OrganizeImports,
-                                 |  DisableSyntax,
-                                 |  LeakingImplicitClassVal,
-                                 |  NoValInForComprehension
-                                 |]
-                                 |""".stripMargin)
-        println("✓ Created Scalafix configuration (.scalafix.conf)")
-    else
-      if os.exists(scalafixConf) then
-        os.remove(scalafixConf)
-        println("✓ Removed Scalafix configuration (.scalafix.conf)")
+    if !os.exists(scalafixConf) then
+      os.write(scalafixConf, """rules = [
+                               |  OrganizeImports,
+                               |  DisableSyntax,
+                               |  LeakingImplicitClassVal,
+                               |  NoValInForComprehension
+                               |]
+                               |""".stripMargin)
+      println("✓ Created Scalafix configuration (.scalafix.conf)")
 
     // Setup/Remove GitHub Flow CI Workflow
     val workflowDir = target / ".github" / "workflows"
@@ -742,17 +723,33 @@ object Setup:
     deps.foreach(dep => addDepToSbt("dependencies", dep))
     testDeps.foreach(dep => addDepToSbt("test-dependencies", dep))
 
-    if plugins.nonEmpty then
-      val pluginsSbt = sbtFile / os.up / "project" / "plugins.sbt"
-      var pluginsContent = if os.exists(pluginsSbt) then os.read(pluginsSbt) else ""
-      plugins.foreach { plugin =>
-        val pluginPart = plugin.split("::").head
-        if !pluginsContent.contains(pluginPart) then
-          val sbtPlugin = convertToSbtPlugin(plugin)
-          pluginsContent += s"\naddSbtPlugin($sbtPlugin)"
-          println(s"✓ Added plugin to project/plugins.sbt: $sbtPlugin")
-      }
-      os.write.over(pluginsSbt, pluginsContent)
+    val pluginsSbt = sbtFile / os.up / "project" / "plugins.sbt"
+    var pluginsContent = if os.exists(pluginsSbt) then os.read(pluginsSbt) else ""
+    
+    val requiredPlugins = List(
+      "addSbtPlugin(\"ch.epfl.scala\" % \"sbt-scalafix\" % \"0.11.1\")",
+      "addSbtPlugin(\"org.scalameta\" % \"sbt-scalafmt\" % \"2.5.2\")"
+    )
+    
+    requiredPlugins.foreach { p =>
+      val pPart = p.split("%")(1).trim.replace("\"", "")
+      if !pluginsContent.contains(pPart) then
+        pluginsContent += s"\n$p"
+        println(s"✓ Added plugin to project/plugins.sbt: $pPart")
+    }
+
+    plugins.foreach { plugin =>
+      val pluginPart = plugin.split("::").head
+      if !pluginsContent.contains(pluginPart) then
+        val sbtPlugin = convertToSbtPlugin(plugin)
+        pluginsContent += s"\naddSbtPlugin($sbtPlugin)"
+        println(s"✓ Added plugin to project/plugins.sbt: $sbtPlugin")
+    }
+    
+    val parentDir = pluginsSbt / os.up
+    if !os.exists(parentDir) then
+      os.makeDir.all(parentDir)
+    os.write.over(pluginsSbt, pluginsContent)
 
     os.write.over(sbtFile, content)
 
@@ -810,17 +807,12 @@ object Setup:
     sb.append("# Scala 3 LLM Guidelines & Coding Rules\n\n")
     sb.append("You are acting as an expert Scala engineer. When writing, refactoring, or reviewing Scala code in this codebase, you must follow these rules strictly:\n\n")
     
-    sb.append("## 1. Syntax & Style (Scala 3)\n")
-    sb.append("* Use the new Scala 3 optional braces syntax (significant indentation).\n")
-    sb.append("* Do not write curly braces `{}` for packages, classes, methods, or control flow unless necessary.\n")
-    sb.append("* Indentation size: 2 spaces.\n")
-    sb.append("* Avoid using semicolons.\n\n")
+    sb.append("## 1. Syntax & Style\n")
+    sb.append("* Syntax and coding styles are controlled automatically by Scalafmt and Scalafix linting rules. Do not manually format code in ways that violate these configurations; rely on automatic formatting and fixing tools.\n\n")
 
     sb.append("## 2. Functional Programming Standards\n")
-    sb.append("* **Immutability First**: Use `val` for all variables. Do not use `var` unless absolutely required for performance in a local loop.\n")
-    sb.append("* **Immutable Collections**: Always use standard immutable collections (`List`, `Vector`, `Map`, `Set`).\n")
-    sb.append("* **No Nulls**: Do not return `null` or use `Option.get`. Always handle optionals safely using pattern matching.\n")
-    sb.append("* **Error Handling**: Do not throw custom exceptions. Instead, return failures explicitly using `Either` or `Try`.\n\n")
+    sb.append("* **Pure FP Style**: Always write code in a pure functional programming style.\n")
+    sb.append("* **Consequences**: Avoid mutable state (`var`), handle all side effects explicitly, never return or use `null`, and represent errors explicitly using type-safe structures like `Either`, `Try`, or monadic effects.\n\n")
 
     val crossComp = answers.getOrElse("cross-version", "no").toLowerCase == "yes"
     if crossComp then
@@ -835,10 +827,10 @@ object Setup:
     val eco = answers.getOrElse("ecosystem", "none").toLowerCase
     if eco == "typelevel" then
       sb.append("## 4. Cats & Cats Effect (Typelevel Ecosystem)\n")
-      sb.append("* Use `cats.effect.IO` to model all side effects. Do not use `scala.concurrent.Future`.\n")
+      sb.append("* Use Cats Effect for managing side effects and concurrency.\n")
+      sb.append("* **Abstraction First**: Prefer programming to abstract typeclasses (e.g., `Monad`, `Sync`, `Concurrent`, `Temporal`, `ApplicativeError`) instead of concrete types/instances (like `IO`) to ensure generic, composable, and easily testable code.\n")
       sb.append("* Avoid running IO unsafely (never call `unsafeRunSync`). Let the runtime execute the IO at the application entry point (`IOApp`).\n")
-      sb.append("* Use cats syntax import (`import cats.syntax.all.*`) for map, flatMap, traverse, sequence, etc.\n")
-      sb.append("* Leverage typeclasses (`Monad`, `Applicative`, `Functor`) where appropriate for abstraction.\n\n")
+      sb.append("* Use cats syntax import (`import cats.syntax.all.*`) for map, flatMap, traverse, sequence, etc.\n\n")
     else if eco == "zio" then
       sb.append("## 4. ZIO Ecosystem\n")
       sb.append("* Use `zio.ZIO` to model all side effects. Do not use `scala.concurrent.Future`.\n")
@@ -898,11 +890,19 @@ object Setup:
     if testTools.contains("munit") || testTools.contains("shapeless") then
       sb.append("## 9. Testing Guidelines (MUnit)\n")
       sb.append("* Write tests using **MUnit**. Extend `munit.FunSuite`.\n")
+      sb.append("* **Preferred Styles**: Prefer Property-Based (PB) testing, Golden (snapshot) testing, and mutation testing via Stryker4s.\n")
+      sb.append("* **Formal Verification**: Search for opportunities to apply Stainless formal verification to functional properties and core logic.\n")
       sb.append("* Leverage MUnit assertions like `assertEquals`, `assertNotEquals`, `intercept`.\n\n")
     else if testTools.contains("zio") then
       sb.append("## 9. Testing Guidelines (ZIO Test)\n")
       sb.append("* Write tests using **ZIO Test**. Extend `ZIOSpecDefault`.\n")
+      sb.append("* **Preferred Styles**: Prefer Property-Based (PB) testing, Golden (snapshot) testing, and mutation testing via Stryker4s.\n")
+      sb.append("* **Formal Verification**: Search for opportunities to apply Stainless formal verification to functional properties and core logic.\n")
       sb.append("* Use assertion macros like `assertZIO`, `assertTrue`.\n\n")
+    else
+      sb.append("## 9. Testing Guidelines\n")
+      sb.append("* **Preferred Styles**: Prefer Property-Based (PB) testing, Golden (snapshot) testing, and mutation testing via Stryker4s.\n")
+      sb.append("* **Formal Verification**: Search for opportunities to apply Stainless formal verification to functional properties and core logic.\n\n")
 
     val hasStainless = answers.getOrElse("stainless", "no").toLowerCase.startsWith("y")
     if hasStainless then
@@ -924,15 +924,9 @@ object Setup:
       sb.append("* Annotate benchmark classes with `@State(Scope.Thread)` and methods with `@Benchmark`.\n")
       sb.append("* Avoid side effects or compiler optimizations (like dead code elimination) from skewing benchmark results (use `Blackhole` if necessary).\n\n")
 
-    val hasFormatting = answers.getOrElse("formatting", "no").toLowerCase.startsWith("y")
-    val hasLinting = answers.getOrElse("linting", "no").toLowerCase.startsWith("y")
-    if hasFormatting || hasLinting then
-      sb.append("## 13. Code Quality (Scalafmt & Scalafix)\n")
-      if hasFormatting then
-        sb.append("* Keep code formatted via Scalafmt rules.\n")
-      if hasLinting then
-        sb.append("* Use Scalafix to organize imports and remove unused imports or syntax warnings automatically.\n")
-      sb.append("\n")
+    sb.append("## 13. Code Quality (Scalafmt & Scalafix)\n")
+    sb.append("* Keep code formatted via Scalafmt rules.\n")
+    sb.append("* Use Scalafix to organize imports and remove unused imports or syntax warnings automatically.\n\n")
 
     val hasOptics = answers.getOrElse("optics", "no").toLowerCase.startsWith("y")
     if hasOptics then
@@ -950,6 +944,9 @@ object Setup:
       sb.append("* Define endpoints using Tapir for declarative, type-safe API descriptions.\n")
       sb.append("* Generate OpenAPI documentation from Tapir endpoints.\n\n")
 
+    sb.append("## 17. Project Maintenance\n")
+    sb.append("* **Scala Steward**: Periodically run Scala Steward updates to keep the project's dependencies and compiler plugins up-to-date.\n\n")
+
     sb.toString()
 
   def updateGuideFile(file: os.Path, answers: Map[String, String]): Unit =
@@ -958,8 +955,8 @@ object Setup:
       
       val buildTool = answers.getOrElse("build-tool", "mill").toLowerCase
       val hasStryker = answers.getOrElse("stryker", "no").toLowerCase.startsWith("y")
-      val hasFormatting = answers.getOrElse("formatting", "no").toLowerCase.startsWith("y")
-      val hasLinting = answers.getOrElse("linting", "no").toLowerCase.startsWith("y")
+      val hasFormatting = true
+      val hasLinting = true
 
       val compileCmd = if buildTool == "sbt" then "sbt compile"
                        else if buildTool == "scala-cli" then "scala-cli compile ."
@@ -1001,7 +998,8 @@ object Setup:
            || :--- | :--- |
            || **Compile Project** | `$compileCmd` |
            || **Run Application** | `$runCmd` |
-           || **Run Unit Tests** | `$testCmd` |""".stripMargin + strykerRow + formatRow + lintRow
+           || **Run Unit Tests** | `$testCmd` |
+           || **Run Scala Steward** | `scala-steward` |""".stripMargin + strykerRow + formatRow + lintRow
 
       // Replace from "## 1. Key Commands" to the next "---" (skipping the "---" inside the table header)
       val startIdx = content.indexOf("## 1. Key Commands")

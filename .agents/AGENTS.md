@@ -2,17 +2,12 @@
 
 You are acting as an expert Scala engineer. When writing, refactoring, or reviewing Scala code in this codebase, you must follow these rules strictly:
 
-## 1. Syntax & Style (Scala 3)
-* Use the new Scala 3 optional braces syntax (significant indentation).
-* Do not write curly braces `{}` for packages, classes, methods, or control flow unless necessary.
-* Indentation size: 2 spaces.
-* Avoid using semicolons.
+## 1. Syntax & Style
+* Syntax and coding styles are controlled automatically by Scalafmt and Scalafix linting rules. Do not manually format code in ways that violate these configurations; rely on automatic formatting and fixing tools.
 
 ## 2. Functional Programming Standards
-* **Immutability First**: Use `val` for all variables. Do not use `var` unless absolutely required for performance in a local loop.
-* **Immutable Collections**: Always use standard immutable collections (`List`, `Vector`, `Map`, `Set`).
-* **No Nulls**: Do not return `null` or use `Option.get`. Always handle optionals safely using pattern matching.
-* **Error Handling**: Do not throw custom exceptions. Instead, return failures explicitly using `Either` or `Try`.
+* **Pure FP Style**: Always write code in a pure functional programming style.
+* **Consequences**: Avoid mutable state (`var`), handle all side effects explicitly, never return or use `null`, and represent errors explicitly using type-safe structures like `Either`, `Try`, or monadic effects.
 
 ## 3. Scala 3 Features
 * Feel free to use advanced Scala 3 features: `given`/`using` for implicits, `enum` for ADTs, extension methods, type lambdas, and union/intersection types.
@@ -23,6 +18,8 @@ You are acting as an expert Scala engineer. When writing, refactoring, or review
 
 ## 9. Testing Guidelines (MUnit)
 * Write tests using **MUnit**. Extend `munit.FunSuite`.
+* **Preferred Styles**: Prefer Property-Based (PB) testing, Golden (snapshot) testing, and mutation testing via Stryker4s.
+* **Formal Verification**: Search for opportunities to apply Stainless formal verification to functional properties and core logic.
 * Leverage MUnit assertions like `assertEquals`, `assertNotEquals`, `intercept`.
 
 ## 11. Mutation Testing (Stryker)
@@ -32,4 +29,7 @@ You are acting as an expert Scala engineer. When writing, refactoring, or review
 ## 13. Code Quality (Scalafmt & Scalafix)
 * Keep code formatted via Scalafmt rules.
 * Use Scalafix to organize imports and remove unused imports or syntax warnings automatically.
+
+## 17. Project Maintenance
+* **Scala Steward**: Periodically run Scala Steward updates to keep the project's dependencies and compiler plugins up-to-date.
 

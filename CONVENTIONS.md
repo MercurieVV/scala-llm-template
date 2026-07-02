@@ -13,6 +13,7 @@ Use the following commands to build, test, and format the project:
 | **Compile Project** | `scala-cli compile .` |
 | **Run Application** | `scala-cli run .` |
 | **Run Unit Tests** | `scala-cli test .` |
+| **Run Scala Steward** | `scala-steward` |
 | **Run Mutation Tests** | `stryker4s run` |
 | **Format Code** | `scala-cli fmt .` |
 | **Lint Code** | `scala-cli --power scalafix .` |
