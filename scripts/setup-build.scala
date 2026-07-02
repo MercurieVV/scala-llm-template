@@ -10,7 +10,13 @@ object SetupBuild:
   var defaultScalaVersion = "3.8.4"
 
   def main(args: Array[String]): Unit =
-    val repoRoot = os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
+    val repoRoot = args.headOption match
+      case Some(path) => os.Path(path, os.pwd)
+      case None =>
+        try
+          os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
+        catch
+          case _: Exception => os.pwd
     val configPath = repoRoot / ".agents" / "setup_config.json"
     
     val answers = if os.exists(configPath) then

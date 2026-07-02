@@ -134,11 +134,23 @@ object Setup:
     val scriptsDir = targetDir / "scripts"
     os.makeDir.all(scriptsDir)
 
+    // Copy Setup.scala and setup scripts if initializing a different folder
+    if targetDir != os.pwd then
+      os.copy.over(os.pwd / "Setup.scala", targetDir / "Setup.scala")
+      val setupScripts = List("setup-build.scala", "setup-git-hooks.scala", "setup-llm-rules.scala", "setup-mdoc.scala")
+      setupScripts.foreach { name =>
+        val src = os.pwd / "scripts" / name
+        if os.exists(src) then
+          os.copy.over(src, scriptsDir / name)
+          try { os.perms.set(scriptsDir / name, "rwxr-xr-x") } catch { case _: Exception => }
+      }
+      println("✓ Copied setup orchestrator and scripts to target project")
+
     // Execute sub-scripts via scala-cli run
-    os.proc("scala-cli", "run", "scripts/setup-build.scala", "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
-    os.proc("scala-cli", "run", "scripts/setup-git-hooks.scala", "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
-    os.proc("scala-cli", "run", "scripts/setup-llm-rules.scala", "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
-    os.proc("scala-cli", "run", "scripts/setup-mdoc.scala", "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
+    os.proc("scala-cli", "run", (scriptsDir / "setup-build.scala").toString, "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
+    os.proc("scala-cli", "run", (scriptsDir / "setup-git-hooks.scala").toString, "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
+    os.proc("scala-cli", "run", (scriptsDir / "setup-llm-rules.scala").toString, "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
+    os.proc("scala-cli", "run", (scriptsDir / "setup-mdoc.scala").toString, "--", targetDir.toString).call(stdout = os.Inherit, stderr = os.Inherit)
 
     // 7. Stage everything to Git
     if !os.exists(targetDir / ".git") then
