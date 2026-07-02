@@ -460,10 +460,14 @@ object Setup:
     if hasApiDocs then
       deps = deps :+ "com.softwaremill.sttp.tapir::tapir-core:1.10.0"
 
+    // Always add Wartremover compiler plugin for non-SBT builds (Mill, Scala CLI)
+    val buildTool = answers.getOrElse("build-tool", "mill").toLowerCase
+    val finalPlugins = if buildTool != "sbt" then plugins :+ "org.wartremover::wartremover:3.2.5" else plugins
+
     println("\nResolving latest library versions from Maven Central...")
     val resolvedDeps = deps.map(dep => resolveLatestVersion(dep, scalaVer))
     val resolvedTestDeps = testDeps.map(dep => resolveLatestVersion(dep, scalaVer))
-    val resolvedPlugins = plugins.map(plugin => resolveLatestVersion(plugin, scalaVer))
+    val resolvedPlugins = finalPlugins.map(plugin => resolveLatestVersion(plugin, scalaVer))
 
     (resolvedDeps, resolvedTestDeps, resolvedPlugins)
 
@@ -576,7 +580,6 @@ object Setup:
     plugins: List[String]
   ): Unit =
     val crossComp = answers.getOrElse("cross-version", "no").toLowerCase == "yes"
-    
     val template = if crossComp then
       s"""import mill._, scalalib._
          |
@@ -585,7 +588,7 @@ object Setup:
          |
          |object app extends Cross[AppModule](scala3, scala213)
          |trait AppModule extends CrossScalaModule {
-         |  def scalacOptions = Seq("-Ysemanticdb")
+         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe")
          |  def ivyDeps = Agg(
          |    // [dependencies-start]
          |    // [dependencies-end]
@@ -610,7 +613,7 @@ object Setup:
          |
          |object app extends ScalaModule {
          |  def scalaVersion = "$scalaVer"
-         |  def scalacOptions = Seq("-Ysemanticdb")
+         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe")
          |  def ivyDeps = Agg(
          |    // [dependencies-start]
          |    // [dependencies-end]
@@ -638,18 +641,20 @@ object Setup:
       val hasCrossModule = content.contains("CrossScalaModule")
       if hasCrossModule != crossComp then
         os.write.over(buildFile, template)
-    
+     
     var content = os.read(buildFile)
-    
+     
     if !crossComp then
       val scalaVerRegex = """def scalaVersion\s*=\s*"[^"]*"""".r
       content = scalaVerRegex.replaceFirstIn(content, s"""def scalaVersion = "$scalaVer"""")
 
     if !content.contains("scalacOptions") then
       if content.contains("extends ScalaModule") then
-        content = content.replace("extends ScalaModule {", "extends ScalaModule {\n  def scalacOptions = Seq(\"-Ysemanticdb\")")
+        content = content.replace("extends ScalaModule {", "extends ScalaModule {\n  def scalacOptions = Seq(\"-Ysemanticdb\", \"-P:wartremover:traverser:org.wartremover.warts.Unsafe\")")
       else if content.contains("extends CrossScalaModule") then
-        content = content.replace("extends CrossScalaModule {", "extends CrossScalaModule {\n  def scalacOptions = Seq(\"-Ysemanticdb\")")
+        content = content.replace("extends CrossScalaModule {", "extends CrossScalaModule {\n  def scalacOptions = Seq(\"-Ysemanticdb\", \"-P:wartremover:traverser:org.wartremover.warts.Unsafe\")")
+    else if !content.contains("wartremover") then
+      content = content.replace("Seq(\"-Ysemanticdb\")", "Seq(\"-Ysemanticdb\", \"-P:wartremover:traverser:org.wartremover.warts.Unsafe\")")
 
     def addDepToContent(section: String, dep: String): Unit =
       val depPart = dep.split("::").head
@@ -686,6 +691,8 @@ object Setup:
          |
          |scalacOptions ++= Seq("-Ysemanticdb")
          |
+         |wartremoverErrors ++= Warts.unsafe
+         |
          |libraryDependencies ++= Seq(
          |  // [dependencies-start]
          |  // [dependencies-end]
@@ -711,6 +718,9 @@ object Setup:
 
     var content = os.read(sbtFile)
 
+    if !content.contains("wartremoverErrors") then
+      content = content.replace("scalacOptions ++= Seq(\"-Ysemanticdb\")", "scalacOptions ++= Seq(\"-Ysemanticdb\")\n\nwartremoverErrors ++= Warts.unsafe")
+
     def addDepToSbt(section: String, dep: String): Unit =
       val depPart = dep.split("::").head
       if !content.contains(depPart) then
@@ -728,7 +738,8 @@ object Setup:
     
     val requiredPlugins = List(
       "addSbtPlugin(\"ch.epfl.scala\" % \"sbt-scalafix\" % \"0.11.1\")",
-      "addSbtPlugin(\"org.scalameta\" % \"sbt-scalafmt\" % \"2.5.2\")"
+      "addSbtPlugin(\"org.scalameta\" % \"sbt-scalafmt\" % \"2.5.2\")",
+      "addSbtPlugin(\"org.wartremover\" % \"sbt-wartremover\" % \"3.2.5\")"
     )
     
     requiredPlugins.foreach { p =>
@@ -781,7 +792,9 @@ object Setup:
   ): Unit =
     var lines = List(
       s"//> using scala $scalaVer",
-      "//> using options -Ysemanticdb"
+      "//> using options -Ysemanticdb",
+      "//> using options -P:wartremover:traverser:org.wartremover.warts.Unsafe",
+      "//> using exclude Setup.scala"
     )
 
     deps.foreach { dep =>
@@ -924,9 +937,10 @@ object Setup:
       sb.append("* Annotate benchmark classes with `@State(Scope.Thread)` and methods with `@Benchmark`.\n")
       sb.append("* Avoid side effects or compiler optimizations (like dead code elimination) from skewing benchmark results (use `Blackhole` if necessary).\n\n")
 
-    sb.append("## 13. Code Quality (Scalafmt & Scalafix)\n")
+    sb.append("## 13. Code Quality (Scalafmt, Scalafix, Wartremover)\n")
     sb.append("* Keep code formatted via Scalafmt rules.\n")
-    sb.append("* Use Scalafix to organize imports and remove unused imports or syntax warnings automatically.\n\n")
+    sb.append("* Use Scalafix to organize imports and remove unused imports or syntax warnings automatically.\n")
+    sb.append("* **Wartremover**: Pure functional programming safety is checked via Wartremover's Unsafe warts. Ensure your code does not trigger any unsafe warts (such as `Null`, `Var`, `Throw`, `Return`, `IsInstanceOf`, `AsInstanceOf`).\n\n")
 
     val hasOptics = answers.getOrElse("optics", "no").toLowerCase.startsWith("y")
     if hasOptics then

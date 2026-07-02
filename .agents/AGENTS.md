@@ -26,9 +26,10 @@ You are acting as an expert Scala engineer. When writing, refactoring, or review
 * Write comprehensive tests that verify behavior under mutation.
 * Ensure tests are not brittle or order-dependent.
 
-## 13. Code Quality (Scalafmt & Scalafix)
+## 13. Code Quality (Scalafmt, Scalafix, Wartremover)
 * Keep code formatted via Scalafmt rules.
 * Use Scalafix to organize imports and remove unused imports or syntax warnings automatically.
+* **Wartremover**: Pure functional programming safety is checked via Wartremover's Unsafe warts. Ensure your code does not trigger any unsafe warts (such as `Null`, `Var`, `Throw`, `Return`, `IsInstanceOf`, `AsInstanceOf`).
 
 ## 17. Project Maintenance
 * **Scala Steward**: Periodically run Scala Steward updates to keep the project's dependencies and compiler plugins up-to-date.
