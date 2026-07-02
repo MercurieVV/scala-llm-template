@@ -186,8 +186,11 @@ object Setup:
       "=== Scala Project Setup & Update (Mill/SBT/Scala-CLI + Global Rules) ==="
     )
 
+    val isAgent = args.contains("--agent")
+    val cleanArgs = args.filter(_ != "--agent")
+
     // Determine target directory
-    val targetDir = args.headOption match
+    val targetDir = cleanArgs.headOption match
       case Some(".") | None => os.pwd
       case Some(path)       =>
         val d = os.Path(path, os.pwd)
@@ -230,7 +233,8 @@ object Setup:
     // 3. Prompt features
     val featuresToPrompt =
       detectExistingDefaults(targetDir, getFeaturesList, existingAnswers)
-    val answers = promptFeaturesGrouped(featuresToPrompt)
+    val answers = if isAgent then getAgentAnswers(featuresToPrompt)
+    else promptFeaturesGrouped(featuresToPrompt)
     val finalScalaVer = answers.getOrElse("scala-version", defaultScalaVersion)
 
     // 4. Save config to .agents/setup_config.json
@@ -378,6 +382,36 @@ object Setup:
           .map(_.group(1))
           .orElse(LatestRegex.findFirstMatchIn(xml).map(_.group(1)))
     catch case _: Exception => None
+
+  def getAgentAnswers(features: List[Feature]): Map[String, String] =
+    val featuresJson = ujson.Arr(
+      features.map { f =>
+        ujson.Obj(
+          "id" -> f.id,
+          "group" -> f.group,
+          "name" -> f.name,
+          "prompt" -> f.prompt,
+          "default" -> f.defaultValue
+        )
+      }*
+    )
+    println("[AGENT_MODE_START]")
+    println(featuresJson.render())
+    println("[AGENT_MODE_END]")
+
+    val input = readLine()
+    if input == null || input.trim.isEmpty then
+      features.map(f => f.id -> f.defaultValue).toMap
+    else
+      try
+        val parsed = ujson.read(input).obj.map((k, v) => k -> v.str).toMap
+        features.map { f =>
+          f.id -> parsed.getOrElse(f.id, f.defaultValue)
+        }.toMap
+      catch
+        case _: Exception =>
+          println("⚠️ Failed to parse agent JSON response. Using defaults.")
+          features.map(f => f.id -> f.defaultValue).toMap
 
   def promptFeaturesGrouped(features: List[Feature]): Map[String, String] =
     val grouped = features.groupBy(_.group)
