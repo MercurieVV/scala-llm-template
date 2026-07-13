@@ -1,7 +1,22 @@
-//> using scala 3.3.3
+//> using scala 3.8.4
+//> using file ../arrowstep/app/src
+//> using dep org.typelevel::cats-core:2.13.0
+//> using dep org.typelevel::cats-effect:3.7.0
 //> using dep com.lihaoyi::os-lib:0.11.8
-//> using dep com.lihaoyi::ujson:3.1.4
+//> using dep com.lihaoyi::ujson:4.4.3
 
+import arrowstep.core.{
+  AskInput,
+  Flow,
+  ProgramSays,
+  Question,
+  QuestionKind,
+  Validator,
+  ValidAnswers
+}
+import arrowstep.runtime.{AgentArgs, AgentMain, AnswerLog, ReplayAsk}
+import cats.effect.{ExitCode, IO, IOApp}
+import cats.syntax.all.*
 import scala.io.StdIn.readLine
 
 case class Feature(
@@ -12,10 +27,10 @@ case class Feature(
     defaultValue: String
 )
 
-object Setup:
-  var defaultScalaVersion = "3.8.4"
+object Setup extends IOApp:
+  private val OfflineScalaVersion = "3.3.3"
 
-  val getFeaturesList = List(
+  def getFeaturesList(defaultScalaVersion: String): List[Feature] = List(
     // 1. Build & Compilation
     Feature(
       "scala-version",
@@ -181,67 +196,175 @@ object Setup:
     )
   )
 
-  def main(args: Array[String]): Unit =
-    println(
-      "=== Scala Project Setup & Update (Mill/SBT/Scala-CLI + Global Rules) ==="
-    )
+  def run(args: List[String]): IO[ExitCode] =
+    AgentArgs.parseKnown(args) match
+      case Left(message) =>
+        IO(Console.err.println(message)).as(ExitCode.Error)
+      case Right(parsed) =>
+        runParsed(parsed.args, parsed.rest)
 
-    val isAgent = args.contains("--agent")
-    val cleanArgs = args.filter(_ != "--agent")
+  private def runParsed(
+      runtimeArgs: AgentArgs,
+      consumerArgs: List[String]
+  ): IO[ExitCode] =
+    for
+      targetDir <- IO.blocking(resolveTargetDir(consumerArgs))
+      _ <- prepareAnswerLog(targetDir, runtimeArgs)
+      featuresToPrompt <- prepareFeatures(targetDir)
+      program = setupProgram(runtimeArgs, targetDir, featuresToPrompt)
+      exitCode <-
+        if runtimeArgs.agent then AgentMain.run[IO](program).flatMap(emit)
+        else program.void.as(ExitCode.Success)
+    yield exitCode
 
-    // Determine target directory
-    val targetDir = cleanArgs.headOption match
+  private def setupProgram(
+      runtimeArgs: AgentArgs,
+      targetDir: os.Path,
+      featuresToPrompt: List[Feature]
+  ): IO[ProgramSays[ujson.Value]] =
+    for
+      answers <-
+        if runtimeArgs.agent then setupFlow(targetDir).run(featuresToPrompt)
+        else IO.blocking(promptFeaturesGrouped(featuresToPrompt))
+      result <- writeProject(targetDir, answers)
+    yield ProgramSays.Done(result)
+
+  private def resolveTargetDir(args: List[String]): os.Path =
+    args.headOption match
       case Some(".") | None => os.pwd
       case Some(path)       =>
         val d = os.Path(path, os.pwd)
         if !os.exists(d) then os.makeDir.all(d)
         d
 
-    val buildFile = targetDir / "build.sc"
-    val buildSbtFile = targetDir / "build.sbt"
-    val projectScalaFile = targetDir / "project.scala"
-    val isExisting =
-      os.exists(buildFile) || os.exists(buildSbtFile) || os.exists(
-        projectScalaFile
-      )
-
-    if isExisting then
-      println(
-        s"Found existing project in $targetDir. Switching to update mode."
-      )
-    else println(s"Initializing new project in $targetDir...")
-
-    // 1. Resolve latest stable Scala version
-    println("Resolving latest stable Scala 3 version from Maven Central...")
-    fetchLatestStableVersion("org.scala-lang", "scala3-compiler_3") match
-      case Some(ver) =>
-        println(s"✓ Found latest stable Scala 3 version: $ver")
-        defaultScalaVersion = ver
-      case None =>
-        println(
-          "⚠️ Could not fetch latest Scala version. Using offline fallback: 3.3.3"
+  private def prepareFeatures(targetDir: os.Path): IO[List[Feature]] =
+    for
+      _ <- IO(
+        Console.err.println(
+          "=== Scala Project Setup & Update (Mill/SBT/Scala-CLI + Global Rules) ==="
         )
-        defaultScalaVersion = "3.3.3"
+      )
+      isExisting <- IO.blocking(projectExists(targetDir))
+      _ <-
+        if isExisting then
+          IO(
+            Console.err.println(
+              s"Found existing project in $targetDir. Switching to update mode."
+            )
+          )
+        else
+          IO(Console.err.println(s"Initializing new project in $targetDir..."))
+      _ <- IO(
+        Console.err.println(
+          "Resolving latest stable Scala 3 version from Maven Central..."
+        )
+      )
+      defaultScalaVersion <- IO
+        .blocking(
+          fetchLatestStableVersion("org.scala-lang", "scala3-compiler_3")
+        )
+        .flatMap {
+          case Some(ver) =>
+            IO(
+              Console.err
+                .println(s"✓ Found latest stable Scala 3 version: $ver")
+            ).as(ver)
+          case None =>
+            IO(
+              Console.err.println(
+                s"⚠️ Could not fetch latest Scala version. Using offline fallback: $OfflineScalaVersion"
+              )
+            )
+              .as(OfflineScalaVersion)
+        }
+      existingAnswers <- IO.blocking(readExistingAnswers(targetDir))
+      features <- IO.blocking(
+        detectExistingDefaults(
+          targetDir,
+          getFeaturesList(defaultScalaVersion),
+          existingAnswers
+        )
+      )
+    yield features
 
-    // 2. Load existing answers if available
+  private def projectExists(targetDir: os.Path): Boolean =
+    os.exists(targetDir / "build.sc") || os.exists(
+      targetDir / "build.sbt"
+    ) || os.exists(targetDir / "project.scala")
+
+  private def readExistingAnswers(targetDir: os.Path): Map[String, String] =
     val configPath = targetDir / ".agents" / "setup_config.json"
-    val existingAnswers = if os.exists(configPath) then
+    if os.exists(configPath) then
       try ujson.read(os.read(configPath)).obj.map((k, v) => k -> v.str).toMap
       catch case _: Exception => Map.empty[String, String]
     else Map.empty[String, String]
 
-    // 3. Prompt features
-    val featuresToPrompt =
-      detectExistingDefaults(targetDir, getFeaturesList, existingAnswers)
-    val answers = if isAgent then getAgentAnswers(featuresToPrompt)
-    else promptFeaturesGrouped(featuresToPrompt)
-    val finalScalaVer = answers.getOrElse("scala-version", defaultScalaVersion)
+  private def prepareAnswerLog(targetDir: os.Path, args: AgentArgs): IO[Unit] =
+    val reset = if args.reset then AnswerLog.reset[IO](targetDir) else IO.unit
+    reset *> args.inlineAnswers.fold(IO.unit) { inline =>
+      AnswerLog
+        .read[IO](targetDir)
+        .flatMap(existing =>
+          AnswerLog.write[IO](targetDir, AnswerLog.merge(existing, inline))
+        )
+    }
 
+  private def emit(outcome: AgentMain.Outcome): IO[ExitCode] =
+    IO.blocking {
+      if outcome.stdout.nonEmpty then Console.out.println(outcome.stdout)
+      if outcome.stderr.nonEmpty then Console.err.println(outcome.stderr)
+    }.as(ExitCode(outcome.exitCode))
+
+  private def setupFlow(
+      targetDir: os.Path
+  ): Flow[IO, List[Feature], Map[String, String]] =
+    featuresInputFlow >>> ReplayAsk
+      .askUntilValid[IO](targetDir, Validator.basic[IO]) >>> validAnswersFlow
+
+  private val featuresInputFlow: Flow[IO, List[Feature], AskInput] =
+    Flow.lift { features =>
+      AskInput(
+        features.map(featureQuestion),
+        Some(
+          "Select scala-llm-template setup options. Use each default unless the project clearly needs a different value."
+        )
+      )
+    }
+
+  private val validAnswersFlow: Flow[IO, ValidAnswers, Map[String, String]] =
+    Flow.apply(valid => IO.pure(ValidAnswers.toMap(valid)))
+
+  private def featureQuestion(feature: Feature): Question =
+    Question(
+      feature.id,
+      feature.prompt,
+      featureKind(feature),
+      Some(feature.defaultValue),
+      None,
+      None
+    )
+
+  private def featureKind(feature: Feature): QuestionKind =
+    feature.id match
+      case "build-tool" => QuestionKind.Choice(List("mill", "sbt", "scala-cli"))
+      case "scripts"    => QuestionKind.Choice(List("scala-cli", "none"))
+      case "ecosystem"  => QuestionKind.Choice(List("typelevel", "zio", "none"))
+      case "test-tools" =>
+        QuestionKind.Choice(List("munit+shapeless", "zio-test", "none"))
+      case "scala-version" => QuestionKind.FreeText
+      case _               => QuestionKind.Choice(List("yes", "no"))
+
+  private def writeProject(
+      targetDir: os.Path,
+      answers: Map[String, String]
+  ): IO[ujson.Value] = IO.blocking {
+    val finalScalaVer = answers.getOrElse("scala-version", OfflineScalaVersion)
     // 4. Save config to .agents/setup_config.json
     os.makeDir.all(targetDir / ".agents")
+    val configPath = targetDir / ".agents" / "setup_config.json"
     val configContent = ujson.Obj.from(answers.map((k, v) => k -> ujson.Str(v)))
     os.write.over(configPath, configContent.render(indent = 2))
-    println("✓ Saved configuration to .agents/setup_config.json")
+    Console.err.println("✓ Saved configuration to .agents/setup_config.json")
 
     // 5. Initialize basic folder structures and configurations
     os.makeDir.all(targetDir / "app" / "src")
@@ -257,7 +380,7 @@ object Setup:
     val scalafmt = targetDir / ".scalafmt.conf"
     if !os.exists(scalafmt) then
       os.write(scalafmt, "version = \"3.8.1\"\nrunner.dialect = scala3\n")
-      println("✓ Created Scalafmt configuration (.scalafmt.conf)")
+      Console.err.println("✓ Created Scalafmt configuration (.scalafmt.conf)")
 
     val scalafixConf = targetDir / ".scalafix.conf"
     if !os.exists(scalafixConf) then
@@ -265,7 +388,7 @@ object Setup:
         scalafixConf,
         "rules = [\n  OrganizeImports,\n  DisableSyntax,\n  LeakingImplicitClassVal,\n  NoValInForComprehension\n]\n"
       )
-      println("✓ Created Scalafix configuration (.scalafix.conf)")
+      Console.err.println("✓ Created Scalafix configuration (.scalafix.conf)")
 
     val strykerConf = targetDir / "stryker4s.conf"
     if answers.getOrElse("stryker", "no").toLowerCase == "yes" then
@@ -274,13 +397,15 @@ object Setup:
           strykerConf,
           "stryker4s {\n  mutate: [ \"app/src/**/*.scala\" ]\n  reporters: [\"html\", \"json\"]\n  thresholds {\n    high = 80\n    low = 60\n    break = 0\n  }\n  debug {\n    log-test-runner-stdout = true\n  }\n}\n"
         )
-        println("✓ Created Stryker4s configuration (stryker4s.conf)")
+        Console.err.println(
+          "✓ Created Stryker4s configuration (stryker4s.conf)"
+        )
     else if os.exists(strykerConf) then
       os.remove(strykerConf)
-      println("✓ Removed Stryker4s configuration (stryker4s.conf)")
+      Console.err.println("✓ Removed Stryker4s configuration (stryker4s.conf)")
 
     // 6. Execute delegate scripts in sequence
-    println("\nRunning specialized setup scripts...")
+    Console.err.println("\nRunning specialized setup scripts...")
 
     val scriptsDir = targetDir / "scripts"
     os.makeDir.all(scriptsDir)
@@ -305,23 +430,28 @@ object Setup:
       (os.pwd / "scripts" / "setup-mdoc.scala").toString
     else s"$baseUrl/setup-mdoc.scala"
 
-    if useLocal then println("✓ Using local setup scripts cache")
+    if useLocal then Console.err.println("✓ Using local setup scripts cache")
     else
-      println("✓ Running setup scripts directly from remote GitHub repository")
+      Console.err.println(
+        "✓ Running setup scripts directly from remote GitHub repository"
+      )
+
+    val childStdout =
+      os.ProcessOutput.Readlines(line => Console.err.println(line))
 
     // Execute sub-scripts via scala-cli run
     os.proc("scala-cli", "run", buildScript, "--", targetDir.toString)
-      .call(stdout = os.Inherit, stderr = os.Inherit)
+      .call(stdout = childStdout, stderr = os.Inherit)
     os.proc("scala-cli", "run", hooksScript, "--", targetDir.toString)
-      .call(stdout = os.Inherit, stderr = os.Inherit)
+      .call(stdout = childStdout, stderr = os.Inherit)
     os.proc("scala-cli", "run", rulesScript, "--", targetDir.toString)
-      .call(stdout = os.Inherit, stderr = os.Inherit)
+      .call(stdout = childStdout, stderr = os.Inherit)
     os.proc("scala-cli", "run", mdocScript, "--", targetDir.toString)
-      .call(stdout = os.Inherit, stderr = os.Inherit)
+      .call(stdout = childStdout, stderr = os.Inherit)
 
     // Format everything using scalafmt before staging
     try {
-      println("Formatting project files (Scalafmt)...")
+      Console.err.println("Formatting project files (Scalafmt)...")
       os.proc("scala-cli", "fmt", ".")
         .call(cwd = targetDir, stdout = os.Pipe, stderr = os.Pipe)
     } catch {
@@ -330,23 +460,25 @@ object Setup:
 
     // 7. Stage everything to Git
     if !os.exists(targetDir / ".git") then
-      os.proc("git", "init").call(cwd = targetDir)
-    os.proc("git", "add", ".").call(cwd = targetDir)
+      os.proc("git", "init")
+        .call(cwd = targetDir, stdout = childStdout, stderr = os.Inherit)
+    os.proc("git", "add", ".")
+      .call(cwd = targetDir, stdout = childStdout, stderr = os.Inherit)
 
-    println(s"\n=== Setup Completed Successfully! ===")
-    println(s"Project Location: $targetDir")
-    println(s"Selected Scala Version: $finalScalaVer")
-    println(
+    Console.err.println(s"\n=== Setup Completed Successfully! ===")
+    Console.err.println(s"Project Location: $targetDir")
+    Console.err.println(s"Selected Scala Version: $finalScalaVer")
+    Console.err.println(
       s"Build Tool Configured: ${answers.getOrElse("build-tool", "mill").toUpperCase}"
     )
 
     val hasInteractionHook =
       answers.getOrElse("interaction-hook", "no").toLowerCase.startsWith("y")
     if hasInteractionHook then
-      println(
+      Console.err.println(
         "\nTo activate the LLM interaction logging hook, add the following to ~/.claude/settings.json:"
       )
-      println(
+      Console.err.println(
         """{
           |  "hooks": {
           |    "PostToolUse": [{
@@ -356,6 +488,13 @@ object Setup:
           |  }
           |}""".stripMargin
       )
+
+    ujson.Obj(
+      "targetDir" -> targetDir.toString,
+      "scalaVersion" -> finalScalaVer,
+      "buildTool" -> answers.getOrElse("build-tool", "mill")
+    )
+  }
 
   def fetchLatestStableVersion(
       group: String,
@@ -382,36 +521,6 @@ object Setup:
           .map(_.group(1))
           .orElse(LatestRegex.findFirstMatchIn(xml).map(_.group(1)))
     catch case _: Exception => None
-
-  def getAgentAnswers(features: List[Feature]): Map[String, String] =
-    val featuresJson = ujson.Arr(
-      features.map { f =>
-        ujson.Obj(
-          "id" -> f.id,
-          "group" -> f.group,
-          "name" -> f.name,
-          "prompt" -> f.prompt,
-          "default" -> f.defaultValue
-        )
-      }*
-    )
-    println("[AGENT_MODE_START]")
-    println(featuresJson.render())
-    println("[AGENT_MODE_END]")
-
-    val input = readLine()
-    if input == null || input.trim.isEmpty then
-      features.map(f => f.id -> f.defaultValue).toMap
-    else
-      try
-        val parsed = ujson.read(input).obj.map((k, v) => k -> v.str).toMap
-        features.map { f =>
-          f.id -> parsed.getOrElse(f.id, f.defaultValue)
-        }.toMap
-      catch
-        case _: Exception =>
-          println("⚠️ Failed to parse agent JSON response. Using defaults.")
-          features.map(f => f.id -> f.defaultValue).toMap
 
   def promptFeaturesGrouped(features: List[Feature]): Map[String, String] =
     val grouped = features.groupBy(_.group)

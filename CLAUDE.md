@@ -28,6 +28,10 @@ Use the following commands to build, test, and format the project:
 The project is generated and updated dynamically using an interactive Scala CLI script.
 
 *   **Setup Script:** `Setup.scala` (runs on Scala 3 + `os-lib`).
+*   **Agent mode:** run `Setup.scala --agent <target-dir>`. If it exits with code `2`, read the
+    single JSON object on stdout, answer every listed question by writing `.agents/answers.json`
+    in the target directory (or pass `--answers '<json>'`), then rerun the same command until it
+    exits with code `0`. Treat stdout as protocol only; human diagnostics are on stderr.
 *   **Run command (local script):**
     ```bash
     scala-cli run /path/to/Setup.scala -- .
