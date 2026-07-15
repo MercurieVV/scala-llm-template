@@ -28,17 +28,18 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
   private case class Stack(
       buildTool: String,
       testTools: String,
-      crossVersion: String
+      crossVersion: String,
+      ecosystem: String
   ):
     def label: String =
-      "build-tool=" + buildTool + " test-tools=" + testTools
+      "build-tool=" + buildTool + " test-tools=" + testTools + " ecosystem=" + ecosystem
 
     def answers: Map[String, String] = Map(
       "build-tool" -> buildTool,
       "test-tools" -> testTools,
       "cross-version" -> crossVersion,
       "scala-version" -> "3.8.4",
-      "ecosystem" -> "none",
+      "ecosystem" -> ecosystem,
       "scripts" -> "none",
       "github-flow" -> "no",
       "mcp-tools" -> "no",
@@ -59,9 +60,10 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
 
   private object StackFixtures:
     val stacks: List[Stack] = List(
-      Stack("mill", "munit+shapeless", "no"),
-      Stack("sbt", "munit+shapeless", "no"),
-      Stack("scala-cli", "munit+shapeless", "no")
+      Stack("mill", "munit+shapeless", "no", "none"),
+      Stack("sbt", "munit+shapeless", "no", "none"),
+      Stack("scala-cli", "munit+shapeless", "no", "none"),
+      Stack("scala-cli", "munit+shapeless", "no", "typelevel")
     )
 
   private def stackGen: Gen[Stack] = Gen.oneOf(StackFixtures.stacks)
@@ -98,7 +100,8 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
   ) {
     Prop.forAllNoShrink(stackGen) { stack =>
       val runId = java.util.UUID.randomUUID().toString.take(8)
-      val dir = itTestsRoot / (stack.buildTool + "-" + runId)
+      val dir =
+        itTestsRoot / (stack.buildTool + "-" + stack.ecosystem + "-" + runId)
       try
         // Create
         val created = runSetup(dir, stack)
@@ -114,6 +117,17 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
           .map((k, v) => k -> v.str)
           .toMap
         assertEquals(savedConfig.get("build-tool"), Some(stack.buildTool))
+        assertEquals(savedConfig.get("ecosystem"), Some(stack.ecosystem))
+
+        if stack.ecosystem == "typelevel" then
+          val buildFileName = expectedBuildFiles(stack)
+            .collectFirst { case (name, true) => name }
+            .getOrElse("project.scala")
+          val buildContent = os.read(dir / buildFileName)
+          assert(
+            buildContent.contains("cats-core"),
+            "expected cats-core dependency for " + stack.label
+          )
 
         expectedBuildFiles(stack).foreach { case (fileName, shouldExist) =>
           assertEquals(
