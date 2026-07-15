@@ -297,7 +297,8 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
         "scripts/version-bump.scala",
         "stryker4s.conf",
         "scripts/git-pre-commit.scala",
-        "scripts/git-pre-push.scala"
+        "scripts/git-pre-push.scala",
+        ".agents/mcp_config.json"
       )
     ),
     FeatureCase(
@@ -374,6 +375,15 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
             "expected file \"" + relPath + "\" for " + featureCase.label
           )
         }
+
+        if featureCase.answers.get("mcp-tools").contains("yes") then
+          val mcpConfig =
+            ujson.read(os.read(dir / ".agents" / "mcp_config.json"))
+          assert(
+            mcpConfig("mcpServers")("scala-semantic")("args").arr.headOption
+              .exists(_.str == dir.toString),
+            "expected mcp_config.json args to point at the project dir for " + featureCase.label
+          )
 
         true
       finally if os.exists(dir) then os.remove.all(dir)

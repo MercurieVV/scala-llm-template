@@ -97,6 +97,9 @@ object SetupBuild:
     // compiler plugin: see scripts/stainless-verify.sh for why).
     setupStainless(repoRoot, answers, buildTool, hasScalaCli)
 
+    // 5. Setup/remove the ScalaSemantic MCP configuration.
+    setupMcp(repoRoot, answers)
+
   def fetchLatestStableVersion(
       group: String,
       artifact: String
@@ -263,6 +266,39 @@ object SetupBuild:
     val latest = fetchLatestMillVersion()
     println(s"✓ $latest")
     os.write.over(versionFile, latest + "\n")
+
+  def setupMcp(repoRoot: os.Path, answers: Map[String, String]): Unit =
+    val hasMcp =
+      answers.getOrElse("mcp-tools", "no").toLowerCase.startsWith("y")
+    val configFile = repoRoot / ".agents" / "mcp_config.json"
+    val launcherPath = os.home / ".local" / "bin" / "scalasemantic-mcp"
+
+    if hasMcp then
+      os.makeDir.all(repoRoot / ".agents")
+      if !os.exists(configFile) then
+        val config = ujson.Obj(
+          "mcpServers" -> ujson.Obj(
+            "scala-semantic" -> ujson.Obj(
+              "command" -> launcherPath.toString,
+              "args" -> ujson.Arr(repoRoot.toString)
+            )
+          )
+        )
+        os.write.over(configFile, config.render(indent = 2) + "\n")
+        println(
+          "✓ Created ScalaSemantic MCP configuration (.agents/mcp_config.json)"
+        )
+
+      if !os.exists(launcherPath) then
+        println(
+          "ℹ ScalaSemantic MCP launcher not found at " + launcherPath + ". Install it with:\n" +
+            "  curl -fsSL https://raw.githubusercontent.com/MercurieVV/ScalaSemantic/master/scripts/install.sh | sh"
+        )
+    else if os.exists(configFile) then
+      os.remove(configFile)
+      println(
+        "✓ Removed ScalaSemantic MCP configuration (.agents/mcp_config.json)"
+      )
 
   def setupStainless(
       repoRoot: os.Path,
