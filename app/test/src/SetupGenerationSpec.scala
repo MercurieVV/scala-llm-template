@@ -13,7 +13,9 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
 
   override def scalaCheckTestParameters =
     super.scalaCheckTestParameters
-      .withMinSuccessfulTests(StackFixtures.stacks.size)
+      .withMinSuccessfulTests(
+        math.max(StackFixtures.stacks.size, featureCases.size)
+      )
       .withMaxDiscardRatio(1)
 
   private val repoRoot: os.Path =
@@ -70,9 +72,12 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
 
   private def stackGen: Gen[Stack] = Gen.oneOf(StackFixtures.stacks)
 
-  private def runSetup(dir: os.Path, stack: Stack): os.CommandResult =
+  private def runSetupRaw(
+      dir: os.Path,
+      answers: Map[String, String]
+  ): os.CommandResult =
     val answersJson =
-      ujson.Obj.from(stack.answers.map((k, v) => k -> ujson.Str(v))).render()
+      ujson.Obj.from(answers.map((k, v) => k -> ujson.Str(v))).render()
     os.proc(
       "scala-cli",
       "run",
@@ -89,6 +94,9 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
       stderr = os.Pipe,
       mergeErrIntoOut = true
     )
+
+  private def runSetup(dir: os.Path, stack: Stack): os.CommandResult =
+    runSetupRaw(dir, stack.answers)
 
   private def expectedBuildFiles(stack: Stack): Map[String, Boolean] =
     Map(
@@ -199,6 +207,173 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
           stack.stainless == "yes",
           "scripts/stainless-verify.sh presence mismatch after update for " + stack.label
         )
+
+        true
+      finally if os.exists(dir) then os.remove.all(dir)
+    }
+  }
+
+  /** Covers the remaining feature flags not exercised by the build-tool/
+    * ecosystem/stainless matrix above: for each, asserts the expected
+    * dependency lands in the generated build file and the expected section
+    * lands in the generated docs (scala-rules.md, .cursorrules,
+    * .agents/AGENTS.md, which must all be identical). Flags are batched into a
+    * few real project generations rather than one process per flag, since their
+    * effects on the build file/docs don't interact.
+    */
+  private val baselineAnswers: Map[String, String] = Map(
+    "build-tool" -> "scala-cli",
+    "scala-version" -> "3.8.4",
+    "cross-version" -> "no",
+    "scripts" -> "none",
+    "github-flow" -> "no",
+    "ecosystem" -> "none",
+    "web-server" -> "no",
+    "web-client" -> "no",
+    "db-access" -> "no",
+    "serverless-run" -> "no",
+    "api-docs" -> "no",
+    "test-tools" -> "munit+shapeless",
+    "stainless" -> "no",
+    "stryker" -> "no",
+    "performance-testing" -> "no",
+    "optics" -> "no",
+    "dto-mapping" -> "no",
+    "mcp-tools" -> "no",
+    "mdoc" -> "no",
+    "git-hooks" -> "no",
+    "version-bump" -> "no"
+  )
+
+  private case class FeatureCase(
+      label: String,
+      overrides: Map[String, String],
+      depNeedles: List[String],
+      docNeedles: List[String],
+      extraFiles: List[String]
+  ):
+    def answers: Map[String, String] = baselineAnswers ++ overrides
+
+  private val featureCases: List[FeatureCase] = List(
+    FeatureCase(
+      "kitchen-sink",
+      Map(
+        "web-client" -> "yes",
+        "db-access" -> "yes",
+        "serverless-run" -> "yes",
+        "performance-testing" -> "yes",
+        "optics" -> "yes",
+        "dto-mapping" -> "yes",
+        "api-docs" -> "yes",
+        "mcp-tools" -> "yes",
+        "mdoc" -> "yes",
+        "git-hooks" -> "yes",
+        "version-bump" -> "yes",
+        "stryker" -> "yes"
+      ),
+      depNeedles = List(
+        "sttp.client4",
+        "postgresql",
+        "aws-lambda-java-core",
+        "jmh-core",
+        "monocle-core",
+        "chimney",
+        "tapir-core"
+      ),
+      docNeedles = List(
+        "## 6. Web Client",
+        "## 7. Database Access",
+        "## 8. Serverless Deployment",
+        "## 12. Performance & JMH Benchmarking",
+        "## 14. Immutable Data Optics (Monocle)",
+        "## 15. Data Transformation (Chimney)",
+        "## 16. API Specifications (Tapir)",
+        "## 18. ScalaSemantic MCP Rules",
+        "## 11. Mutation Testing (Stryker)"
+      ),
+      extraFiles = List(
+        "docs/index.md",
+        "mdoc-docs/src/main/scala/DocsMain.scala",
+        "scripts/version-bump.scala",
+        "stryker4s.conf",
+        "scripts/git-pre-commit.scala",
+        "scripts/git-pre-push.scala"
+      )
+    ),
+    FeatureCase(
+      "web-server-typelevel",
+      Map(
+        "ecosystem" -> "typelevel",
+        "web-server" -> "yes",
+        "web-client" -> "yes"
+      ),
+      depNeedles = List(
+        "cats-core",
+        "http4s-ember-server",
+        "http4s-dsl",
+        "http4s-ember-client"
+      ),
+      docNeedles = List("## 5. Web Server", "Http4s Ember", "## 6. Web Client"),
+      extraFiles = Nil
+    ),
+    FeatureCase(
+      "zio-test-tools",
+      Map("test-tools" -> "zio-test"),
+      depNeedles = List("zio-test"),
+      docNeedles = List("## 9. Testing Guidelines (ZIO Test)"),
+      extraFiles = Nil
+    )
+  )
+
+  private def featureCaseGen: Gen[FeatureCase] = Gen.oneOf(featureCases)
+
+  property(
+    "generates the expected library dependency and docs text for every feature flag"
+  ) {
+    Prop.forAllNoShrink(featureCaseGen) { featureCase =>
+      val runId = java.util.UUID.randomUUID().toString.take(8)
+      val dir = itTestsRoot / ("feature-" + featureCase.label + "-" + runId)
+      try
+        val created = runSetupRaw(dir, featureCase.answers)
+        assert(
+          created.exitCode == 0,
+          "create failed for " + featureCase.label + ":\n" + created.out.text()
+        )
+
+        val buildContent = os.read(dir / "project.scala")
+        featureCase.depNeedles.foreach { needle =>
+          assert(
+            buildContent.contains(needle),
+            "expected dependency \"" + needle + "\" in project.scala for " + featureCase.label
+          )
+        }
+
+        val rulesContent = os.read(dir / "scala-rules.md")
+        val cursorContent = os.read(dir / ".cursorrules")
+        val agentsContent = os.read(dir / ".agents" / "AGENTS.md")
+        assertEquals(
+          cursorContent,
+          rulesContent,
+          ".cursorrules should mirror scala-rules.md for " + featureCase.label
+        )
+        assertEquals(
+          agentsContent,
+          rulesContent,
+          ".agents/AGENTS.md should mirror scala-rules.md for " + featureCase.label
+        )
+        featureCase.docNeedles.foreach { needle =>
+          assert(
+            rulesContent.contains(needle),
+            "expected doc text \"" + needle + "\" in scala-rules.md for " + featureCase.label
+          )
+        }
+
+        featureCase.extraFiles.foreach { relPath =>
+          assert(
+            os.exists(dir / os.RelPath(relPath)),
+            "expected file \"" + relPath + "\" for " + featureCase.label
+          )
+        }
 
         true
       finally if os.exists(dir) then os.remove.all(dir)
