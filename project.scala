@@ -12,5 +12,6 @@
 //> using dep com.lihaoyi::os-lib:0.11.8
 //> using dep com.lihaoyi::ujson:4.4.3
 //> using test.dep org.scalameta::munit:1.3.3
+//> using test.dep org.scalameta::munit-scalacheck:1.3.0
 //> using test.dep org.typelevel::shapeless3-deriving:3.6.0
 //> using plugin org.wartremover::wartremover:3.6.1
