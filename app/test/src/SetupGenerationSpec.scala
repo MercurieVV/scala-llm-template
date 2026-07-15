@@ -29,10 +29,11 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
       buildTool: String,
       testTools: String,
       crossVersion: String,
-      ecosystem: String
+      ecosystem: String,
+      stainless: String
   ):
     def label: String =
-      "build-tool=" + buildTool + " test-tools=" + testTools + " ecosystem=" + ecosystem
+      "build-tool=" + buildTool + " test-tools=" + testTools + " ecosystem=" + ecosystem + " stainless=" + stainless
 
     def answers: Map[String, String] = Map(
       "build-tool" -> buildTool,
@@ -52,7 +53,7 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
       "db-access" -> "no",
       "serverless-run" -> "no",
       "api-docs" -> "no",
-      "stainless" -> "no",
+      "stainless" -> stainless,
       "performance-testing" -> "no",
       "optics" -> "no",
       "dto-mapping" -> "no"
@@ -60,10 +61,11 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
 
   private object StackFixtures:
     val stacks: List[Stack] = List(
-      Stack("mill", "munit+shapeless", "no", "none"),
-      Stack("sbt", "munit+shapeless", "no", "none"),
-      Stack("scala-cli", "munit+shapeless", "no", "none"),
-      Stack("scala-cli", "munit+shapeless", "no", "typelevel")
+      Stack("mill", "munit+shapeless", "no", "none", "no"),
+      Stack("sbt", "munit+shapeless", "no", "none", "no"),
+      Stack("scala-cli", "munit+shapeless", "no", "none", "no"),
+      Stack("scala-cli", "munit+shapeless", "no", "typelevel", "no"),
+      Stack("scala-cli", "munit+shapeless", "no", "none", "yes")
     )
 
   private def stackGen: Gen[Stack] = Gen.oneOf(StackFixtures.stacks)
@@ -100,8 +102,8 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
   ) {
     Prop.forAllNoShrink(stackGen) { stack =>
       val runId = java.util.UUID.randomUUID().toString.take(8)
-      val dir =
-        itTestsRoot / (stack.buildTool + "-" + stack.ecosystem + "-" + runId)
+      val dir = itTestsRoot / (stack.buildTool + "-" + stack.ecosystem + "-" +
+        stack.stainless + "-" + runId)
       try
         // Create
         val created = runSetup(dir, stack)
@@ -145,6 +147,33 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
         if stack.buildTool == "mill" then
           assert(os.read(dir / ".mill-version").trim.nonEmpty)
 
+        assertEquals(
+          os.exists(dir / "scripts" / "stainless-verify.sh"),
+          stack.stainless == "yes",
+          "scripts/stainless-verify.sh presence mismatch for " + stack.label
+        )
+        assertEquals(
+          os.exists(dir / "stainless.conf"),
+          stack.stainless == "yes",
+          "stainless.conf presence mismatch for " + stack.label
+        )
+        if stack.stainless == "yes" then
+          val verifyResult = os
+            .proc("bash", (dir / "scripts" / "stainless-verify.sh").toString)
+            .call(
+              cwd = dir,
+              check = false,
+              stdout = os.Pipe,
+              stderr = os.Pipe,
+              mergeErrIntoOut = true
+            )
+          assertEquals(
+            verifyResult.exitCode,
+            0,
+            "stainless-verify.sh should no-op (not fail) without the Stainless CLI installed: " + verifyResult.out
+              .text()
+          )
+
         assert(os.isDir(dir / "app" / "src"))
         assert(os.isDir(dir / "app" / "test" / "src"))
         assert(os.isDir(dir / ".git"))
@@ -165,6 +194,11 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
             fileName + " presence mismatch after update for " + stack.label
           )
         }
+        assertEquals(
+          os.exists(dir / "scripts" / "stainless-verify.sh"),
+          stack.stainless == "yes",
+          "scripts/stainless-verify.sh presence mismatch after update for " + stack.label
+        )
 
         true
       finally if os.exists(dir) then os.remove.all(dir)

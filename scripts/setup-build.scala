@@ -93,6 +93,10 @@ object SetupBuild:
     else if buildTool != "scala-cli" && os.exists(projectScalaFile) then
       os.remove(projectScalaFile)
 
+    // 4. Setup/remove Stainless formal verification (standalone CLI, not a
+    // compiler plugin: see scripts/stainless-verify.sh for why).
+    setupStainless(repoRoot, answers, buildTool, hasScalaCli)
+
   def fetchLatestStableVersion(
       group: String,
       artifact: String
@@ -204,11 +208,6 @@ object SetupBuild:
       testDeps = testDeps :+ "dev.zio::zio-test:2.0.21"
       testDeps = testDeps :+ "dev.zio::zio-test-sbt:2.0.21"
 
-    val hasStainless =
-      answers.getOrElse("stainless", "no").toLowerCase.startsWith("y")
-    if hasStainless then
-      plugins = plugins :+ "ch.epfl.lara::stainless-compiler-plugin:0.9.8.1"
-
     val hasJmh =
       answers.getOrElse("performance-testing", "no").toLowerCase.startsWith("y")
     if hasJmh then deps = deps :+ "org.openjdk.jmh:jmh-core:1.37"
@@ -264,6 +263,102 @@ object SetupBuild:
     val latest = fetchLatestMillVersion()
     println(s"✓ $latest")
     os.write.over(versionFile, latest + "\n")
+
+  def setupStainless(
+      repoRoot: os.Path,
+      answers: Map[String, String],
+      buildTool: String,
+      hasScalaCli: Boolean
+  ): Unit =
+    val hasStainless =
+      answers.getOrElse("stainless", "no").toLowerCase.startsWith("y")
+    val scriptsDir = repoRoot / "scripts"
+    val verifyScript = scriptsDir / "stainless-verify.sh"
+    val confFile = repoRoot / "stainless.conf"
+
+    if hasStainless then
+      os.makeDir.all(scriptsDir)
+      val verifyContent =
+        """#!/usr/bin/env bash
+          |set -euo pipefail
+          |
+          |# Stainless (https://github.com/epfl-lara/stainless) is invoked here as a
+          |# standalone CLI, not as a compiler plugin or via sbt-stainless: both of
+          |# those integrations are unreliable across build tools and Scala versions.
+          |# Only verify a small, side-effect-free "pure kernel" of functions listed
+          |# in stainless.conf -- Stainless's supported subset excludes most of the
+          |# Scala/Java standard library.
+          |
+          |cd "$(git rev-parse --show-toplevel)"
+          |
+          |if ! command -v stainless >/dev/null 2>&1; then
+          |  echo "Stainless CLI not found on PATH."
+          |  echo "Install it from https://github.com/epfl-lara/stainless/releases"
+          |  echo "and make sure the 'stainless' binary is runnable."
+          |  echo "Skipping formal verification for now (not blocking)."
+          |  exit 0
+          |fi
+          |
+          |if [ ! -f stainless.conf ]; then
+          |  echo "No stainless.conf found; nothing to verify."
+          |  exit 0
+          |fi
+          |
+          |FILES=$(grep -v '^[[:space:]]*#' stainless.conf | grep -v '^[[:space:]]*$' || true)
+          |
+          |if [ -z "$FILES" ]; then
+          |  echo "stainless.conf lists no files; nothing to verify."
+          |  exit 0
+          |fi
+          |
+          |echo "Running Stainless verification on:"
+          |echo "$FILES"
+          |# shellcheck disable=SC2086
+          |stainless $FILES
+          |""".stripMargin
+      os.write.over(verifyScript, verifyContent)
+      try os.perms.set(verifyScript, "rwxr-xr-x")
+      catch case _: Exception => ()
+      println(
+        "✓ Created Stainless verification script (scripts/stainless-verify.sh)"
+      )
+
+      if !os.exists(confFile) then
+        os.write(
+          confFile,
+          "# Stainless-verified files: one path per line, relative to the repo root.\n" +
+            "# Keep this list small -- Stainless's supported subset excludes most of\n" +
+            "# the Scala/Java stdlib, so only list small, side-effect-free functions\n" +
+            "# annotated with require/ensuring/@pure. Run: scripts/stainless-verify.sh\n"
+        )
+        println("✓ Created Stainless configuration (stainless.conf)")
+
+      // The Stainless standard library isn't published to Maven, so
+      // `import stainless.lang._` etc. needs an unmanaged jar on the
+      // classpath. Wire it in for scala-cli only, where it's a harmless
+      // no-op directive if the jar hasn't been dropped in yet; for mill/sbt
+      // this needs manual wiring per project (see stainless.conf comments).
+      if hasScalaCli then
+        val projectScalaFile = repoRoot / "project.scala"
+        if os.exists(projectScalaFile) then
+          val jarDirective = "//> using jar lib/stainless-library.jar"
+          val content = os.read(projectScalaFile)
+          if !content.contains(jarDirective) then
+            os.write.over(projectScalaFile, content + jarDirective + "\n")
+
+      if !os.exists(repoRoot / "lib" / "stainless-library.jar") then
+        println(
+          "ℹ Drop the Stainless library jar (extracted from the Stainless CLI " +
+            "release download) at lib/stainless-library.jar so 'import stainless.lang._' " +
+            "etc. resolve when compiling verified sources -- it isn't published to Maven."
+        )
+    else
+      if os.exists(verifyScript) then
+        os.remove(verifyScript)
+        println("✓ Removed Stainless verification script")
+      if os.exists(confFile) then
+        os.remove(confFile)
+        println("✓ Removed Stainless configuration (stainless.conf)")
 
   def updateBuildSc(
       buildFile: os.Path,

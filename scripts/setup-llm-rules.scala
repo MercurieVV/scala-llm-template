@@ -280,12 +280,20 @@ object SetupLlmRules:
       answers.getOrElse("stainless", "no").toLowerCase.startsWith("y")
     if hasStainless then
       sb.append("## 10. Formal Verification (Stainless)\n")
-      sb.append("* Write pure mathematical specifications.\n")
       sb.append(
-        "* Annotate verified code with `@pure`, `@ghost`, or `@extern` where appropriate.\n"
+        "* Stainless runs as a standalone CLI via `scripts/stainless-verify.sh`, not as a compiler plugin or sbt-stainless -- both are unreliable across build tools and Scala versions.\n"
       )
       sb.append(
-        "* Avoid mutable state or unsupported Scala features in verified code sections.\n\n"
+        "* List only the files to verify in `stainless.conf` (one path per line). Keep this list small: Stainless's supported subset excludes most of the Scala/Java stdlib.\n"
+      )
+      sb.append(
+        "* Prefer verifying a small, side-effect-free \"pure kernel\" of functions (e.g. leaf arithmetic) rather than whole modules; have collection-heavy callers delegate down to them instead of duplicating logic.\n"
+      )
+      sb.append(
+        "* Annotate verified code with `require`/`ensuring`/`@pure` (and `@ghost`/`@extern` where appropriate). Avoid mutable state or unsupported Scala features in verified sections.\n"
+      )
+      sb.append(
+        "* `import stainless.lang._` etc. needs `lib/stainless-library.jar` on the classpath (extracted from the Stainless CLI release download) since it isn't published to Maven.\n\n"
       )
 
     val hasStryker =

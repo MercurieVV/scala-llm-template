@@ -708,8 +708,7 @@ object Setup extends IOApp:
             else "none"
 
           case "stainless" =>
-            if combinedBuildContent.contains("stainless-compiler-plugin") then
-              "yes"
+            if os.exists(target / "scripts" / "stainless-verify.sh") then "yes"
             else "no"
 
           case "stryker" =>
