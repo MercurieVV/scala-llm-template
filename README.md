@@ -27,6 +27,15 @@ The project is generated and updated dynamically using an interactive Scala CLI 
     ```bash
     scala-cli run /path/to/Setup.scala -- .
     ```
+*   **Run command (arrowstep protocol mode):**
+    ```bash
+    scala-cli run /path/to/Setup.scala -- --agent .
+    ```
+    In protocol mode the script writes machine-readable arrowstep JSON on stdout only. Human progress output stays on stderr. If answers are missing, it exits with code `2` and records/reads setup answers from `.agents/answers.json`.
+*   **Provide answers non-interactively:**
+    ```bash
+    scala-cli run /path/to/Setup.scala -- --agent --answers '{"build-tool":"mill","scala-version":"3.8.4"}' .
+    ```
 *   **Run command (internet remote):**
     ```bash
     scala-cli run https://raw.githubusercontent.com/MercurieVV/scala-llm-template/master/Setup.scala -- .

@@ -6,7 +6,6 @@
   "cross-version": "no",
   "build-tool": "scala-cli",
   "stryker": "yes",
-  "interaction-hook": "yes",
   "performance-testing": "no",
   "git-hooks": "yes",
   "dto-mapping": "no",

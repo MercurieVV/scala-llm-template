@@ -1,0 +1,82 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: VirtusLab/scala-cli-setup@v1
+
+      - name: Test
+        run: scala-cli test . --server=false
+
+      - name: Publish local dry run
+        run: |
+          scala-cli --power publish local . \
+            --maven-local \
+            --m2-home /tmp/scala-llm-template-m2 \
+            --project-version 0.0.0-local \
+            --organization io.github.mercurievv \
+            --name scala-llm-template \
+            --url https://github.com/MercurieVV/scala-llm-template \
+            --license Apache-2.0:https://www.apache.org/licenses/LICENSE-2.0.txt \
+            --vcs github:MercurieVV/scala-llm-template \
+            --developer 'MercurieVV|MercurieVV|https://github.com/MercurieVV' \
+            --description 'Scala project template and setup tool for LLM-assisted Scala projects.' \
+            --signer none \
+            --with-sources \
+            --doc \
+            --server=false
+
+      - name: Verify local artifact
+        run: test -f /tmp/scala-llm-template-m2/io/github/mercurievv/scala-llm-template_3/0.0.0-local/scala-llm-template_3-0.0.0-local.pom
+
+  publish:
+    needs: validate
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: VirtusLab/scala-cli-setup@v1
+
+      - name: Publish to Maven Central
+        run: |
+          scala-cli --power publish . \
+            --publish-repository central \
+            --organization io.github.mercurievv \
+            --name scala-llm-template \
+            --compute-version git:tag \
+            --url https://github.com/MercurieVV/scala-llm-template \
+            --license Apache-2.0:https://www.apache.org/licenses/LICENSE-2.0.txt \
+            --vcs github:MercurieVV/scala-llm-template \
+            --developer 'MercurieVV|MercurieVV|https://github.com/MercurieVV' \
+            --description 'Scala project template and setup tool for LLM-assisted Scala projects.' \
+            --user "value:$SONATYPE_USERNAME" \
+            --password "value:$SONATYPE_PASSWORD" \
+            --secret-key env:PGP_SECRET_KEY \
+            --secret-key-password env:PGP_SECRET_KEY_PASSWORD \
+            --with-sources \
+            --doc \
+            --server=false
+        env:
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          PGP_SECRET_KEY: ${{ secrets.PGP_SECRET_KEY }}
+          PGP_SECRET_KEY_PASSWORD: ${{ secrets.PGP_SECRET_KEY_PASSWORD }}

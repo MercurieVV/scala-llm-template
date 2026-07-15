@@ -515,16 +515,10 @@ object SetupLlmRules:
 
       val mcpEnabled =
         answers.getOrElse("mcp-tools", "no").toLowerCase.startsWith("y")
-      val hookEnabled =
-        answers.getOrElse("interaction-hook", "no").toLowerCase.startsWith("y")
 
       val mcpBullet =
         if mcpEnabled then
           "\n*   **ScalaSemantic MCP configuration:** [.agents/mcp_config.json](.agents/mcp_config.json) (runs compile-aware AI search)."
-        else ""
-      val hookBullet =
-        if hookEnabled then
-          "\n*   **LLM Interaction Hook:** [scripts/log-scala-interaction.scala](scripts/log-scala-interaction.scala) (logs AI commands to study reading vs editing)."
         else ""
       val mdocBullet =
         if hasMdoc then
@@ -541,7 +535,7 @@ object SetupLlmRules:
            |This project uses local LLM instructions and workspace rules tailored to the selected features:
            |*   **Antigravity/Gemini Rules:** [.agents/AGENTS.md](.agents/AGENTS.md)
            |*   **Cursor Rules:** [.cursorrules](.cursorrules)
-           |*   **Global/Generic Rules:** [scala-rules.md](scala-rules.md)$mcpBullet$hookBullet$mdocBullet$wtStartBullet$wtFinishBullet
+           |*   **Global/Generic Rules:** [scala-rules.md](scala-rules.md)$mcpBullet$mdocBullet$wtStartBullet$wtFinishBullet
            |
            |All rules and guidelines are automatically kept in sync by the `Setup.scala` tool when features are added or removed.
            |""".stripMargin

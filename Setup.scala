@@ -1,5 +1,4 @@
 //> using scala 3.8.4
-//> using file ../arrowstep/app/src
 //> using dep org.typelevel::cats-core:2.13.0
 //> using dep org.typelevel::cats-effect:3.7.0
 //> using dep com.lihaoyi::os-lib:0.11.8
@@ -29,6 +28,30 @@ case class Feature(
 
 object Setup extends IOApp:
   private val OfflineScalaVersion = "3.3.3"
+
+  private final case class SetupContext(
+      targetDir: os.Path,
+      answers: Map[String, String],
+      finalScalaVersion: String
+  )
+
+  private final case class StepResult(
+      id: String,
+      status: String,
+      message: String,
+      files: List[String] = Nil
+  ):
+    def json: ujson.Value =
+      ujson.Obj(
+        "id" -> id,
+        "status" -> status,
+        "message" -> message,
+        "files" -> ujson.Arr(files.map(ujson.Str.apply)*)
+      )
+
+  private trait SetupStep:
+    def id: String
+    def run(ctx: SetupContext): StepResult
 
   def getFeaturesList(defaultScalaVersion: String): List[Feature] = List(
     // 1. Build & Compilation
@@ -164,13 +187,6 @@ object Setup extends IOApp:
       "Developer Tooling",
       "ScalaSemantic MCP Integration",
       "Enable ScalaSemantic MCP integration (generate rules & configs)? (yes/no)",
-      "yes"
-    ),
-    Feature(
-      "interaction-hook",
-      "Developer Tooling",
-      "LLM Interaction Hook",
-      "Enable LLM interaction logging script? (yes/no)",
       "yes"
     ),
     Feature(
@@ -359,111 +375,11 @@ object Setup extends IOApp:
       answers: Map[String, String]
   ): IO[ujson.Value] = IO.blocking {
     val finalScalaVer = answers.getOrElse("scala-version", OfflineScalaVersion)
-    // 4. Save config to .agents/setup_config.json
-    os.makeDir.all(targetDir / ".agents")
-    val configPath = targetDir / ".agents" / "setup_config.json"
-    val configContent = ujson.Obj.from(answers.map((k, v) => k -> ujson.Str(v)))
-    os.write.over(configPath, configContent.render(indent = 2))
-    Console.err.println("✓ Saved configuration to .agents/setup_config.json")
-
-    // 5. Initialize basic folder structures and configurations
-    os.makeDir.all(targetDir / "app" / "src")
-    os.makeDir.all(targetDir / "app" / "test" / "src")
-
-    val gitignore = targetDir / ".gitignore"
-    if !os.exists(gitignore) then
-      os.write(
-        gitignore,
-        "out/\n.bsp/\n.metals/\n.vscode/\n.idea/\n.DS_Store\n"
-      )
-
-    val scalafmt = targetDir / ".scalafmt.conf"
-    if !os.exists(scalafmt) then
-      os.write(scalafmt, "version = \"3.8.1\"\nrunner.dialect = scala3\n")
-      Console.err.println("✓ Created Scalafmt configuration (.scalafmt.conf)")
-
-    val scalafixConf = targetDir / ".scalafix.conf"
-    if !os.exists(scalafixConf) then
-      os.write(
-        scalafixConf,
-        "rules = [\n  OrganizeImports,\n  DisableSyntax,\n  LeakingImplicitClassVal,\n  NoValInForComprehension\n]\n"
-      )
-      Console.err.println("✓ Created Scalafix configuration (.scalafix.conf)")
-
-    val strykerConf = targetDir / "stryker4s.conf"
-    if answers.getOrElse("stryker", "no").toLowerCase == "yes" then
-      if !os.exists(strykerConf) then
-        os.write(
-          strykerConf,
-          "stryker4s {\n  mutate: [ \"app/src/**/*.scala\" ]\n  reporters: [\"html\", \"json\"]\n  thresholds {\n    high = 80\n    low = 60\n    break = 0\n  }\n  debug {\n    log-test-runner-stdout = true\n  }\n}\n"
-        )
-        Console.err.println(
-          "✓ Created Stryker4s configuration (stryker4s.conf)"
-        )
-    else if os.exists(strykerConf) then
-      os.remove(strykerConf)
-      Console.err.println("✓ Removed Stryker4s configuration (stryker4s.conf)")
-
-    // 6. Execute delegate scripts in sequence
-    Console.err.println("\nRunning specialized setup scripts...")
-
-    val scriptsDir = targetDir / "scripts"
-    os.makeDir.all(scriptsDir)
-
-    // Detect if we have local setup scripts (developing inside the template repo)
-    val useLocal = os.exists(os.pwd / "Setup.scala") && os.exists(
-      os.pwd / "scripts" / "setup-build.scala"
-    )
-
-    val baseUrl =
-      "https://raw.githubusercontent.com/MercurieVV/scala-llm-template/master/scripts"
-    val buildScript = if useLocal then
-      (os.pwd / "scripts" / "setup-build.scala").toString
-    else s"$baseUrl/setup-build.scala"
-    val hooksScript = if useLocal then
-      (os.pwd / "scripts" / "setup-git-hooks.scala").toString
-    else s"$baseUrl/setup-git-hooks.scala"
-    val rulesScript = if useLocal then
-      (os.pwd / "scripts" / "setup-llm-rules.scala").toString
-    else s"$baseUrl/setup-llm-rules.scala"
-    val mdocScript = if useLocal then
-      (os.pwd / "scripts" / "setup-mdoc.scala").toString
-    else s"$baseUrl/setup-mdoc.scala"
-
-    if useLocal then Console.err.println("✓ Using local setup scripts cache")
-    else
-      Console.err.println(
-        "✓ Running setup scripts directly from remote GitHub repository"
-      )
-
-    val childStdout =
-      os.ProcessOutput.Readlines(line => Console.err.println(line))
-
-    // Execute sub-scripts via scala-cli run
-    os.proc("scala-cli", "run", buildScript, "--", targetDir.toString)
-      .call(stdout = childStdout, stderr = os.Inherit)
-    os.proc("scala-cli", "run", hooksScript, "--", targetDir.toString)
-      .call(stdout = childStdout, stderr = os.Inherit)
-    os.proc("scala-cli", "run", rulesScript, "--", targetDir.toString)
-      .call(stdout = childStdout, stderr = os.Inherit)
-    os.proc("scala-cli", "run", mdocScript, "--", targetDir.toString)
-      .call(stdout = childStdout, stderr = os.Inherit)
-
-    // Format everything using scalafmt before staging
-    try {
-      Console.err.println("Formatting project files (Scalafmt)...")
-      os.proc("scala-cli", "fmt", ".")
-        .call(cwd = targetDir, stdout = os.Pipe, stderr = os.Pipe)
-    } catch {
-      case _: Exception => // ignore if format fails
+    val ctx = SetupContext(targetDir, answers, finalScalaVer)
+    val results = setupSteps.map { step =>
+      Console.err.println(s"\n[setup:${step.id}]")
+      step.run(ctx)
     }
-
-    // 7. Stage everything to Git
-    if !os.exists(targetDir / ".git") then
-      os.proc("git", "init")
-        .call(cwd = targetDir, stdout = childStdout, stderr = os.Inherit)
-    os.proc("git", "add", ".")
-      .call(cwd = targetDir, stdout = childStdout, stderr = os.Inherit)
 
     Console.err.println(s"\n=== Setup Completed Successfully! ===")
     Console.err.println(s"Project Location: $targetDir")
@@ -472,29 +388,184 @@ object Setup extends IOApp:
       s"Build Tool Configured: ${answers.getOrElse("build-tool", "mill").toUpperCase}"
     )
 
-    val hasInteractionHook =
-      answers.getOrElse("interaction-hook", "no").toLowerCase.startsWith("y")
-    if hasInteractionHook then
-      Console.err.println(
-        "\nTo activate the LLM interaction logging hook, add the following to ~/.claude/settings.json:"
-      )
-      Console.err.println(
-        """{
-          |  "hooks": {
-          |    "PostToolUse": [{
-          |      "matcher": "Read|Edit|Write|MultiEdit|Grep|Glob|Bash",
-          |      "hooks": [{ "type": "command", "command": "scala-cli run \"$CLAUDE_PROJECT_DIR/scripts/log-scala-interaction.scala\" --" }]
-          |    }]
-          |  }
-          |}""".stripMargin
-      )
-
     ujson.Obj(
       "targetDir" -> targetDir.toString,
       "scalaVersion" -> finalScalaVer,
-      "buildTool" -> answers.getOrElse("build-tool", "mill")
+      "buildTool" -> answers.getOrElse("build-tool", "mill"),
+      "steps" -> ujson.Arr(results.map(_.json)*)
     )
   }
+
+  private def setupSteps: List[SetupStep] =
+    List(
+      SaveSetupConfig,
+      InitializeProjectLayout,
+      ConfigureStryker,
+      RunSpecializedSetupScripts,
+      FormatProject,
+      StageGitChanges
+    )
+
+  private object SaveSetupConfig extends SetupStep:
+    val id = "save-setup-config"
+
+    def run(ctx: SetupContext): StepResult =
+      os.makeDir.all(ctx.targetDir / ".agents")
+      val configPath = ctx.targetDir / ".agents" / "setup_config.json"
+      val configContent =
+        ujson.Obj.from(ctx.answers.map((k, v) => k -> ujson.Str(v)))
+      os.write.over(configPath, configContent.render(indent = 2))
+      Console.err.println("✓ Saved configuration to .agents/setup_config.json")
+      StepResult(
+        id,
+        "completed",
+        "saved setup answers",
+        List(configPath.toString)
+      )
+
+  private object InitializeProjectLayout extends SetupStep:
+    val id = "initialize-project-layout"
+
+    def run(ctx: SetupContext): StepResult =
+      os.makeDir.all(ctx.targetDir / "app" / "src")
+      os.makeDir.all(ctx.targetDir / "app" / "test" / "src")
+
+      var files = List.empty[String]
+      val gitignore = ctx.targetDir / ".gitignore"
+      if !os.exists(gitignore) then
+        os.write(
+          gitignore,
+          "out/\n.bsp/\n.metals/\n.vscode/\n.idea/\n.DS_Store\n"
+        )
+        files = files :+ gitignore.toString
+
+      val scalafmt = ctx.targetDir / ".scalafmt.conf"
+      if !os.exists(scalafmt) then
+        os.write(scalafmt, "version = \"3.8.1\"\nrunner.dialect = scala3\n")
+        files = files :+ scalafmt.toString
+        Console.err.println("✓ Created Scalafmt configuration (.scalafmt.conf)")
+
+      val scalafixConf = ctx.targetDir / ".scalafix.conf"
+      if !os.exists(scalafixConf) then
+        os.write(
+          scalafixConf,
+          "rules = [\n  OrganizeImports,\n  DisableSyntax,\n  LeakingImplicitClassVal,\n  NoValInForComprehension\n]\n"
+        )
+        files = files :+ scalafixConf.toString
+        Console.err.println("✓ Created Scalafix configuration (.scalafix.conf)")
+
+      val status = if files.isEmpty then "skipped" else "completed"
+      val message =
+        if files.isEmpty then "project layout already initialized"
+        else "initialized project layout and base configuration"
+      StepResult(id, status, message, files)
+
+  private object ConfigureStryker extends SetupStep:
+    val id = "configure-stryker"
+
+    def run(ctx: SetupContext): StepResult =
+      val strykerConf = ctx.targetDir / "stryker4s.conf"
+      if ctx.answers.getOrElse("stryker", "no").toLowerCase == "yes" then
+        if !os.exists(strykerConf) then
+          os.write(
+            strykerConf,
+            "stryker4s {\n  mutate: [ \"app/src/**/*.scala\" ]\n  reporters: [\"html\", \"json\"]\n  thresholds {\n    high = 80\n    low = 60\n    break = 0\n  }\n  debug {\n    log-test-runner-stdout = true\n  }\n}\n"
+          )
+          Console.err.println(
+            "✓ Created Stryker4s configuration (stryker4s.conf)"
+          )
+          StepResult(
+            id,
+            "completed",
+            "created Stryker4s configuration",
+            List(strykerConf.toString)
+          )
+        else StepResult(id, "skipped", "Stryker4s configuration already exists")
+      else if os.exists(strykerConf) then
+        os.remove(strykerConf)
+        Console.err.println(
+          "✓ Removed Stryker4s configuration (stryker4s.conf)"
+        )
+        StepResult(
+          id,
+          "completed",
+          "removed Stryker4s configuration",
+          List(strykerConf.toString)
+        )
+      else StepResult(id, "skipped", "Stryker4s disabled and no config exists")
+
+  private object RunSpecializedSetupScripts extends SetupStep:
+    val id = "run-specialized-setup-scripts"
+
+    def run(ctx: SetupContext): StepResult =
+      Console.err.println("\nRunning specialized setup scripts...")
+
+      val scriptsDir = ctx.targetDir / "scripts"
+      os.makeDir.all(scriptsDir)
+
+      val useLocal = os.exists(os.pwd / "Setup.scala") && os.exists(
+        os.pwd / "scripts" / "setup-build.scala"
+      )
+
+      val baseUrl =
+        "https://raw.githubusercontent.com/MercurieVV/scala-llm-template/master/scripts"
+      val scriptPaths = List(
+        if useLocal then (os.pwd / "scripts" / "setup-build.scala").toString
+        else s"$baseUrl/setup-build.scala",
+        if useLocal then (os.pwd / "scripts" / "setup-git-hooks.scala").toString
+        else s"$baseUrl/setup-git-hooks.scala",
+        if useLocal then (os.pwd / "scripts" / "setup-llm-rules.scala").toString
+        else s"$baseUrl/setup-llm-rules.scala",
+        if useLocal then (os.pwd / "scripts" / "setup-mdoc.scala").toString
+        else s"$baseUrl/setup-mdoc.scala"
+      )
+
+      if useLocal then Console.err.println("✓ Using local setup scripts cache")
+      else
+        Console.err.println(
+          "✓ Running setup scripts directly from remote GitHub repository"
+        )
+
+      val childStdout =
+        os.ProcessOutput.Readlines(line => Console.err.println(line))
+
+      scriptPaths.foreach { script =>
+        os.proc("scala-cli", "run", script, "--", ctx.targetDir.toString)
+          .call(stdout = childStdout, stderr = os.Inherit)
+      }
+
+      StepResult(
+        id,
+        "completed",
+        "ran delegated setup scripts",
+        List(scriptsDir.toString)
+      )
+
+  private object FormatProject extends SetupStep:
+    val id = "format-project"
+
+    def run(ctx: SetupContext): StepResult =
+      try
+        Console.err.println("Formatting project files (Scalafmt)...")
+        os.proc("scala-cli", "fmt", ".")
+          .call(cwd = ctx.targetDir, stdout = os.Pipe, stderr = os.Pipe)
+        StepResult(id, "completed", "formatted project files")
+      catch
+        case _: Exception =>
+          StepResult(id, "skipped", "Scalafmt failed or was unavailable")
+
+  private object StageGitChanges extends SetupStep:
+    val id = "stage-git-changes"
+
+    def run(ctx: SetupContext): StepResult =
+      val childStdout =
+        os.ProcessOutput.Readlines(line => Console.err.println(line))
+      if !os.exists(ctx.targetDir / ".git") then
+        os.proc("git", "init")
+          .call(cwd = ctx.targetDir, stdout = childStdout, stderr = os.Inherit)
+      os.proc("git", "add", ".")
+        .call(cwd = ctx.targetDir, stdout = childStdout, stderr = os.Inherit)
+      StepResult(id, "completed", "staged project changes in Git")
 
   def fetchLatestStableVersion(
       group: String,
@@ -660,13 +731,6 @@ object Setup extends IOApp:
             if os.exists(target / ".agents" / "mcp_config.json") || os.exists(
                 target / "docs" / "scala-semantic-vs-grep.md"
               )
-            then "yes"
-            else "no"
-
-          case "interaction-hook" =>
-            if os.exists(
-                target / "scripts" / "log-scala-interaction.scala"
-              ) || os.exists(target / "scripts" / "log-scala-interaction.py")
             then "yes"
             else "no"
 

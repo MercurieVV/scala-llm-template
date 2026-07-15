@@ -47,7 +47,6 @@ This project uses local LLM instructions and workspace rules tailored to the sel
 *   **Cursor Rules:** [.cursorrules](.cursorrules)
 *   **Global/Generic Rules:** [scala-rules.md](scala-rules.md)
 *   **ScalaSemantic MCP configuration:** [.agents/mcp_config.json](.agents/mcp_config.json) (runs compile-aware AI search).
-*   **LLM Interaction Hook:** [scripts/log-scala-interaction.scala](scripts/log-scala-interaction.scala) (logs AI commands to study reading vs editing).
 *   **Mdoc documentation:** [docs/index.md](docs/index.md) (source markdown compiled by mdoc).
 *   **Start Worktree Script:** [scripts/worktree-start.scala](scripts/worktree-start.scala) (creates isolated task branch + worktree).
 *   **Finish Worktree Script:** [scripts/worktree-finish.scala](scripts/worktree-finish.scala) (commits, merges, and cleans up the worktree).
