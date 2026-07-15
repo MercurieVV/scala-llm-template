@@ -1,4 +1,5 @@
 //> using scala 3.8.4
+//> using dep io.github.mercurievv::arrowstep:0.1.1
 //> using dep org.typelevel::cats-core:2.13.0
 //> using dep org.typelevel::cats-effect:3.7.0
 //> using dep com.lihaoyi::os-lib:0.11.8
