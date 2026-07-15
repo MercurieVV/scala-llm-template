@@ -75,6 +75,7 @@ object SetupBuild:
         resolvedTestDeps,
         resolvedPlugins
       )
+      updateMillVersion(repoRoot / ".mill-version")
       if os.exists(buildSbtFile) then os.remove(buildSbtFile)
 
     // 3. Setup Scala CLI config if selected separately for scripting
@@ -237,6 +238,32 @@ object SetupBuild:
       finalPlugins.map(plugin => resolveLatestVersion(plugin, scalaVer))
 
     (resolvedDeps, resolvedTestDeps, resolvedPlugins)
+
+  def fetchLatestMillVersion(): String =
+    val fallback = "1.1.7"
+    try
+      val p = os
+        .proc(
+          "curl",
+          "-fsSL",
+          "--connect-timeout",
+          "3",
+          "https://api.github.com/repos/com-lihaoyi/mill/releases/latest"
+        )
+        .call(stderr = os.Pipe)
+      if p.exitCode == 0 then
+        """"tag_name":\s*"([^"]+)"""".r
+          .findFirstMatchIn(p.out.text())
+          .map(_.group(1))
+          .getOrElse(fallback)
+      else fallback
+    catch case _: Exception => fallback
+
+  def updateMillVersion(versionFile: os.Path): Unit =
+    print("Resolving latest Mill version... ")
+    val latest = fetchLatestMillVersion()
+    println(s"✓ $latest")
+    os.write.over(versionFile, latest + "\n")
 
   def updateBuildSc(
       buildFile: os.Path,
