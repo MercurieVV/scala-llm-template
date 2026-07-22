@@ -91,6 +91,13 @@ object Setup extends IOApp:
       "Enable GitHub Flow (CI Workflow)? (yes/no)",
       "yes"
     ),
+    Feature(
+      "sdkmanrc",
+      "Core",
+      "SDKMAN! Configuration",
+      "Enable SDKMAN! configuration (.sdkmanrc)? (yes/no)",
+      "yes"
+    ),
 
     // 2. Ecosystem & Frameworks
     Feature(
@@ -135,6 +142,13 @@ object Setup extends IOApp:
       "Enable Tapir (declarative endpoints)? (yes/no)",
       "no"
     ),
+    Feature(
+      "logging",
+      "Ecosystem",
+      "Logging Facade (Logback + Log4cats/ZIO Logging)",
+      "Enable Logging Facade (Logback)? (yes/no)",
+      "yes"
+    ),
 
     // 3. Verification & Quality Assurance
     Feature(
@@ -165,6 +179,13 @@ object Setup extends IOApp:
       "Enable JMH performance testing? (yes/no)",
       "no"
     ),
+    Feature(
+      "scoverage",
+      "Quality Assurance",
+      "Scoverage Code Coverage",
+      "Enable Scoverage code coverage? (yes/no)",
+      "yes"
+    ),
 
     // 4. Data Utilities
     Feature(
@@ -179,6 +200,13 @@ object Setup extends IOApp:
       "Data Utilities",
       "Chimney DTO Mapping",
       "Enable Chimney (type-safe data transformation)? (yes/no)",
+      "no"
+    ),
+    Feature(
+      "config-loader",
+      "Data Utilities",
+      "Configuration Loader (PureConfig/Ciris)",
+      "Enable PureConfig configuration loading? (yes/no)",
       "no"
     ),
 
@@ -209,6 +237,13 @@ object Setup extends IOApp:
       "Developer Tooling",
       "Version Bumping Utility",
       "Enable semantic version bumping script? (yes/no)",
+      "yes"
+    ),
+    Feature(
+      "docker",
+      "Developer Tooling",
+      "Docker Configuration",
+      "Enable Docker configuration (Dockerfile)? (yes/no)",
       "yes"
     )
   )
@@ -454,6 +489,78 @@ object Setup extends IOApp:
         )
         files = files :+ scalafixConf.toString
         Console.err.println("✓ Created Scalafix configuration (.scalafix.conf)")
+
+      val sdkmanrc = ctx.targetDir / ".sdkmanrc"
+      if ctx.answers.getOrElse("sdkmanrc", "no").toLowerCase == "yes" then
+        if !os.exists(sdkmanrc) then
+          os.write(
+            sdkmanrc,
+            s"java=21.0.2-tem\nscala=${ctx.finalScalaVersion}\n"
+          )
+          files = files :+ sdkmanrc.toString
+          Console.err.println("✓ Created SDKMAN! configuration (.sdkmanrc)")
+      else if os.exists(sdkmanrc) then
+        os.remove(sdkmanrc)
+        files = files :+ sdkmanrc.toString
+        Console.err.println("✓ Removed SDKMAN! configuration (.sdkmanrc)")
+
+      val dockerfile = ctx.targetDir / "Dockerfile"
+      if ctx.answers.getOrElse("docker", "no").toLowerCase == "yes" then
+        if !os.exists(dockerfile) then
+          val buildTool =
+            ctx.answers.getOrElse("build-tool", "mill").toLowerCase
+          val dockerContent = buildTool match {
+            case "sbt" =>
+              """# Stage 1: Build stage
+                |FROM sbtscala/scala-sbt:eclipse-temurin-jammy-21.0.2_13.0.0_3.3.3 AS builder
+                |WORKDIR /workspace
+                |COPY . .
+                |RUN sbt stage
+                |
+                |# Stage 2: Runtime stage
+                |FROM eclipse-temurin:21-jre-jammy
+                |WORKDIR /app
+                |COPY --from=builder /workspace/target/universal/stage /app
+                |EXPOSE 8080
+                |ENTRYPOINT ["bin/app"]
+                |""".stripMargin
+            case "scala-cli" =>
+              """# Stage 1: Build stage
+                |FROM eclipse-temurin:21-jdk-jammy AS builder
+                |WORKDIR /workspace
+                |COPY . .
+                |RUN curl -fLo scala-cli https://github.com/Virtuslab/scala-cli/releases/latest/download/scala-cli-x86_64-pc-linux.gz && \
+                |    gunzip scala-cli && chmod +x scala-cli && ./scala-cli package . -o app.jar --assembly
+                |
+                |# Stage 2: Runtime stage
+                |FROM eclipse-temurin:21-jre-jammy
+                |WORKDIR /app
+                |COPY --from=builder /workspace/app.jar /app/app.jar
+                |EXPOSE 8080
+                |ENTRYPOINT ["java", "-jar", "app.jar"]
+                |""".stripMargin
+            case _ => // mill
+              """# Stage 1: Build stage
+                |FROM eclipse-temurin:21-jdk-jammy AS builder
+                |WORKDIR /workspace
+                |COPY . .
+                |RUN ./mill app.assembly
+                |
+                |# Stage 2: Runtime stage
+                |FROM eclipse-temurin:21-jre-jammy
+                |WORKDIR /app
+                |COPY --from=builder /workspace/out/app/assembly.dest/out.jar /app/app.jar
+                |EXPOSE 8080
+                |ENTRYPOINT ["java", "-jar", "app.jar"]
+                |""".stripMargin
+          }
+          os.write(dockerfile, dockerContent)
+          files = files :+ dockerfile.toString
+          Console.err.println("✓ Created Dockerfile configuration (Dockerfile)")
+      else if os.exists(dockerfile) then
+        os.remove(dockerfile)
+        files = files :+ dockerfile.toString
+        Console.err.println("✓ Removed Dockerfile configuration (Dockerfile)")
 
       val status = if files.isEmpty then "skipped" else "completed"
       val message =
@@ -751,6 +858,28 @@ object Setup extends IOApp:
           case "version-bump" =>
             if os.exists(target / "scripts" / "version-bump.scala") then "yes"
             else "no"
+
+          case "sdkmanrc" =>
+            if os.exists(target / ".sdkmanrc") then "yes" else "no"
+
+          case "scoverage" =>
+            if combinedBuildContent.contains("scoverage") then "yes" else "no"
+
+          case "logging" =>
+            if combinedBuildContent.contains("logback") || combinedBuildContent
+                .contains("log4cats")
+            then "yes"
+            else "no"
+
+          case "config-loader" =>
+            if combinedBuildContent.contains(
+                "pureconfig"
+              ) || combinedBuildContent.contains("ciris")
+            then "yes"
+            else "no"
+
+          case "docker" =>
+            if os.exists(target / "Dockerfile") then "yes" else "no"
 
           case _ => f.defaultValue
 

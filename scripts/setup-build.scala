@@ -100,6 +100,9 @@ object SetupBuild:
     // 5. Setup/remove the ScalaSemantic MCP configuration.
     setupMcp(repoRoot, answers)
 
+    // 6. Setup resources (logback.xml, application.conf)
+    setupResources(repoRoot, answers)
+
   def fetchLatestStableVersion(
       group: String,
       artifact: String
@@ -227,6 +230,22 @@ object SetupBuild:
       answers.getOrElse("api-docs", "no").toLowerCase.startsWith("y")
     if hasApiDocs then
       deps = deps :+ "com.softwaremill.sttp.tapir::tapir-core:1.10.0"
+
+    val hasLogging =
+      answers.getOrElse("logging", "no").toLowerCase.startsWith("y")
+    if hasLogging then
+      deps = deps :+ "ch.qos.logback:logback-classic:1.5.6"
+      if isTypelevel then deps = deps :+ "org.typelevel::log4cats-slf4j:2.6.0"
+      else if isZIO then deps = deps :+ "dev.zio::zio-logging-slf4j:2.1.17"
+      else deps = deps :+ "org.slf4j:slf4j-api:2.0.13"
+
+    val hasConfig =
+      answers.getOrElse("config-loader", "no").toLowerCase.startsWith("y")
+    if hasConfig then
+      if isZIO then
+        deps = deps :+ "dev.zio::zio-config-typesafe:4.0.1"
+        deps = deps :+ "dev.zio::zio-config-magnolia:4.0.1"
+      else deps = deps :+ "com.github.pureconfig::pureconfig-core:0.17.6"
 
     val buildTool = answers.getOrElse("build-tool", "mill").toLowerCase
     val finalPlugins = if buildTool != "sbt" then
@@ -407,15 +426,26 @@ object SetupBuild:
   ): Unit =
     val crossComp =
       answers.getOrElse("cross-version", "no").toLowerCase == "yes"
+    val hasScoverage =
+      answers.getOrElse("scoverage", "no").toLowerCase.startsWith("y")
+    val scoverageImport = if hasScoverage then
+      "\nimport mill.contrib.scoverage.ScoverageModule"
+    else ""
+    val scoverageMixin = if hasScoverage then " with ScoverageModule" else ""
+    val scoverageVersionField =
+      if hasScoverage then "\n  def scoverageVersion = \"2.1.1\"" else ""
+    val scoverageTestMixin =
+      if hasScoverage then "ScoverageTests" else "ScalaTests"
+
     val template = if crossComp then
-      s"""import mill._, scalalib._
+      s"""import mill._, scalalib._$scoverageImport
          |
          |val scala3 = "$scalaVer"
          |val scala213 = "2.13.12"
          |
          |object app extends Cross[AppModule](scala3, scala213)
-         |trait AppModule extends CrossScalaModule {
-         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe", "-Wunused:imports", "-Werror")
+         |trait AppModule extends CrossScalaModule$scoverageMixin {
+         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe", "-Wunused:imports", "-Werror")$scoverageVersionField
          |  def ivyDeps = Agg(
          |    // [dependencies-start]
          |    // [dependencies-end]
@@ -426,7 +456,7 @@ object SetupBuild:
          |    // [plugins-end]
          |  )
          |
-         |  object test extends ScalaTests {
+         |  object test extends $scoverageTestMixin {
          |    def testFramework = "munit.Framework"
          |    def ivyDeps = Agg(
          |      // [test-dependencies-start]
@@ -436,11 +466,11 @@ object SetupBuild:
          |}
          |""".stripMargin
     else
-      s"""import mill._, scalalib._
+      s"""import mill._, scalalib._$scoverageImport
          |
-         |object app extends ScalaModule {
+         |object app extends ScalaModule$scoverageMixin {
          |  def scalaVersion = "$scalaVer"
-         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe", "-Wunused:imports", "-Werror")
+         |  def scalacOptions = Seq("-Ysemanticdb", "-P:wartremover:traverser:org.wartremover.warts.Unsafe", "-Wunused:imports", "-Werror")$scoverageVersionField
          |  def ivyDeps = Agg(
          |    // [dependencies-start]
          |    // [dependencies-end]
@@ -451,7 +481,7 @@ object SetupBuild:
          |    // [plugins-end]
          |  )
          |
-         |  object test extends ScalaTests {
+         |  object test extends $scoverageTestMixin {
          |    def testFramework = "munit.Framework"
          |    def ivyDeps = Agg(
          |      // [test-dependencies-start]
@@ -607,11 +637,17 @@ object SetupBuild:
     var pluginsContent =
       if os.exists(pluginsSbt) then os.read(pluginsSbt) else ""
 
+    val hasScoverage =
+      answers.getOrElse("scoverage", "no").toLowerCase.startsWith("y")
     val requiredPlugins = List(
       "addSbtPlugin(\"ch.epfl.scala\" % \"sbt-scalafix\" % \"0.11.1\")",
       "addSbtPlugin(\"org.scalameta\" % \"sbt-scalafmt\" % \"2.5.2\")",
       "addSbtPlugin(\"org.wartremover\" % \"sbt-wartremover\" % \"3.2.5\")"
-    )
+    ) ++ (if hasScoverage then
+            List(
+              "addSbtPlugin(\"org.scoverage\" % \"sbt-scoverage\" % \"2.0.12\")"
+            )
+          else Nil)
 
     requiredPlugins.foreach { p =>
       val pPart = p.split("%")(1).trim.replace("\"", "")
@@ -619,6 +655,12 @@ object SetupBuild:
         pluginsContent += s"\n$p"
         println(s"✓ Added plugin to project/plugins.sbt: $pPart")
     }
+
+    if !hasScoverage && pluginsContent.contains("sbt-scoverage") then
+      pluginsContent = pluginsContent.linesIterator
+        .filterNot(_.contains("sbt-scoverage"))
+        .mkString("\n")
+      println("✓ Removed plugin from project/plugins.sbt: sbt-scoverage")
 
     plugins.foreach { plugin =>
       val pluginPart = plugin.split("::").head
@@ -681,6 +723,11 @@ object SetupBuild:
       testDeps: List[String],
       plugins: List[String]
   ): Unit =
+    val resourceDir = projectFile / os.up / "app" / "resources"
+    val resourceLine = if os.exists(resourceDir) then
+      List("//> using resourceDirs app/resources")
+    else Nil
+
     var lines = List(
       s"//> using scala $scalaVer",
       "//> using options -Ysemanticdb",
@@ -691,7 +738,7 @@ object SetupBuild:
       "//> using exclude scripts",
       "//> using exclude mdoc-docs",
       "//> using exclude website"
-    )
+    ) ++ resourceLine
 
     deps.foreach { dep =>
       lines = lines :+ s"//> using dep $dep"
@@ -705,3 +752,58 @@ object SetupBuild:
 
     os.write.over(projectFile, lines.mkString("\n") + "\n")
     println(s"✓ Generated Scala CLI config: project.scala")
+
+  def setupResources(repoRoot: os.Path, answers: Map[String, String]): Unit =
+    val hasLogging =
+      answers.getOrElse("logging", "no").toLowerCase.startsWith("y")
+    val hasConfig =
+      answers.getOrElse("config-loader", "no").toLowerCase.startsWith("y")
+
+    val resourcesDir = repoRoot / "app" / "resources"
+
+    if hasLogging || hasConfig then os.makeDir.all(resourcesDir)
+
+    if hasLogging then
+      val logbackXml = resourcesDir / "logback.xml"
+      if !os.exists(logbackXml) then
+        val logbackContent =
+          """<configuration>
+            |    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+            |        <encoder>
+            |            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            |        </encoder>
+            |    </appender>
+            |
+            |    <root level="info">
+            |        <appender-ref ref="STDOUT" />
+            |    </root>
+            |</configuration>
+            |""".stripMargin
+        os.write.over(logbackXml, logbackContent)
+        println("✓ Created Logback configuration (app/resources/logback.xml)")
+    else
+      val logbackXml = resourcesDir / "logback.xml"
+      if os.exists(logbackXml) then
+        os.remove(logbackXml)
+        println("✓ Removed Logback configuration (app/resources/logback.xml)")
+
+    if hasConfig then
+      val appConf = resourcesDir / "application.conf"
+      if !os.exists(appConf) then
+        val confContent =
+          """app {
+            |  host = "0.0.0.0"
+            |  port = 8080
+            |}
+            |""".stripMargin
+        os.write.over(appConf, confContent)
+        println(
+          "✓ Created application configuration (app/resources/application.conf)"
+        )
+    else
+      val appConf = resourcesDir / "application.conf"
+      if os.exists(appConf) then
+        os.remove(appConf)
+        println(
+          "✓ Removed application configuration (app/resources/application.conf)"
+        )
