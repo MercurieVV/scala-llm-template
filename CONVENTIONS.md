@@ -14,6 +14,7 @@ Use the following commands to build, test, and format the project:
 | **Run Application** | `scala-cli run .` |
 | **Run Unit Tests** | `scala-cli test .` |
 | **Run Scala Steward** | `scala-steward` |
+| **Local Dependency Update** | `scala-cli run scripts/dependency-update.scala -- [target-dir]` |
 | **Run Mutation Tests** | `stryker4s run` |
 | **Format Code** | `scala-cli fmt .` |
 | **Lint Code** | `scala-cli --power scalafix .` |

@@ -472,7 +472,8 @@ object SetupLlmRules:
            || **Compile Project** | `$compileCmd` |
            || **Run Application** | `$runCmd` |
            || **Run Unit Tests** | `$testCmd` |
-           || **Run Scala Steward** | `scala-steward` |""".stripMargin + strykerRow + formatRow + lintRow + mdocRow + wtStartRow + wtFinishRow
+           || **Run Scala Steward** | `scala-steward` |
+           || **Local Dependency Update** | `scala-cli run scripts/dependency-update.scala -- [target-dir]` |""".stripMargin + strykerRow + formatRow + lintRow + mdocRow + wtStartRow + wtFinishRow
 
       // Replace from "## 1. Key Commands" to the next "---" (skipping the "---" inside the table header)
       val startIdx = content.indexOf("## 1. Key Commands")

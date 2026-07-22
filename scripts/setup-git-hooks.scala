@@ -39,6 +39,9 @@ object SetupGitHooks:
     // 3. Setup/Remove Version Bump script
     setupVersionBump(scriptsDir, answers)
 
+    // 3b. Setup Dependency Update script
+    setupDependencyUpdate(scriptsDir)
+
     // 4. Setup Git Hooks (pre-commit and pre-push)
     setupHooks(repoRoot, scriptsDir, answers)
 
@@ -358,6 +361,38 @@ object SetupGitHooks:
     else if os.exists(bumpScript) then
       os.remove(bumpScript)
       println("✓ Removed version bumping utility script")
+
+  def setupDependencyUpdate(
+      scriptsDir: os.Path
+  ): Unit =
+    val updateScript = scriptsDir / "dependency-update.scala"
+
+    // Check if we are running in the template repository directly or can fetch it
+    val localScript = os.pwd / "scripts" / "dependency-update.scala"
+    val content = if os.exists(localScript) then os.read(localScript)
+    else
+      // Fetch from remote repo
+      try
+        val url =
+          "https://raw.githubusercontent.com/MercurieVV/scala-llm-template/master/scripts/dependency-update.scala"
+        val p = os
+          .proc("curl", "-fsSL", "--connect-timeout", "3", url)
+          .call(stderr = os.Pipe)
+        if p.exitCode == 0 then p.out.text()
+        else throw new RuntimeException("Remote fetch failed")
+      catch case _: Exception => ""
+
+    if content.nonEmpty then
+      os.write.over(updateScript, content)
+      try { os.perms.set(updateScript, "rwxr-xr-x") }
+      catch { case _: Exception => }
+      println(
+        "✓ Created local dependency update utility script (scripts/dependency-update.scala)"
+      )
+    else
+      println(
+        "⚠️ Warning: Could not create scripts/dependency-update.scala (failed to resolve source content)"
+      )
 
   def setupHooks(
       repoRoot: os.Path,

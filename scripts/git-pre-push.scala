@@ -43,4 +43,15 @@ object GitPrePush:
       println("\n[ERROR] Pre-push verification failed! Push aborted.")
       sys.exit(1)
 
+    val stainlessScript = repoRoot / "scripts" / "stainless-verify.sh"
+    if os.exists(stainlessScript) then
+      println("Running Stainless formal verification...")
+      val stainlessExit = os
+        .proc("bash", stainlessScript.toString)
+        .call(cwd = repoRoot, check = false)
+        .exitCode
+      if stainlessExit != 0 then
+        println("\n[ERROR] Stainless verification failed! Push aborted.")
+        sys.exit(1)
+
     println("✓ All pre-push checks passed successfully!")
