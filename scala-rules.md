@@ -50,3 +50,11 @@ You are acting as an expert Scala engineer. When writing, refactoring, or review
   * Use `head -n N` or `tail -n N` to capture only a small, representative slice of command outputs when scanning general outputs.
   * Suppress standard success logs or stdout using redirect syntax (`> /dev/null`) if you only need the command exit status or error streams.
 
+## 20. Custom Command: /scalaFeature
+* **Purpose**: Implement the custom request `/scalaFeature ${feature}` by adding the requested library or capability to the current Scala project.
+* **Step 1 (Detect Build Tool & Scala Version)**: Detect if the project uses Scala CLI (`project.scala`), Mill (`build.sc`/`build.mill`), or SBT (`build.sbt`), and identify the Scala version and current dependencies.
+* **Step 2 (Map Feature & Propose Bridges/Modules)**: Map the requested feature to dependency coordinates. Propose all relevant modules of the library (e.g. for Circe: `core`, `generic`, `parser`) and bridge libraries for existing dependencies (e.g. if the project uses `cats` and adding `circe`, suggest `circe-cats`; if using `pureconfig`, suggest `pureconfig-circe`).
+* **Step 3 (Resolve Latest Version)**: Fetch the latest stable versions from Maven Central (use `rtk curl -fsSL https://repo1.maven.org/maven2/.../maven-metadata.xml` or similar search).
+* **Step 4 (Apply Changes)**: Ask for user confirmation, then edit the build files (`project.scala`, `build.sc`/`build.mill`, or `build.sbt`) using correct syntax.
+* **Step 5 (Verify)**: Run code formatting and verify compilation to ensure there are no library resolution or compiler conflicts.
+
