@@ -58,7 +58,12 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
       "stainless" -> stainless,
       "performance-testing" -> "no",
       "optics" -> "no",
-      "dto-mapping" -> "no"
+      "dto-mapping" -> "no",
+      "sdkmanrc" -> "no",
+      "logging" -> "no",
+      "scoverage" -> "no",
+      "config-loader" -> "no",
+      "docker" -> "no"
     )
 
   private object StackFixtures:
@@ -242,7 +247,12 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
     "mcp-tools" -> "no",
     "mdoc" -> "no",
     "git-hooks" -> "no",
-    "version-bump" -> "no"
+    "version-bump" -> "no",
+    "sdkmanrc" -> "no",
+    "logging" -> "no",
+    "scoverage" -> "no",
+    "config-loader" -> "no",
+    "docker" -> "no"
   )
 
   private case class FeatureCase(
