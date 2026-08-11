@@ -305,6 +305,7 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
         "docs/index.md",
         "mdoc-docs/src/main/scala/DocsMain.scala",
         "scripts/version-bump.scala",
+        "scripts/setup-gh-repo.scala",
         "stryker4s.conf",
         "scripts/git-pre-commit.scala",
         "scripts/git-pre-push.scala",

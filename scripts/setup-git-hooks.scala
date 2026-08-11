@@ -42,6 +42,9 @@ object SetupGitHooks:
     // 3b. Setup Dependency Update script
     setupDependencyUpdate(scriptsDir)
 
+    // 3c. Setup GitHub repository release helper
+    setupGhRepo(scriptsDir)
+
     // 4. Setup Git Hooks (pre-commit and pre-push)
     setupHooks(repoRoot, scriptsDir, answers)
 
@@ -365,16 +368,34 @@ object SetupGitHooks:
   def setupDependencyUpdate(
       scriptsDir: os.Path
   ): Unit =
-    val updateScript = scriptsDir / "dependency-update.scala"
+    setupTemplateUtilityScript(
+      scriptsDir,
+      "dependency-update.scala",
+      "local dependency update utility script"
+    )
 
-    // Check if we are running in the template repository directly or can fetch it
-    val localScript = os.pwd / "scripts" / "dependency-update.scala"
+  def setupGhRepo(
+      scriptsDir: os.Path
+  ): Unit =
+    setupTemplateUtilityScript(
+      scriptsDir,
+      "setup-gh-repo.scala",
+      "GitHub repository release setup utility script"
+    )
+
+  def setupTemplateUtilityScript(
+      scriptsDir: os.Path,
+      scriptName: String,
+      description: String
+  ): Unit =
+    val targetScript = scriptsDir / scriptName
+
+    val localScript = os.pwd / "scripts" / scriptName
     val content = if os.exists(localScript) then os.read(localScript)
     else
-      // Fetch from remote repo
       try
         val url =
-          "https://raw.githubusercontent.com/MercurieVV/scala-llm-template/master/scripts/dependency-update.scala"
+          s"https://raw.githubusercontent.com/MercurieVV/scala-llm-template/master/scripts/$scriptName"
         val p = os
           .proc("curl", "-fsSL", "--connect-timeout", "3", url)
           .call(stderr = os.Pipe)
@@ -383,15 +404,13 @@ object SetupGitHooks:
       catch case _: Exception => ""
 
     if content.nonEmpty then
-      os.write.over(updateScript, content)
-      try { os.perms.set(updateScript, "rwxr-xr-x") }
+      os.write.over(targetScript, content)
+      try { os.perms.set(targetScript, "rwxr-xr-x") }
       catch { case _: Exception => }
-      println(
-        "✓ Created local dependency update utility script (scripts/dependency-update.scala)"
-      )
+      println(s"✓ Created $description (scripts/$scriptName)")
     else
       println(
-        "⚠️ Warning: Could not create scripts/dependency-update.scala (failed to resolve source content)"
+        s"⚠️ Warning: Could not create scripts/$scriptName (failed to resolve source content)"
       )
 
   def setupHooks(
@@ -423,7 +442,7 @@ object SetupGitHooks:
           |    val repoRoot = os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
           |
           |    val buildTool = if os.exists(repoRoot / "build.sbt") then "sbt"
-          |                    else if os.exists(repoRoot / "build.sc") then "mill"
+          |                    else if os.exists(repoRoot / "build.sc") || os.exists(repoRoot / "build.mill") then "mill"
           |                    else "scala-cli"
           |
           |    val hasScalafmt = os.exists(repoRoot / ".scalafmt.conf")
@@ -498,7 +517,21 @@ object SetupGitHooks:
           |          else
           |            0
           |        case "mill" =>
-          |          os.proc("mill", "mill.scalalib.contrib.ScalafixModule/fix", "--check").call(cwd = repoRoot, check = false).exitCode
+          |          val res = os.proc("mill", "mill.scalalib.contrib.ScalafixModule/fix", "--check")
+          |            .call(cwd = repoRoot, check = false, stdout = os.Pipe, stderr = os.Pipe)
+          |          if res.exitCode != 0 then
+          |            val errText = res.err.text()
+          |            val outText = res.out.text()
+          |            val cleanErr = errText.replaceAll("\u001b\\[[;\\d]*m", "")
+          |            val cleanOut = outText.replaceAll("\u001b\\[[;\\d]*m", "")
+          |            if cleanErr.contains("Cannot resolve external module") || cleanOut.contains("Cannot resolve external module") then
+          |              println("✓ Scalafix is not configured in Mill. Skipping Scalafix check.")
+          |              0
+          |            else
+          |              System.err.print(errText)
+          |              System.out.print(outText)
+          |              res.exitCode
+          |          else 0
           |
           |      if lintExit != 0 then
           |        println("\n[ERROR] Code linting check failed!")
@@ -530,7 +563,7 @@ object SetupGitHooks:
           |    val repoRoot = os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
           |
           |    val buildTool = if os.exists(repoRoot / "build.sbt") then "sbt"
-          |                    else if os.exists(repoRoot / "build.sc") then "mill"
+          |                    else if os.exists(repoRoot / "build.sc") || os.exists(repoRoot / "build.mill") then "mill"
           |                    else "scala-cli"
           |
           |    println("=== Git Pre-Push Verification Checks ===")
@@ -543,8 +576,11 @@ object SetupGitHooks:
           |        os.proc(cmd).call(cwd = repoRoot, check = false).exitCode
           |
           |      case "mill" =>
-          |        val buildScContent = os.read(repoRoot / "build.sc")
-          |        val cmd = if buildScContent.contains("def prePush") then Seq("mill", "app.prePush") else Seq("mill", "app.test")
+          |        val buildFile = if os.exists(repoRoot / "build.mill") then repoRoot / "build.mill" else repoRoot / "build.sc"
+          |        val buildContent = os.read(buildFile)
+          |        val cmd = if buildContent.contains("def prePush") then Seq("mill", "prePush")
+          |                  else if buildContent.contains("object scalafix") then Seq("mill", "scalafix.test")
+          |                  else Seq("mill", "app.test")
           |        os.proc(cmd).call(cwd = repoRoot, check = false).exitCode
           |
           |      case "scala-cli" =>
