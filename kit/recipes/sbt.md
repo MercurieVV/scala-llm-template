@@ -24,7 +24,7 @@ repo/
     └── src/main/scala/…
 ```
 
-## 1. The plugin, and SemanticDB (R3)
+## 1. The plugin, and SemanticDB (R-3)
 
 ```scala
 // project/plugins.sbt
@@ -177,12 +177,12 @@ an `if`.
 | `sbt "scalafixAll --check"`, violating source | exit **1**, `[error] (mymodule / scalafixAll) scalafix.sbt.ScalafixFailed: LinterError`, 4 diagnostics: 1 construct, 1 importee, 1 object-valued term, 1 plain type reference |
 | the same command, source made clean | exit **0**, `[success] Total time: 3 s` |
 | the rule's own `object Thing` | no diagnostic — the module's own package prefix in `allowedTypes` covers it |
-| the `.scalafix.conf` block above, **extracted from this file as committed** and run through `sh check.sh --config <block>` from the kit directory (R28) | exit **0**: violating **4** diagnostics [type references 1, importees 1, object-valued terms 1, constructs 1], clean **0** — the committed commas are list separators, so all fourteen construct names are entries |
+| the `.scalafix.conf` block above, **extracted from this file as committed** and run through the kit's own `check.sh --config` mode from the kit directory | exit **0**: violating **4** diagnostics [type references 1, importees 1, object-valued terms 1, constructs 1], clean **0** — the committed commas are list separators, and what the run exercises is the fixture pair's own construct, `TermIf`: it measures that the constructs half fires, not that all fourteen names are spelled right |
 
 The plain-type-reference diagnostic is the proof that SemanticDB was in play (`semanticdbEnabled := true` on Scala
 3.8.4), so the allowlist half really ran.
 
-The config row is the R28 addition, and it is the reason the lists above are comma-separated: a space-separated
+The config row is the `check.sh --config` addition, and it is the reason the lists above are comma-separated: a space-separated
 denylist concatenates into one entry, matches nothing, and leaves the construct half silently unchecked. The same
 block in that spelling was measured through the same mode and **fails** — exit 1, `the violating fixture produced
 no disallowedConstruct diagnostic: mechanism 4 (construct denylist) did not run` — so the block committed here is

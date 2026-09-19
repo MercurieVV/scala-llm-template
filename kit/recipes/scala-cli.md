@@ -5,7 +5,7 @@ scalafix rules **only** from `//> using scalafixDependency` directives — publi
 unpublished (vendored, not published), so this recipe's runnable form is the **tool-classpath CLI form**: compile the
 vendored rule, stage its registration, compile the sources under check with SemanticDB, and run the scalafix CLI on
 the result. That is the same invocation `kit/arhitecture-shape/check.sh` proves against the kit's own fixtures; a
-project runs its own copy of it (see R16 at the bottom).
+project runs its own copy of it (see "This is not `check.sh`" at the bottom).
 
 - **Prerequisites:** `scala-cli` (compiler driver) and `cs` (coursier, to launch the CLI). No build file, no plugin,
   nothing added to the project's `project.scala`.
@@ -18,7 +18,7 @@ repo/
 │   └── arhitecture-shape/                  # the kit's directory, copied in as-is
 │       ├── AllowedShape.scala              #   the rule, verbatim
 │       ├── META-INF/services/scalafix.v1.Rule  #   the registration (one line, the FQCN)
-│       └── README.md, check.sh, fixtures/… #   the kit's own fixture check — not a project lint runner (R16)
+│       └── README.md, check.sh, fixtures/… #   the kit's own fixture check — not a project lint runner
 ├── shape-policy/
 │   └── engine-arhitecture.conf             # ← you write one of these per shaped directory: its own policy
 ├── allowed-shape.sh                        # the runner below
@@ -92,8 +92,11 @@ scala-cli compile "$SRC" \
 # 4. run the rule. The CLI's own exit codes — scalafix's `ExitStatus` has ten base codes and ORs them together when
 #    several apply: 0 Ok, 1 UnexpectedError, 2 ParseError, 4 CommandLineError, 8 MissingSemanticdbError,
 #    16 StaleSemanticdbError, 32 TestError (--check found a rewrite to apply), 64 LinterError (diagnostics
-#    reported), 128 NoFilesError, 256 NoRulesError. 64 and 8 are measured below; `check.sh`'s own 0/1/2 mean
-#    something different — do not read one table as the other.
+#    reported), 128 NoFilesError, 256 NoRulesError. 64 and 8 are measured below. The no-rules path is the one to
+#    read carefully: the table names 256, but a run whose only requested rule is semantic, under `--syntactic`,
+#    prints `No rules requested to run` and exits **0** — measured on 0.14.7, and the same measured 0 the
+#    enforcement README records ("SemanticDB is not optional"): that 0 is the silent pass, not a loud failure.
+#    `check.sh`'s own 0/1/2 mean something different — do not read one table as the other.
 cs launch "ch.epfl.scala:scalafix-cli_${SCALA}:${SCALAFIX}" --main-class scalafix.cli.Cli -- \
   --tool-classpath "$WORK/tool-classes" \
   --rules AllowedShape \
@@ -157,7 +160,7 @@ own-package-prefix convention are the rule's own config decoder — `kit/arhitec
 once; this recipe does not restate it. `rules = [...]` is deliberately absent: rules are named on the CLI's
 `--rules`, and scala-cli's own rule selection (above) is not used.
 
-## SemanticDB (R3) — the precondition, not a detail
+## SemanticDB (R-3) — the precondition, not a detail
 
 Step 3's `--semanticdb --semanticdb-sourceroot <dir>` is what makes the allowlist half of the rule run at all. Both
 failure modes are silent-looking and both are stated in `kit/arhitecture-shape/README.md` ("SemanticDB is not
@@ -180,7 +183,7 @@ directory's own. When a directory needs an exception, it **removes the entry fro
 config another directory uses, and never suppresses a finding another way. A finding that cannot be fixed honestly is
 escalated, not silenced.
 
-## R16: this is not `check.sh`
+## This is not `check.sh`
 
 `check.sh` is the kit's own fixture check: its `EXPECT_*` constants and its default allowlist are deliberately
 fixture-specific, and pointing it at a project makes it fail by design. The runner above is the project-facing
@@ -195,17 +198,17 @@ mechanism; copy the commands, not the expectations.
 |---|---|
 | `sh allowed-shape.sh src shape-policy/engine-arhitecture.conf` — the runner above, extracted from this file and run as it stands | exit **64**, 4 diagnostics: type references 1, importees 1, object-valued terms 1, constructs 1 |
 | the same runner on a clean source directory | exit **0**, 0 diagnostics |
-| the runner at this file's tree path, `.kit/arhitecture-shape/` (re-run when the tree and `RULE_DIR` moved out of the compiled tree — R25) | exit **64** with the same 4 diagnostics; clean directory exit **0** |
+| the runner at this file's tree path, `.kit/arhitecture-shape/` (re-run when the tree and `RULE_DIR` moved out of the compiled tree) | exit **64** with the same 4 diagnostics; clean directory exit **0** |
 | rule compile (step 1) | exit 0; `.allowed-shape/rule-classes/io/github/mercurievv/arhitecture/scalafix/AllowedShape.class` |
 | the same sources compiled without `--semanticdb` | exit **8**, `error: SemanticDB not found: src/example/Example.scala` |
 | `scala-cli --power fix src` with `AllowedShape` in `.scalafix.conf` | exit **0**, `Running scalafix rules... No rules requested to run` |
 | `//> using scalafixDependency io.github.mercurievv::arhitecture-shape:0.0.0` | download attempted, failed, exit **0** |
-| the `shape-policy/engine-arhitecture.conf` block above, **extracted from this file as committed** and run through `sh check.sh --config <block>` from the kit directory (R28) | exit **0**: violating **4** diagnostics [type references 1, importees 1, object-valued terms 1, constructs 1], clean **0** — the committed commas are list separators, so all fourteen construct names are entries |
+| the `shape-policy/engine-arhitecture.conf` block above, **extracted from this file as committed** and run through the kit's own `check.sh --config` mode from the kit directory | exit **0**: violating **4** diagnostics [type references 1, importees 1, object-valued terms 1, constructs 1], clean **0** — the committed commas are list separators, and what the run exercises is the fixture pair's own construct, `TermIf`: it measures that the constructs half fires, not that all fourteen names are spelled right |
 
 The 4-and-0 counts are the same numbers `kit/arhitecture-shape/check.sh` asserts for the committed pair (its README,
 "What this check measures"), reproduced here through this recipe's own commands.
 
-The last row is the R28 addition, and it is the reason the lists above are comma-separated: a space-separated
+The last row is the `check.sh --config` addition, and it is the reason the lists above are comma-separated: a space-separated
 denylist concatenates into one entry, matches nothing, and leaves the construct half silently unchecked. The same
 block in that spelling was measured through the same mode and **fails** — exit 1, `the violating fixture produced
 no disallowedConstruct diagnostic: mechanism 4 (construct denylist) did not run` — so the block committed here is

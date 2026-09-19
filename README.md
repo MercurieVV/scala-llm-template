@@ -71,5 +71,8 @@ scala-cli run Setup.scala --server=false -- --agent --answers '{"kit":"yes","bui
 `build-tool` takes `mill`, `sbt` or `scala-cli`. Run it **from a local checkout of this repository**: the kit's files
 are read from `kit/` at run time, so the remote one-liner above cannot install them.
 
+The exit code is not the install's verdict: agent mode ends with `=== Setup Completed Successfully! ===` and exit 0
+even when a step reported `failed`, so check the JSON's per-step `status` on stdout, not only the exit code.
+
 The procedure that follows the install — read the ground and get the module list approved, baseline the gate,
 reshape one module through the four skills, record, repeat to the exit condition — is [`kit/apply.md`](kit/apply.md).

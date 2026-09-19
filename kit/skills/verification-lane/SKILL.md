@@ -61,7 +61,7 @@ questions no machine settles, and therefore yours:
 - Does this component *name* a shape, or spell one (R-4)?
 - Is this contract honest — stated on the abstract member, with every implementation total against it
   (R-6)?
-- Is this divergence a fix or a design change (R-12)?
+- Is this divergence a fix or a design change (R-11's judgement half — R-12 owns recording the answer)?
 
 ## The shape of your report
 

@@ -16,8 +16,10 @@ is installed.
 
 - **A local checkout of `scala-llm-template`.** The `kit` feature reads the rule, the recipes' code blocks, the
   enforcement README and the five skills from the checkout's `kit/` directory at run time, so the remote one-liner
-  that fetches `Setup.scala` alone cannot install them — it fails with that reason (R26). Every command below runs
-  from that checkout.
+  that fetches `Setup.scala` alone cannot install them — it fails with that reason. Every command below runs
+  from that checkout. And the run's exit status is not the verdict: the pre-existing agent-mode machinery ends
+  every run with `=== Setup Completed Successfully! ===` and exit 0 even when a step reported `failed`, so read
+  the JSON on stdout — each step's own `status` — rather than only the exit code.
 - **The project's build tool** — Mill, sbt or scala-cli: the answer that selects the recipe.
 - **A clean working tree** — step 2 is one commit, and step 3's baseline is measured before anything else moves.
 
@@ -91,8 +93,12 @@ stderr — Mill ignores `build.sc`, so move the project's modules into `build.mi
 step 3.
 
 **Stop condition:** the install is committed, its stat lists the kit's paths (`git show --stat`), and the diff
-contains no reshape of any module. A failed install says so and names the reason; re-running is safe — the install
-is idempotent, rewriting the same bytes (the marked blocks are replaced, never appended).
+contains no reshape of any module. A failed install says so and names the reason — and the run's exit code is not
+that answer, because agent mode still ends with `=== Setup Completed Successfully! ===` and exit 0 when a step
+failed: read the JSON's per-step `status`. Re-running is safe — the install is idempotent, rewriting the same bytes
+(the marked blocks are replaced, never appended). One caveat, because the kit is vendored: a file the kit wrote is
+yours to tune, and a re-install that finds it changed does **not** overwrite it — it writes the kit's own version
+beside it as `<file>.kit-new` and says so on stderr, leaving the merge to you.
 
 ## 3. Baseline the gate
 
@@ -141,6 +147,12 @@ does not bend:
    `R-1 … R-14` IDs and returns a verdict per ID, citing symbols rather than praise. The lane gets the diff, the
    rule list, the contract file and the target list — never your summary — and it fixes nothing. *Output:* the
    receipt and the lane's verdicts.
+
+**Stop condition:** all four outputs exist for this one module — the split and its allowlist entries, the three
+roles with the module compiling and its tests *run*, every lint finding fixed in source (or an escalation carrying
+its three facts), and the receipt plus verdicts — the diff touches no module outside step 1's approved list, and
+nothing was suppressed to get there. A module whose four outputs are not all in hand is still in step 4, whatever
+the gate says.
 
 The module's own half of the wiring is written here, not by the installer — see *The per-module half the installer
 leaves* below for where each tool keeps it.
@@ -231,13 +243,13 @@ shaped, what their package roots are, what each module's list says. Where that h
 
 | Tool | Shared half (installed) | Your half, per shaped module | The check | The gate task |
 |---|---|---|---|---|
-| **Mill** | `scalafixRules/` (rule + registration), `buildKit/ArchitectureShapeModule.mill`, `ScalafixExtra.mill`, `build.mill`, `.scalafix.conf` | the mix-in in `build.mill`'s marked block — `object <module> extends Layer with ArchitectureShapeModule`, with its `packageRoot`, its own `baseAllowedTypes` and, where it differs, its own `disallowedConstructs`; the example ships commented | `./mill <module>.fix --check` (`./mill __.fix --check` for every module) | add it to the project's `preCommit` / `prePush` tasks in `build.mill` — `kit/recipes/mill.md:278-279` asks for exactly this, "so the check is not a command a human has to remember" |
+| **Mill** | `scalafixRules/` (rule + registration), `buildKit/ArchitectureShapeModule.mill`, `ScalafixExtra.mill`, `build.mill`, `.scalafix.conf` | the mix-in in `build.mill`'s marked block — `object <module> extends Layer with ArchitectureShapeModule`, with its `packageRoot`, its own `baseAllowedTypes` and, where it differs, its own `disallowedConstructs`; the example ships commented | `./mill <module>.fix --check` (`./mill __.fix --check` for every module) | add it to the project's `preCommit` / `prePush` tasks in `build.mill` — `kit/recipes/mill.md:288` asks for exactly this, "so the check is not a command a human has to remember" |
 | **sbt** | `scalafix-rules/` (rule + registration), the plugin line in `project/plugins.sbt`, the marked block in `build.sbt` | the opt-in in that block — ``.dependsOn(`scalafix-rules` % ScalafixConfig)`` — plus the module's own `.scalafix.conf`, whose `rules` must name `AllowedShape` and whose `AllowedShape` block is that module's list | `sbt "<module>/scalafix --check"` (or `sbt "scalafixAll --check"`) | the tasks or aliases your gate runs (`kit/recipes/sbt.md`, §4) |
 | **scala-cli** | `.kit/arhitecture-shape/` and `allowed-shape.sh` | one `shape-policy/<directory>.conf` per shaped directory, both keys, passed to the runner | `sh allowed-shape.sh <sources-dir> <shape-policy/…conf>` | the project's own `preCommit` / `prePush` scripts call the runner per shaped directory |
 
 For scala-cli the vendored `check.sh` is **not** the project's lint runner: it is the kit's own fixture check, whose
-allowlist and expected counts are deliberately fixture-specific (R16). The project-facing mechanism is
-`allowed-shape.sh` plus the policy files.
+allowlist and expected counts are deliberately fixture-specific — they assert the kit's rule and its two fixtures,
+not the project's policy. The project-facing mechanism is `allowed-shape.sh` plus the policy files.
 
 Three spellings are frozen and identical in every tool: the rule name `AllowedShape`, the keys `allowedTypes` and
 `disallowedConstructs`. The schema, the symbol-prefix semantics of `allowedTypes` and the own-package-prefix

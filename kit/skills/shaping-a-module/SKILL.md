@@ -7,9 +7,10 @@ description: Use when reshaping or narrowing a module toward the two-level shape
 
 Two of the `R-1 … R-14` IDs are this skill's own: **R-2** — "The abstract level names no concrete
 type; it reaches outside its package only through an explicit allowlist" — and **R-4** — "A
-component *names* a shape; it does not spell one." Both are stated once in the rule list your
-project's kit digest points at, and cited here by ID, because a rule changes by adding or
-superseding an ID, never by silently editing prose that machinery believes it implements.
+component *names* a shape; it does not spell one." Both are quoted here so the skill reads on its own,
+but they are not this skill's to restate: the rule list your project's kit digest points at is the
+authority, and a rule changes by adding or superseding an ID there, never by silently editing prose
+that machinery believes it implements.
 
 Read the project's ground before the module: the target list R-13 requires (a reshape is declared
 deliberate by an explicit target list, not by whatever a diff happened to touch), the contract file,
@@ -55,10 +56,10 @@ State your project's ground, so this skill is not read as a claim about a finish
 5. **Extend the allowlist deliberately.** The enforcement layer's `AllowedShape` rule gains exactly
    what the contract needs. Its schema, the symbol-prefix semantics of `allowedTypes` and the
    own-package-prefix convention are stated once in the README that ships with the rule
-   (`arhitecture-shape/README.md`) — read it there rather than from a copy (R-12: the record lives in
-   one place). A nested module restates its real package prefix in that list rather than trusting one
-   derived from the build's module path. Never widen the allowlist to make a diagnostic disappear
-   (R-10).
+   (`arhitecture-shape/README.md`) — read it there rather than from a copy (R-12: a second copy is
+   what drifts out of step with the code). A nested module restates its real package prefix in that
+   list rather than trusting one derived from the build's module path. Never widen the allowlist to
+   make a diagnostic disappear (R-10).
 6. **Run the gate.** The project's declared tasks — `preCommit`, `prePush`, `checkFormat` — plus the
    shape rule's own check over the module (the kit's recipe for your build tool names the command:
    `fix --check` under Mill, `scalafix --check` under sbt). Fix what it reports; never widen an
@@ -71,8 +72,8 @@ State your project's ground, so this skill is not read as a claim about a finish
 
 ## What a completed reshape looks like
 
-- The abstract level compiles with no concrete type outside its allowlist and no disallowed construct
-  (R-2).
+- The abstract level compiles with no concrete type outside its allowlist (R-2) and no disallowed construct
+  (R-3).
 - The implementation level holds the concrete choice.
 - A shape a signature needs is named once and reused, not spelled at the use site (R-4).
 - A nested module's allowlist restates its real package prefix.
