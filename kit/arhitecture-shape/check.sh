@@ -7,9 +7,17 @@
 # it compiles the rule, compiles two fixtures with SemanticDB, runs the real
 # scalafix CLI over both and asserts the diagnostics it measures.
 #
-#   fixtures/violating/Example.scala  must produce disallowedType AND
-#                                     disallowedConstruct diagnostics
-#   fixtures/clean/Example.scala      must produce none
+#   fixtures/violating/Example.scala  must produce a disallowedType diagnostic
+#                                     for an importee AND one for an object
+#                                     referenced as a term, plus a
+#                                     disallowedConstruct diagnostic
+#   fixtures/clean/Example.scala      must produce none, while declaring its own
+#                                     `object` — the own-package prefix in the
+#                                     allowlist is what keeps a module's own
+#                                     definitions out of the report (the
+#                                     convention every real consumer follows:
+#                                     skreeep2's Mill helper appends it as
+#                                     `allowedTypes() :+ ownPackagePrefix`)
 #
 # The type half of the rule is a `SemanticRule`: every type diagnostic is
 # guarded by `t.symbol.value.nonEmpty`. Without SemanticDB the type half is
@@ -28,7 +36,12 @@
 #   ALLOWED_TYPES="..." DISALLOWED_CONSTRUCTS="..." sh check.sh
 #
 #   ALLOWED_TYPES         space-separated symbol prefixes/types (a symbol is
-#                         allowed when it starts with one of these strings)
+#                         allowed when it starts with one of these strings).
+#                         The default is the minimal stdlib set plus `example/`,
+#                         the fixture's own package prefix — appending the
+#                         consumer's own package prefix is the convention every
+#                         real consumer follows, and without it the rule reports
+#                         a module's own `object Foo` as a term reference.
 #   DISALLOWED_CONSTRUCTS space-separated scalameta node kind names (*Impl
 #                         stripped), e.g. TermIf TermMatch DefnVar
 #   ALLOWED_SHAPE_WORKDIR optional directory for intermediate output; by
@@ -42,15 +55,26 @@ SCALAFIX_RULES_ARTIFACT="ch.epfl.scala:scalafix-rules_${SCALA_VERSION}:${SCALAFI
 SCALAFIX_CLI_ARTIFACT="ch.epfl.scala:scalafix-cli_${SCALA_VERSION}:${SCALAFIX_VERSION}"
 SCALAFIX_CLI_MAIN=scalafix.cli.Cli
 
-# Counts measured against the two committed fixtures (README, "what this check
-# measures"): the violating fixture raises two disallowedType diagnostics (the
-# importee, and the object's own name) and one disallowedConstruct (the `if`).
-# A change here means the rule, the fixture, or the compiler/semanticdb
-# behaviour moved — never widen the allowlist to make the number go away (R-10).
-EXPECT_VIOLATING_TYPES=2
+# Per-mechanism counts measured against the two committed fixtures (README,
+# "what this check measures"), printed by every run and asserted below: the
+# violating fixture raises one importee diagnostic (`import java.time.Instant`),
+# one object-valued-term diagnostic (`scala.util.Random`, a genuine object
+# symbol) and one construct diagnostic (`if`), and no plain Type.Name
+# reference diagnostic. A change here means the rule, the fixture, or the
+# compiler/semanticdb behaviour moved — never widen the allowlist to make a
+# number go away (R-10).
+EXPECT_VIOLATING_TYPE_REFS=0
+EXPECT_VIOLATING_IMPORTEES=1
+EXPECT_VIOLATING_OBJECT_TERMS=1
 EXPECT_VIOLATING_CONSTRUCTS=1
 
-DEFAULT_ALLOWED_TYPES='scala/Predef.String scala/Int scala/Boolean scala/Unit scala/Any'
+# The default allowlist is the minimal stdlib set plus `example/`, this kit's
+# fixture package. Appending the consumer's own package prefix is the convention
+# every real consumer follows — skreeep2's Mill helper is
+# `allowedTypes() :+ ownPackagePrefix` (buildKit/ArchitectureShapeModule.mill:56)
+# — because a module's own `object Foo` is a term reference like any other and
+# is otherwise reported. Overridable like the other defaults.
+DEFAULT_ALLOWED_TYPES='scala/Predef.String scala/Int scala/Boolean scala/Unit scala/Any example/'
 DEFAULT_DISALLOWED_CONSTRUCTS='TermIf'
 
 # ---------------------------------------------------------------- locations --
@@ -126,9 +150,13 @@ cp -R "$work_dir/rule-classes/." "$tool_classes/"
 cp -R "$kit_dir/META-INF" "$tool_classes/"
 
 # --------------------------------------------------- run both fixtures ------
-measured_violating_types=0
+measured_violating_type_refs=0
+measured_violating_importees=0
+measured_violating_object_terms=0
 measured_violating_constructs=0
-measured_clean_types=0
+measured_clean_type_refs=0
+measured_clean_importees=0
+measured_clean_object_terms=0
 measured_clean_constructs=0
 
 for name in violating clean; do
@@ -175,27 +203,46 @@ for name in violating clean; do
   echo "  scalafix exit status: $cli_status"
   cat "$diagnostics"
 
-  types=$(grep -c '\[AllowedShape\.disallowedType\]' "$diagnostics" || true)
+  # Attribution per mechanism, read off the diagnostic messages: the importee
+  # check says "import of …", the object-valued-term check says "…, referenced
+  # as a term", a plain Type.Name reference says neither, and the construct
+  # check carries its own lint ID — so no count is reported without saying which
+  # mechanism produced it.
+  type_total=$(grep -c '\[AllowedShape\.disallowedType\]' "$diagnostics" || true)
+  importees=$(grep -c '\[AllowedShape\.disallowedType\] import of ' "$diagnostics" || true)
+  object_terms=$(grep -c 'referenced as a term' "$diagnostics" || true)
+  type_refs=$((type_total - importees - object_terms))
   constructs=$(grep -c '\[AllowedShape\.disallowedConstruct\]' "$diagnostics" || true)
 
+  echo "  measured: type references $type_refs, importees $importees, object-valued terms $object_terms, constructs $constructs"
+
   if [ "$name" = violating ]; then
-    measured_violating_types=$types
+    measured_violating_type_refs=$type_refs
+    measured_violating_importees=$importees
+    measured_violating_object_terms=$object_terms
     measured_violating_constructs=$constructs
-    [ "$types" -ge 1 ] ||
-      fail "the violating fixture produced no disallowedType diagnostic: the allowlist half did not run (semanticdb? rule config?)"
+    [ "$importees" -ge 1 ] ||
+      fail "the violating fixture produced no importee diagnostic: the allowlist half did not run (semanticdb? rule config?)"
+    [ "$object_terms" -ge 1 ] ||
+      fail "the violating fixture produced no object-valued-term diagnostic: a disallowed type reached as a term was not caught"
     [ "$constructs" -ge 1 ] ||
       fail "the violating fixture produced no disallowedConstruct diagnostic: the denylist half did not run"
-    [ "$types" -eq "$EXPECT_VIOLATING_TYPES" ] && [ "$constructs" -eq "$EXPECT_VIOLATING_CONSTRUCTS" ] ||
-      fail "the violating fixture produced $types disallowedType and $constructs disallowedConstruct diagnostics; expected $EXPECT_VIOLATING_TYPES and $EXPECT_VIOLATING_CONSTRUCTS. Re-measure them deliberately if the rule, the fixtures, the allowlist arguments or the toolchain moved — never widen the allowlist or lower an expectation to make a run pass (R-10)"
+    [ "$type_refs" -eq "$EXPECT_VIOLATING_TYPE_REFS" ] &&
+      [ "$importees" -eq "$EXPECT_VIOLATING_IMPORTEES" ] &&
+      [ "$object_terms" -eq "$EXPECT_VIOLATING_OBJECT_TERMS" ] &&
+      [ "$constructs" -eq "$EXPECT_VIOLATING_CONSTRUCTS" ] ||
+      fail "the violating fixture produced type references $type_refs, importees $importees, object-valued terms $object_terms, constructs $constructs; expected $EXPECT_VIOLATING_TYPE_REFS, $EXPECT_VIOLATING_IMPORTEES, $EXPECT_VIOLATING_OBJECT_TERMS and $EXPECT_VIOLATING_CONSTRUCTS. Re-measure them deliberately if the rule, the fixtures, the allowlist arguments or the toolchain moved — never widen the allowlist or lower an expectation to make a run pass (R-10)"
   else
-    measured_clean_types=$types
+    measured_clean_type_refs=$type_refs
+    measured_clean_importees=$importees
+    measured_clean_object_terms=$object_terms
     measured_clean_constructs=$constructs
-    [ "$types" -eq 0 ] && [ "$constructs" -eq 0 ] ||
-      fail "the clean fixture produced $types disallowedType and $constructs disallowedConstruct diagnostics: the check does not discriminate"
+    [ "$type_total" -eq 0 ] && [ "$constructs" -eq 0 ] ||
+      fail "the clean fixture produced type references $type_refs, importees $importees, object-valued terms $object_terms, constructs $constructs: the check does not discriminate"
   fi
   echo
 done
 
-echo "violating: $((measured_violating_types + measured_violating_constructs)) diagnostics ($measured_violating_types disallowedType, $measured_violating_constructs disallowedConstruct)"
-echo "clean: $((measured_clean_types + measured_clean_constructs)) diagnostics ($measured_clean_types disallowedType, $measured_clean_constructs disallowedConstruct)"
+echo "violating: $((measured_violating_type_refs + measured_violating_importees + measured_violating_object_terms + measured_violating_constructs)) diagnostics [type references $measured_violating_type_refs, importees $measured_violating_importees, object-valued terms $measured_violating_object_terms, constructs $measured_violating_constructs]"
+echo "clean: $((measured_clean_type_refs + measured_clean_importees + measured_clean_object_terms + measured_clean_constructs)) diagnostics [type references $measured_clean_type_refs, importees $measured_clean_importees, object-valued terms $measured_clean_object_terms, constructs $measured_clean_constructs]"
 echo "OK"

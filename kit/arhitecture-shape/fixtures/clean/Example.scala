@@ -3,9 +3,12 @@ package example
 /** The clean half of the fixture pair: allowlisted types only, and none of the
   * disallowed constructs — no `if`, no `match`, no `var`.
   *
-  * A top-level `def` rather than an `object`: the rule polices object-valued
-  * term references too, so a module's own `object Foo` is flagged unless the
-  * module's own package prefix is in `allowedTypes` — which is what a project's
-  * build wiring adds (see skreeep2's `ArchitectureShapeModule`).
+  * It declares an `object`, on purpose. A module's own `object Foo` is a
+  * term-valued reference like any other, so the module's own package prefix has
+  * to be in `allowedTypes` — that is the `example/` entry in this check's
+  * default allowlist, and the `allowedTypes() :+ ownPackagePrefix` convention a
+  * real consumer's build follows (skreeep2's `ArchitectureShapeModule`). With
+  * that prefix in place a module's own definitions stay out of the report.
   */
-def greeting(who: String): String = "hello " + who
+object Example:
+  def greeting(who: String): String = "hello " + who

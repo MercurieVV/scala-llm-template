@@ -13,18 +13,24 @@ proof that the copy still discriminates. A project may tune its copy — that is
 | # | Mechanism | What it flags |
 |---|---|---|
 | 1 | Referenced types | Every `Type.Name` outside an `import`, unless it is the name *being defined* (`trait Foo`, `type Event = ...`) or a type-parameter binder / compiler-synthesized local. |
-| 2 | Object-valued terms | Every `Term.Name` naming an object — `Kleisli.catsDataArrowChoiceForKleisli(...)` names `Kleisli` without ever writing it as a type. A module's own `object Foo` is included: the module's own package prefix has to be in `allowedTypes` (a project's build adds it). |
+| 2 | Object-valued terms | Every `Term.Name` whose symbol is an object — `Kleisli.catsDataArrowChoiceForKleisli(...)` names `Kleisli` without ever writing it as a type, and `scala.util.Random.nextInt()` names the `Random` object. A module's own `object Foo` is included: the module's own package prefix has to be in `allowedTypes` (a project's build adds it). Only `.`-terminated object symbols qualify — a class (`#`) symbol used as a term is not caught here (see the named blind spot under R-11). |
 | 3 | Importees | Every `Importee.Name`/`Importee.Rename` that names a type or an object, so a disallowed type fails at the line stating intent to use it. A method or `val` import (`toFunctorOps`) is syntax, not policy, and is not policed. |
 | 4 | Constructs | Every tree whose scalameta node kind is listed in `disallowedConstructs` (`TermIf`, `TermMatch`, `DefnVar`, …). Kind names are node class names with the generated `Impl` suffix stripped. |
 
 Allowlist entries are **symbol prefixes**: `cats/arrow` allows everything under it, `scala/Int` allows
 `scala/Int#`. A symbol is allowed when its value starts with an entry.
 
-Measured boundary of mechanism 2 (2026-09-19, scalafix 0.14.7): a *Java* class's static member —
-`java.time.Instant.now()` — resolves its term to the class symbol `java/time/Instant#`, not to an object
-symbol, so the term occurrence is **not** flagged; the `import java.time.Instant` line is what catches it
-(mechanism 3). A Scala object (`scala.util.Random`) is flagged at the term. Do not read mechanism 2 as
-"every term reference is checked".
+Two conventions follow from the table, and both are what a real consumer's build does:
+
+- **Append the module's own package prefix to `allowedTypes`.** `check.sh`'s default allowlist carries
+  `example/` for exactly that reason, and skreeep2's Mill helper spells the convention out as
+  `allowedTypes() :+ ownPackagePrefix` (`buildKit/ArchitectureShapeModule.mill:56`). Without that prefix the
+  rule reports the module's own `object Foo` — and its own types, when they are referenced rather than
+  defined — as references to something disallowed.
+- **Read mechanism 2 as "object symbols", not as "every term reference".** A Java class's static member
+  reached without an import (`java.time.Instant.now()`) resolves to a class (`#`) symbol and is caught by
+  neither mechanism 2 nor mechanism 3. That gap is named under R-11 below; it is a property of the canonical
+  rule, which this copy does not alter.
 
 ## Configuration
 
@@ -64,8 +70,10 @@ the fully-qualified class name. Drop it and `--rules AllowedShape` fails with `U
 
 ## SemanticDB is not optional
 
-Mechanism 1–3 are guarded by `t.symbol.value.nonEmpty`. A run without SemanticDB is not a clean run — it is
-an unrun rule, and the two failure modes measured with the CLI are both silent-looking:
+Mechanism 1–3 are guarded by `t.symbol.value.nonEmpty`. A run without SemanticDB is not a clean run: the
+rule does not run at all, so the report says nothing about the allowlist. **A silent pass is not a pass** —
+that is the R-8 point this section exists for. The two failure modes measured with the CLI are both
+silent-looking:
 
 - `--syntactic` (semantic rules ignored): prints `No rules requested to run` and **exits 0**.
 - a classpath whose compiled output has no `META-INF/semanticdb`: exits 8, `SemanticDB not found`.
@@ -77,7 +85,7 @@ output on the CLI's `--classpath` — scalafix reads SemanticDB from the classpa
 ## `check.sh`
 
 ```sh
-sh check.sh                       # defaults: stdlib allowlist + TermIf
+sh check.sh                       # defaults: stdlib + `example/` allowlist, TermIf
 sh check.sh "<allowed types>" "<disallowed constructs>"
 ALLOWED_TYPES="..." DISALLOWED_CONSTRUCTS="..." sh check.sh
 ```
@@ -93,20 +101,24 @@ What it does:
 3. compiles each fixture with SemanticDB under `fixtures/`, asserting the `.semanticdb` file exists;
 4. runs `cs launch ch.epfl.scala:scalafix-cli_3.8.4:0.14.7 --main-class scalafix.cli.Cli -- --tool-classpath
    … --rules AllowedShape --config … --classpath … --sourceroot … --check <fixture>` for each fixture;
-5. counts `[AllowedShape.disallowedType]` / `[AllowedShape.disallowedConstruct]` lines in that output,
-   prints them, and asserts them.
+5. counts the diagnostics **per mechanism** — importees, object-valued terms, plain type references and
+   constructs, read off the messages the rule emits — prints that attribution, and asserts it.
 
 Measured with the committed fixtures (scala-cli 3.8.4, scalafix 0.14.7):
 
 ```
-violating: 3 diagnostics (2 disallowedType, 1 disallowedConstruct)
-clean: 0 diagnostics (0 disallowedType, 0 disallowedConstruct)
+violating: 3 diagnostics [type references 0, importees 1, object-valued terms 1, constructs 1]
+clean: 0 diagnostics [type references 0, importees 0, object-valued terms 0, constructs 0]
 ```
 
-The two type diagnostics on the violating fixture are the `import java.time.Instant` (mechanism 3) and the
-fixture's own `object Example` (mechanism 2) — *not* `Instant.now()`'s term, see the boundary above. Every
-run prints the diagnostics it saw and the counts it measured; exit status is 0 when the fixtures behave, 1
-when they do not (including a missing fixture), 2 when the script cannot set itself up.
+The violating fixture's three diagnostics are one per mechanism the pair has to exercise: the
+`import java.time.Instant` (importee, mechanism 3), the `scala.util.Random` object reached as a term
+(mechanism 2 — a genuine object symbol, unlike `Instant.now()`'s class symbol) and the `if` (mechanism 4).
+The clean fixture declares its own `object Example` and still reports nothing, which is the other half of the
+pair: the own-package prefix keeps a module's own definitions out of the report.
+
+Every run prints the diagnostics it saw and the counts it measured; exit status is 0 when the fixtures
+behave, 1 when they do not (including a missing fixture), 2 when the script cannot set itself up.
 
 Intermediate output goes to a temporary directory (removed on exit); set `ALLOWED_SHAPE_WORKDIR=<dir>` to keep
 it somewhere inspectable. Overriding `ALLOWED_TYPES`/`DISALLOWED_CONSTRUCTS` moves the measured counts, and
@@ -124,6 +136,31 @@ Judgement, and therefore not this rule's business: whether the split is the righ
 change. A green `check.sh` says the machinery works — it says nothing about the design, and must never be
 used as if it did.
 
+### Named blind spot: a type reached as a fully-qualified static term
+
+What the rule decides has an edge, and the edge is written down here rather than left to be discovered.
+Measured 2026-09-19 (Scala 3.8.4, scalafix 0.14.7); **not fixed in this copy**, because the rule is vendored
+verbatim and a canon that silently diverges from the session's own copy is the thing the design's
+extraction trigger governs (R-10: escalate, never patch around it):
+
+```scala
+package example
+
+object Probe:
+  def value: Int = java.time.Instant.now().getNano   // no `import java.time.Instant`
+```
+
+`Instant` here is a `Term.Name` whose symbol is `java/time/Instant#` — a **class** symbol. The importee check
+(mechanism 3) never sees it, because there is no import to flag; the object-valued-term check (mechanism 2)
+passes over it, because that mechanism accepts only `.`-terminated object symbols. The line therefore
+produces **no diagnostic**, while the same type imported or written as a type does.
+
+Practical consequence: a module can reach a Java type's statics without tripping the allowlist, provided it
+never imports the type and never writes it as a type. Where that matters, the rule cannot be the only thing
+standing between the module and the type — that residue is judgement, and belongs to the review lane (R-9),
+not to a widened allowlist. Closing the gap means changing the rule's logic: a kit-level behaviour change
+(the design's extraction trigger), not an edit to a vendored copy.
+
 ## Files
 
 | File | Role |
@@ -131,5 +168,5 @@ used as if it did.
 | `AllowedShape.scala` | the canonical rule, vendored verbatim (package line differs) |
 | `META-INF/services/scalafix.v1.Rule` | the registration: `--rules AllowedShape` resolves through it |
 | `check.sh` | compiles rule + fixtures with SemanticDB, runs the CLI, asserts the counts |
-| `fixtures/violating/Example.scala` | must produce a type diagnostic *and* a construct diagnostic |
-| `fixtures/clean/Example.scala` | must produce none |
+| `fixtures/violating/Example.scala` | must produce an importee diagnostic, an object-valued-term diagnostic *and* a construct diagnostic |
+| `fixtures/clean/Example.scala` | declares its own `object`, uses allowlisted types only, must produce none |
