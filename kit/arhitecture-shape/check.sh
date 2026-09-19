@@ -7,10 +7,12 @@
 # it compiles the rule, compiles two fixtures with SemanticDB, runs the real
 # scalafix CLI over both and asserts the diagnostics it measures.
 #
-#   fixtures/violating/Example.scala  must produce a disallowedType diagnostic
-#                                     for an importee AND one for an object
-#                                     referenced as a term, plus a
-#                                     disallowedConstruct diagnostic
+#   fixtures/violating/Example.scala  must produce one diagnostic per mechanism:
+#                                     a disallowed type written as a type
+#                                     (mechanism 1), the same type imported
+#                                     (mechanism 3), a disallowed Scala object
+#                                     reached as a term (mechanism 2) and a
+#                                     disallowed construct (mechanism 4)
 #   fixtures/clean/Example.scala      must produce none, while declaring its own
 #                                     `object` — the own-package prefix in the
 #                                     allowlist is what keeps a module's own
@@ -46,6 +48,9 @@
 #                         stripped), e.g. TermIf TermMatch DefnVar
 #   ALLOWED_SHAPE_WORKDIR optional directory for intermediate output; by
 #                         default a temporary directory is created and removed
+#
+# Exit status: 0 the fixtures behaved; 1 the check ran and the artifact under
+# test did not behave; 2 the check could not be set up on this machine.
 # =============================================================================
 set -eu
 
@@ -57,16 +62,25 @@ SCALAFIX_CLI_MAIN=scalafix.cli.Cli
 
 # Per-mechanism counts measured against the two committed fixtures (README,
 # "what this check measures"), printed by every run and asserted below: the
-# violating fixture raises one importee diagnostic (`import java.time.Instant`),
-# one object-valued-term diagnostic (`scala.util.Random`, a genuine object
-# symbol) and one construct diagnostic (`if`), and no plain Type.Name
-# reference diagnostic. A change here means the rule, the fixture, or the
+# violating fixture raises one diagnostic per mechanism — a plain Type.Name
+# reference (`def at(i: Instant)`), an importee (`import java.time.Instant`), an
+# object-valued term (`scala.util.Random`, a genuine object symbol) and a
+# construct (`if`). A change here means the rule, the fixture, or the
 # compiler/semanticdb behaviour moved — never widen the allowlist to make a
 # number go away (R-10).
-EXPECT_VIOLATING_TYPE_REFS=0
+EXPECT_VIOLATING_TYPE_REFS=1
 EXPECT_VIOLATING_IMPORTEES=1
 EXPECT_VIOLATING_OBJECT_TERMS=1
 EXPECT_VIOLATING_CONSTRUCTS=1
+
+# The CLI's own exit status, asserted per fixture rather than merely printed: a
+# failed run leaves an error message and no diagnostics, so counting alone would
+# read a failure as "zero diagnostics" — the silent pass this script exists to
+# prevent. 64 is what `--check` returns when it does report diagnostics; 8 is
+# "SemanticDB not found" and 4 is a rule that was not loaded, both of which get
+# their own message below.
+EXPECT_VIOLATING_CLI_STATUS=64
+EXPECT_CLEAN_CLI_STATUS=0
 
 # The default allowlist is the minimal stdlib set plus `example/`, this kit's
 # fixture package. Appending the consumer's own package prefix is the convention
@@ -84,23 +98,29 @@ disallowed_constructs=${DISALLOWED_CONSTRUCTS:-$DEFAULT_DISALLOWED_CONSTRUCTS}
 if [ $# -gt 0 ]; then allowed_types=$1; fi
 if [ $# -gt 1 ]; then disallowed_constructs=$2; fi
 
+# Exit statuses: 0 when the fixtures behaved, 1 when a check ran and the
+# artifact did not behave (missing registration, missing fixture, a fixture that
+# does not compile, a CLI failure, a count that moved), 2 when the check could
+# not be set up on this machine (no work directory, `scala-cli`/`cs` missing,
+# the rule did not compile against the scalafix-rules artifact).
+fail() { echo "check.sh: $1" >&2; exit 1; }
+fail_setup() { echo "check.sh: $1" >&2; exit 2; }
+
 work_dir=${ALLOWED_SHAPE_WORKDIR:-}
 own_work_dir=no
 if [ -z "$work_dir" ]; then
   work_dir=$(mktemp -d "${TMPDIR:-/tmp}/allowed-shape-check.XXXXXX") ||
-    { echo "check.sh: cannot create a temporary directory; set ALLOWED_SHAPE_WORKDIR=<dir>" >&2; exit 2; }
+    fail_setup "cannot create a temporary directory; set ALLOWED_SHAPE_WORKDIR=<dir>"
   own_work_dir=yes
 else
-  mkdir -p "$work_dir"
+  mkdir -p "$work_dir" || fail_setup "cannot create the work directory $work_dir"
 fi
 cleanup() { if [ "$own_work_dir" = yes ] && [ -n "$work_dir" ]; then rm -rf "$work_dir"; fi; }
 trap cleanup 0
 trap 'exit 1' 1 2 3 15
 
-fail() { echo "check.sh: $1" >&2; exit 1; }
-
-command -v scala-cli >/dev/null 2>&1 || fail "'scala-cli' is not on PATH (needed to compile the rule and the fixtures)"
-command -v cs >/dev/null 2>&1 || fail "'cs' (coursier) is not on PATH (needed to launch the scalafix CLI)"
+command -v scala-cli >/dev/null 2>&1 || fail_setup "'scala-cli' is not on PATH (needed to compile the rule and the fixtures)"
+command -v cs >/dev/null 2>&1 || fail_setup "'cs' (coursier) is not on PATH (needed to launch the scalafix CLI)"
 
 echo "allowed-shape check: $kit_dir"
 echo "  rule + fixtures compiled with scala-cli $SCALA_VERSION, scalafix CLI $SCALAFIX_VERSION"
@@ -134,13 +154,21 @@ if ! scala-cli compile "$kit_dir/AllowedShape.scala" \
     > "$work_dir/compile-rule.log" 2>&1; then
   echo "check.sh: the rule did not compile against $SCALAFIX_RULES_ARTIFACT" >&2
   cat "$work_dir/compile-rule.log" >&2
-  exit 1
+  exit 2
 fi
 
-# The tool classpath is the compiled rule plus its registration: the
-# META-INF/services/scalafix.v1.Rule file that lets `--rules AllowedShape`
-# resolve to the rule class. Drop the registration and scalafix answers
-# "Unknown rule 'AllowedShape'" — which is why it is asserted by this run.
+# The tool classpath is the compiled rule plus its registration — and nothing
+# else, deliberately. The scalafix-rules jar is NOT added: the rule's own
+# imports (`scalafix.v1.*`, `metaconfig.*`, `scala.meta.*`) are resolved by the
+# CLI's parent classloader, which already carries scalafix-core, metaconfig and
+# scalameta at the same 0.14.7 version. Measured working; if a future CLI stops
+# supplying one of them, the rule fails to load and the exit-status assertion
+# below reports it loudly (exit 4) instead of quietly counting zero diagnostics.
+# So do not "fix" this by re-adding the jar without evidence that it is needed.
+#
+# The registration is the META-INF/services/scalafix.v1.Rule file that lets
+# `--rules AllowedShape` resolve to the rule class; drop it and scalafix answers
+# "Unknown rule 'AllowedShape'" — which is why the run asserts its exit status.
 tool_classes="$work_dir/tool-classes"
 rm -rf "$tool_classes"
 mkdir -p "$tool_classes"
@@ -203,6 +231,21 @@ for name in violating clean; do
   echo "  scalafix exit status: $cli_status"
   cat "$diagnostics"
 
+  # Assert the CLI's own status before counting anything: a failed run leaves an
+  # error message and no diagnostics, so an upper-bound (or even a floor) read
+  # off an empty file would turn "the rule never ran" into "no findings".
+  if [ "$name" = violating ]; then
+    [ "$cli_status" -ne 8 ] ||
+      fail "the scalafix CLI found no SemanticDB for the violating fixture (exit 8): the type half cannot run"
+    [ "$cli_status" -ne 4 ] ||
+      fail "the scalafix CLI did not load the rule or rejected the arguments (exit 4)"
+    [ "$cli_status" -eq "$EXPECT_VIOLATING_CLI_STATUS" ] ||
+      fail "the scalafix CLI exited $cli_status on the violating fixture; expected $EXPECT_VIOLATING_CLI_STATUS (diagnostics reported under --check). Re-measure deliberately if the CLI's exit conventions or the toolchain moved"
+  else
+    [ "$cli_status" -eq "$EXPECT_CLEAN_CLI_STATUS" ] ||
+      fail "the scalafix CLI failed on the clean fixture (exit $cli_status): the run proved nothing, whatever the diagnostic count below says"
+  fi
+
   # Attribution per mechanism, read off the diagnostic messages: the importee
   # check says "import of …", the object-valued-term check says "…, referenced
   # as a term", a plain Type.Name reference says neither, and the construct
@@ -221,12 +264,14 @@ for name in violating clean; do
     measured_violating_importees=$importees
     measured_violating_object_terms=$object_terms
     measured_violating_constructs=$constructs
+    [ "$type_refs" -ge 1 ] ||
+      fail "the violating fixture produced no plain Type.Name diagnostic: mechanism 1 (referenced types) did not run"
     [ "$importees" -ge 1 ] ||
-      fail "the violating fixture produced no importee diagnostic: the allowlist half did not run (semanticdb? rule config?)"
+      fail "the violating fixture produced no importee diagnostic: mechanism 3 (importees) did not run"
     [ "$object_terms" -ge 1 ] ||
-      fail "the violating fixture produced no object-valued-term diagnostic: a disallowed type reached as a term was not caught"
+      fail "the violating fixture produced no object-valued-term diagnostic: mechanism 2 did not catch a disallowed type reached as a term"
     [ "$constructs" -ge 1 ] ||
-      fail "the violating fixture produced no disallowedConstruct diagnostic: the denylist half did not run"
+      fail "the violating fixture produced no disallowedConstruct diagnostic: mechanism 4 (construct denylist) did not run"
     [ "$type_refs" -eq "$EXPECT_VIOLATING_TYPE_REFS" ] &&
       [ "$importees" -eq "$EXPECT_VIOLATING_IMPORTEES" ] &&
       [ "$object_terms" -eq "$EXPECT_VIOLATING_OBJECT_TERMS" ] &&

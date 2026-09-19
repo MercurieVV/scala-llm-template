@@ -78,9 +78,19 @@ silent-looking:
 - `--syntactic` (semantic rules ignored): prints `No rules requested to run` and **exits 0**.
 - a classpath whose compiled output has no `META-INF/semanticdb`: exits 8, `SemanticDB not found`.
 
-So: compile the sources under check with `-Xsemanticdb` (scala-cli: `--semanticdb`), and put that compiled
-output on the CLI's `--classpath` — scalafix reads SemanticDB from the classpath, which is how Mill passes
-`semanticDbData()`. `--sourceroot` must be the directory the stored paths are relative to.
+So: compile the sources under check with SemanticDB, and put that compiled output on the CLI's `--classpath` —
+scalafix reads SemanticDB from the classpath, which is how Mill passes `semanticDbData()`. The spellings that
+work:
+
+- **scala-cli:** `--semanticdb --semanticdb-sourceroot <dir>` — what `check.sh` uses.
+- **raw scalac:** `-Xsemanticdb -semanticdb-target <classes dir>`. Without the target flag the semanticdb file
+  lands *beside the source* rather than in the output directory, and the CLI answers `SemanticDB not found`.
+  (Passed through scala-cli those two options need `-O`, which only forwards `-g`/`-language`/`-opt`/`-P`/
+  `-target`/`-V`/`-W`/`-X`/`-Y` options implicitly.)
+- **Mill/sbt:** the same two scalac options, with the compiled output handed to the rule's classpath.
+
+`--sourceroot` must be the directory the stored paths are relative to — the same directory given as
+`--semanticdb-sourceroot` (or `-sourceroot`) when compiling.
 
 ## `check.sh`
 
@@ -101,24 +111,34 @@ What it does:
 3. compiles each fixture with SemanticDB under `fixtures/`, asserting the `.semanticdb` file exists;
 4. runs `cs launch ch.epfl.scala:scalafix-cli_3.8.4:0.14.7 --main-class scalafix.cli.Cli -- --tool-classpath
    … --rules AllowedShape --config … --classpath … --sourceroot … --check <fixture>` for each fixture;
-5. counts the diagnostics **per mechanism** — importees, object-valued terms, plain type references and
-   constructs, read off the messages the rule emits — prints that attribution, and asserts it.
+5. asserts the CLI's own exit status per fixture (64 with diagnostics under `--check`, 0 on the clean
+   fixture — 8 and 4 get their own messages), then counts the diagnostics **per mechanism** — type
+   references, importees, object-valued terms and constructs, read off the messages the rule emits — prints
+   that attribution, and asserts it.
 
 Measured with the committed fixtures (scala-cli 3.8.4, scalafix 0.14.7):
 
 ```
-violating: 3 diagnostics [type references 0, importees 1, object-valued terms 1, constructs 1]
+violating: 4 diagnostics [type references 1, importees 1, object-valued terms 1, constructs 1]
 clean: 0 diagnostics [type references 0, importees 0, object-valued terms 0, constructs 0]
 ```
 
-The violating fixture's three diagnostics are one per mechanism the pair has to exercise: the
-`import java.time.Instant` (importee, mechanism 3), the `scala.util.Random` object reached as a term
-(mechanism 2 — a genuine object symbol, unlike `Instant.now()`'s class symbol) and the `if` (mechanism 4).
-The clean fixture declares its own `object Example` and still reports nothing, which is the other half of the
-pair: the own-package prefix keeps a module's own definitions out of the report.
+The violating fixture's four diagnostics are one per mechanism, so deleting any single mechanism's code path
+changes an asserted number: `def at(i: Instant)` writes a disallowed type *as a type* (mechanism 1),
+`import java.time.Instant` names it as an importee (mechanism 3), `scala.util.Random` is a genuine object
+symbol reached as a term (mechanism 2 — unlike `Instant.now()`, whose `Instant` is a class symbol), and the
+`if` is a denylisted construct (mechanism 4). The clean fixture declares its own `object Example` and still
+reports nothing, which is the other half of the pair: the own-package prefix keeps a module's own definitions
+out of the report.
 
-Every run prints the diagnostics it saw and the counts it measured; exit status is 0 when the fixtures
-behave, 1 when they do not (including a missing fixture), 2 when the script cannot set itself up.
+Every run prints the diagnostics it saw, the CLI's exit status and the counts it measured. `check.sh`'s own
+exit status separates three cases: **0** the fixtures behaved; **1** the check ran and the artifact did not
+behave (missing registration, a missing fixture, a fixture that does not compile, a CLI failure, a count that
+moved); **2** the check could not be set up on this machine (no work directory, `scala-cli` or `cs` missing,
+or the rule did not compile against the scalafix-rules artifact — on a cold cache or without network, that
+last one is the environment talking). The CLI's status is asserted rather than merely printed, because a
+failed run's output is empty: counting alone would read it as "no findings", which is the silent pass this
+whole check exists to prevent.
 
 Intermediate output goes to a temporary directory (removed on exit); set `ALLOWED_SHAPE_WORKDIR=<dir>` to keep
 it somewhere inspectable. Overriding `ALLOWED_TYPES`/`DISALLOWED_CONSTRUCTS` moves the measured counts, and
