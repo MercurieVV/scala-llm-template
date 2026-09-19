@@ -53,7 +53,9 @@
 #       project's policy could pass. The wrapper this produces is written to the work directory and
 #       printed, so the exact run can be reproduced by hand. One consequence worth knowing: an empty
 #       `allowedTypes` in the supplied file cannot be tested here as "types off" — the append turns
-#       the type half on for the fixtures.
+#       the type half on for the fixtures, so a policy that never mentions `allowedTypes` (a
+#       misspelling, or a deliberate constructs-only policy) fails the clean fixture's zero instead.
+#       That failure names the missing key; see `clean_hint`.
 #     * it tests that the supplied policy still *discriminates this fixture pair*: each mechanism
 #       fires, the clean fixture stays clean, the CLI's statuses are the expected ones. It does not
 #       test the policy against the project's own sources, and it cannot see a typo in an entry the
@@ -107,7 +109,9 @@ EXPECT_VIOLATING_CONSTRUCTS=1
 # read a failure as "zero diagnostics" — the silent pass this script exists to
 # prevent. 64 is what `--check` returns when it does report diagnostics; 8 is
 # "SemanticDB not found" and 4 is a rule that was not loaded, both of which get
-# their own message below.
+# their own message below. On the *clean* fixture 64 means something else again
+# — the fixture pair stopped discriminating — and says so instead of being
+# reported as a CLI failure.
 EXPECT_VIOLATING_CLI_STATUS=64
 EXPECT_CLEAN_CLI_STATUS=0
 
@@ -156,6 +160,24 @@ floor_hint() {
       echo " — the supplied policy's 'allowedTypes' lets this mechanism's type through, so it has nothing to report on these fixtures; a fixture pair can only measure a mechanism with something to find"
       ;;
   esac
+}
+
+# The clean fixture can fail for more than one honest reason. The one the mode can
+# name is the supplied policy that never mentions `allowedTypes`: the wrapper's
+# appended `example/` prefix is then the whole allowlist, so the fixtures' own stdlib
+# types are reported and the clean fixture stops being clean. A policy that means
+# "types off" is legal for the rule, and this mode cannot test it (the append turns
+# the type half on) — say which of the two is being looked at instead of leaving the
+# clean-fixture failure to be read as a moved fixture.
+clean_hint() {
+  [ "$config_mode" = yes ] || return 0
+  # A full-line comment mentioning the key is not the policy setting it, so comments
+  # are dropped before the look: what is asked is whether any line of the file could
+  # be the key's own.
+  if ! sed 's|^[[:space:]]*#.*$||; s|^[[:space:]]*//.*$||' "$supplied_config" 2>/dev/null |
+    grep -q 'allowedTypes'; then
+    echo " — the supplied policy never mentions 'allowedTypes', so the wrapper's appended \"example/\" prefix is the whole allowlist and the fixtures' own stdlib types are reported; a constructs-only policy cannot be tested here as \"types off\" (allowedTypes is appended to, never replaced). If the key lives in a file this policy includes, its entries are the ones to check"
+  fi
 }
 
 # ------------------------------------------------------------- arguments ----
@@ -291,11 +313,14 @@ fi
 # "Unknown rule 'AllowedShape'" — which is why the run asserts its exit status.
 tool_classes="$work_dir/tool-classes"
 rm -rf "$tool_classes"
-mkdir -p "$tool_classes"
-cp -R "$work_dir/rule-classes/." "$tool_classes/"
+mkdir -p "$tool_classes" ||
+  fail_setup "cannot create the tool classpath directory $tool_classes"
+cp -R "$work_dir/rule-classes/." "$tool_classes/" ||
+  fail_setup "cannot stage the compiled rule into $tool_classes"
 [ -f "$kit_dir/META-INF/services/scalafix.v1.Rule" ] ||
   fail "the rule registration is missing: $kit_dir/META-INF/services/scalafix.v1.Rule"
-cp -R "$kit_dir/META-INF" "$tool_classes/"
+cp -R "$kit_dir/META-INF" "$tool_classes/" ||
+  fail_setup "cannot copy the rule registration into $tool_classes"
 
 # --------------------------------------------------- run both fixtures ------
 measured_violating_type_refs=0
@@ -362,8 +387,21 @@ for name in violating clean; do
     [ "$cli_status" -eq "$EXPECT_VIOLATING_CLI_STATUS" ] ||
       fail "the scalafix CLI exited $cli_status on the violating fixture; expected $EXPECT_VIOLATING_CLI_STATUS (diagnostics reported under --check). Re-measure deliberately if the CLI's exit conventions or the toolchain moved"
   else
-    [ "$cli_status" -eq "$EXPECT_CLEAN_CLI_STATUS" ] ||
-      fail "the scalafix CLI failed on the clean fixture (exit $cli_status): the run proved nothing, whatever the diagnostic count below says"
+    case $cli_status in
+      8)
+        fail "the scalafix CLI found no SemanticDB for the clean fixture (exit 8): the type half cannot run, so the run proved nothing, whatever the diagnostic count below says"
+        ;;
+      4)
+        fail "the scalafix CLI did not load the rule or rejected the arguments on the clean fixture (exit 4)"
+        ;;
+      "$EXPECT_CLEAN_CLI_STATUS") : ;;
+      64)
+        fail "the scalafix CLI reported diagnostics on the clean fixture (exit 64): the check does not discriminate — the clean fixture must produce none, so this is a defect in the artifact under test (the rule, the fixture or, in --config mode, the supplied policy), not a CLI failure${supplied_config:+ — supplied policy: $supplied_config}$(clean_hint)"
+        ;;
+      *)
+        fail "the scalafix CLI failed on the clean fixture (exit $cli_status): the run proved nothing, whatever the diagnostic count below says"
+        ;;
+    esac
   fi
 
   # Attribution per mechanism, read off the diagnostic messages: the importee

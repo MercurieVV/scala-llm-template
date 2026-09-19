@@ -106,7 +106,10 @@ rule does not run at all, so the report says nothing about the allowlist. **A si
 that is the R-8 point this section exists for. The two failure modes measured with the CLI are both
 silent-looking:
 
-- `--syntactic` (semantic rules ignored): prints `No rules requested to run` and **exits 0**.
+- `--syntactic` (semantic rules ignored): prints `No rules requested to run` and **exits 0**. The CLI's
+  own exit-status table also names `256 NoRulesError` for a no-rules run; the path measured here is the
+  0, which is what makes it silent — see `kit/recipes/scala-cli.md`, §4 in the checkout, for the same table
+  and the same measured 0.
 - a classpath whose compiled output has no `META-INF/semanticdb`: exits 8, `SemanticDB not found`.
 
 So: compile the sources under check with SemanticDB, and put that compiled output on the CLI's `--classpath` —
@@ -144,22 +147,36 @@ What it does:
 4. runs `cs launch ch.epfl.scala:scalafix-cli_3.8.4:0.14.7 --main-class scalafix.cli.Cli -- --tool-classpath
    … --rules AllowedShape --config … --classpath … --sourceroot … --check <fixture>` for each fixture;
 5. asserts the CLI's own exit status per fixture (64 with diagnostics under `--check`, 0 on the clean
-   fixture — 8 and 4 get their own messages), then counts the diagnostics **per mechanism** — type
-   references, importees, object-valued terms and constructs, read off the messages the rule emits — prints
-   that attribution, and asserts it.
+   fixture — 8, 4 and, on the clean fixture, 64 get their own messages), then counts the diagnostics **per
+   mechanism** — type references, importees, object-valued terms and constructs, read off the messages the
+   rule emits — prints that attribution, and asserts it.
 
 **`--config <file>` is the project-facing mode**: it tests a policy the project copied or wrote — a module's
 own `.scalafix.conf`, a `shape-policy/<dir>.conf`, a block lifted out of a recipe — instead of the defaults.
 It runs the same fixture pair with the same per-mechanism floors (each mechanism must fire) and the same
-per-fixture status assertions, so a policy whose list entries concatenated, whose keys were misspelled or
-whose denylist names nothing fails here instead of failing quietly in the project. Two things to know about
-what it does and does not settle:
+per-fixture status assertions, and which assertion catches which defect is worth knowing before reading a
+failure:
+
+- a `disallowedConstructs` whose entries concatenated, whose key is misspelled or whose names match nothing
+  fails the **construct floor** — the silent direction, and the reason this mode exists;
+- an `allowedTypes` that allows too much fails a **type floor** (the loud direction, which a project notices
+  anyway);
+- a supplied policy that never mentions `allowedTypes` — a misspelled key, or a constructs-only policy by
+  design — fails the **clean fixture's zero**: the appended prefix below is then the whole allowlist, so the
+  fixtures' own stdlib types are reported. It does not pass silently, but the mode cannot tell a deliberate
+  types-off policy from a misspelled key, and when no line of the file sets `allowedTypes` the message says
+  so (`clean_hint` in `check.sh`).
+
+Two things to know about what it does and does not settle:
 
 - The fixture directory's own package prefix (`example/`) is **appended** to the supplied policy's
   `allowedTypes` — the `allowedTypes() :+ ownPackagePrefix` convention every consumer's build follows
   (without it the fixtures' own `object Example` is reported by design, so no project's policy could pass).
-  The wrapper is written to the work directory and printed, so the exact run can be reproduced by hand. A
-  consequence: an empty `allowedTypes` in the supplied file cannot be tested here as "types off".
+  The wrapper is written to the work directory and printed, so the exact run can be reproduced by hand.
+  A consequence: a constructs-only policy cannot be tested here as "types off" — with the prefix appended and
+  nothing else, the fixtures' stdlib types are disallowed, so the mode reports it as a clean-fixture failure
+  (measured: exit 1, with the intended stdlib list under a misspelled `allowTypes` key). A project that means
+  "types off" tests that policy against its own sources, where the rule's own config semantics apply.
 - It proves the policy still **discriminates this fixture pair** — it does not test the policy against the
   project's own sources, and it cannot see a typo in an entry the fixtures never use.
 
