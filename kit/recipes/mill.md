@@ -34,8 +34,11 @@ the build — every symbol the fragments use is defined in one of them.
 `resources/` into the module's output, which is how `--rules AllowedShape` finds the class — drop it and scalafix
 answers `Unknown rule 'AllowedShape'`).
 
+`build.mill`, head of the file — Mill reads the build's own dependencies from the `//|` header, and that header must
+be the file's first lines (a comment line above it fails with `YAML header comments can only occur at the start of the
+file`):
+
 ```scala
-// build.mill — head of the file
 //| mvnDeps:
 //| - com.goyeau::mill-scalafix::0.6.2
 package build
