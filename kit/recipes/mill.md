@@ -253,6 +253,14 @@ schema, the symbol-prefix semantics of `allowedTypes` and the own-package-prefix
 `allowedTypes` receives; `.scalafix.conf` itself stays the project's ordinary ruleset and needs no `AllowedShape`
 block.
 
+The rendered lists are comma-separated **by construction** — `ScalafixValue.render` builds them with
+`mkString("[", ", ", "]")` — which is why this path cannot hit the concatenation pitfall a hand-written list can
+(`kit/arhitecture-shape/README.md`, "List entries are comma- or newline-separated": adjacent quoted strings become
+one entry, and a denylist that matches nothing fails silently). Anything hand-written on the Mill side — the base
+`.scalafix.conf`, or a module's own settings when they are written into a file rather than into
+`extraRuleSettings` — needs the same commas, and `sh check.sh --config <file>` runs such a file through the kit's
+own fixture pair before a module does.
+
 ## 5. SemanticDB (R3) — Mill supplies it, and the run proves it
 
 `fix` hands the rule a classpath that includes `semanticDbData()` (mill-scalafix's own `fixAction`), so Mill compiles
@@ -314,9 +322,16 @@ comment above the `//|` lines, and Mill refused the build with
 | `mill __.fix --check`, violating source | exit **1**, the same 4 diagnostics — and the log shows `engine.arhitecture.*` tasks only, with no complaint about the rule module, so the recursive form skips the modules that have no `fix` task |
 | generated config | `out/engine/arhitecture/scalafixConfig.dest/extra-rules.conf` — `include file("<repo>/.scalafix.conf")`, `rules += "AllowedShape"`, both keys, and `"com/example/myapp/engine/arhitecture/"` appended to `allowedTypes` |
 | SemanticDB | `out/engine/arhitecture/semanticDbDataDetailed.dest/{classes,data}/META-INF/semanticdb/engine/arhitecture/src/Thing.scala.semanticdb` — produced with no scalac option in the build, and the plain-type-reference diagnostic is the proof it was used |
+| the rendered-config block above (`...` expanded with the helper's remaining default stdlib entries, `include` pointed at the base file), **extracted from this file as committed** and run through `sh check.sh --config <block>` (R28) | exit **0**: violating **4** diagnostics [type references 1, importees 1, object-valued terms 1, constructs 1], clean **0** — `ScalafixValue.render`'s comma-separated arrays are list elements, not one concatenated string |
+| the `.scalafix.conf` base block above, through the same mode (R28) | exit **1**, `mechanism 4 (construct denylist) did not run` — as its own comment says, this file is *included*, not the policy: it carries no `AllowedShape` keys, and the per-module policy is the generated config. Run it through `--config` and it fails the construct floor, which is the honest answer for a base ruleset |
 
 The module's own `object Thing` produced no diagnostic, which is the own-package-prefix derivation from
 `moduleSegments` doing its job — the prefix matched the module's real package without being spelled anywhere.
+
+The two R28 rows are why the lists in the rendered block are comma-separated: a space-separated denylist
+concatenates into one entry that matches nothing, and the construct half then fails **silently** — the type
+diagnostics still arrive, so the run looks like an ordinary report. This path cannot hit it (the helper renders
+arrays with commas), but a hand-written Mill-side policy can, which is what `check.sh --config` is for.
 
 Two environment notes, so a reader can tell what was and was not the recipe's doing: the runs used the cached native
 Mill launcher directly (`~/.cache/mill/download/1.1.8-native-mac-aarch64`) with `COURSIER_CACHE` and

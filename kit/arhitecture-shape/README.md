@@ -55,6 +55,37 @@ AllowedShape {
 recipes, build wiring and later tasks depend on those three spellings. An empty `allowedTypes` disables the
 type half (the rule then checks constructs only); an empty `disallowedConstructs` checks types only.
 
+### List entries are comma- or newline-separated
+
+Both keys are HOCON **lists**, and adjacent quoted values concatenate: `["TermIf" "TermMatch"]` is a
+one-element list whose entry is `TermIfTermMatch`, which matches no node kind, rule or type. `["TermIf",
+"TermMatch"]` and one entry per line are the two spellings that mean what they read as. Measured with the
+CLI over a file containing a `var`, a `match` and an `if`:
+
+```
+disallowedConstructs = ["TermIf" "TermMatch" "DefnVar"]        exit 0,  0 construct diagnostics
+disallowedConstructs = ["TermIf", "TermMatch", "DefnVar"]      exit 64, 3 construct diagnostics
+disallowedConstructs = [ "TermIf" / "TermMatch" / "DefnVar" ]  exit 64, 3 construct diagnostics   (one per line)
+```
+
+**The failure direction differs by key, and only one of them is loud.** A wrong `allowedTypes` shouts: no
+prefix matches, so every referenced type and the module's own objects are reported — a red gate that is
+impossible to miss. A wrong `disallowedConstructs` says **nothing**: the type half still runs, the diagnostics
+that remain look like an ordinary report, and the constructs the list was written for are silently unchecked.
+Same class of defect, opposite volume — so a hand-written denylist is the one to test rather than eyeball.
+
+The guard for this is on the **config side**, not inside the rule: `AllowedShape.scala` stays verbatim (it is
+the canonical copy; a guard inside it would be a behaviour change and belongs to the extraction trigger, R-10).
+Instead, run any policy file through `check.sh --config <file>` — the same fixture pair, the same
+per-mechanism and per-fixture assertions — before trusting it:
+
+```sh
+sh check.sh --config mymodule/.scalafix.conf
+sh check.sh --config shape-policy/engine-arhitecture.conf
+```
+
+That is one command, and it turns the whole class above into a red run instead of a quiet one.
+
 **Policy lives in each project's build, never in the rule file.** `AllowedShape.scala` is a verbatim copy of
 the canonical rule; its only difference is the `package` line, which is
 `io.github.mercurievv.arhitecture.scalafix` (the canonical source lives in the reengineering session's
@@ -98,6 +129,7 @@ work:
 sh check.sh                       # defaults: stdlib + `example/` allowlist, TermIf
 sh check.sh "<allowed types>" "<disallowed constructs>"
 ALLOWED_TYPES="..." DISALLOWED_CONSTRUCTS="..." sh check.sh
+sh check.sh --config <file>       # test a supplied policy (a module's own config, a shape-policy file)
 ```
 
 Requires `scala-cli` (compiler driver) and `cs` (coursier, to launch the scalafix CLI); no build tool and no
@@ -115,6 +147,26 @@ What it does:
    fixture — 8 and 4 get their own messages), then counts the diagnostics **per mechanism** — type
    references, importees, object-valued terms and constructs, read off the messages the rule emits — prints
    that attribution, and asserts it.
+
+**`--config <file>` is the project-facing mode**: it tests a policy the project copied or wrote — a module's
+own `.scalafix.conf`, a `shape-policy/<dir>.conf`, a block lifted out of a recipe — instead of the defaults.
+It runs the same fixture pair with the same per-mechanism floors (each mechanism must fire) and the same
+per-fixture status assertions, so a policy whose list entries concatenated, whose keys were misspelled or
+whose denylist names nothing fails here instead of failing quietly in the project. Two things to know about
+what it does and does not settle:
+
+- The fixture directory's own package prefix (`example/`) is **appended** to the supplied policy's
+  `allowedTypes` — the `allowedTypes() :+ ownPackagePrefix` convention every consumer's build follows
+  (without it the fixtures' own `object Example` is reported by design, so no project's policy could pass).
+  The wrapper is written to the work directory and printed, so the exact run can be reproduced by hand. A
+  consequence: an empty `allowedTypes` in the supplied file cannot be tested here as "types off".
+- It proves the policy still **discriminates this fixture pair** — it does not test the policy against the
+  project's own sources, and it cannot see a typo in an entry the fixtures never use.
+
+The exact counts the *default* policy measures (1, 1, 1, 1) are asserted in the default mode only: a supplied
+policy legitimately moves the totals, and the mode reports what it measured. Exit statuses are unchanged —
+0 the fixtures (and the supplied policy) behaved; 1 an artifact under test did not behave; 2 the check could
+not be set up (including `--config` naming no file).
 
 Measured with the committed fixtures (scala-cli 3.8.4, scalafix 0.14.7):
 
@@ -187,6 +239,6 @@ not to a widened allowlist. Closing the gap means changing the rule's logic: a k
 |---|---|
 | `AllowedShape.scala` | the canonical rule, vendored verbatim (package line differs) |
 | `META-INF/services/scalafix.v1.Rule` | the registration: `--rules AllowedShape` resolves through it |
-| `check.sh` | compiles rule + fixtures with SemanticDB, asserts the CLI's exit status, runs the CLI, asserts the per-mechanism counts |
+| `check.sh` | compiles rule + fixtures with SemanticDB, asserts the CLI's exit status, runs the CLI, asserts the per-mechanism counts; `--config <file>` runs the same assertions against a supplied policy |
 | `fixtures/violating/Example.scala` | must produce one diagnostic per mechanism: a type reference, an importee, an object-valued term *and* a construct |
 | `fixtures/clean/Example.scala` | declares its own `object`, uses allowlisted types only, must produce none |

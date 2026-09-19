@@ -36,6 +36,33 @@
 #   sh check.sh                       # the defaults below
 #   sh check.sh "<allowed types>" "<disallowed constructs>"
 #   ALLOWED_TYPES="..." DISALLOWED_CONSTRUCTS="..." sh check.sh
+#   sh check.sh --config <file>       # test a *supplied* policy against this fixture pair
+#
+#   --config <file> is for a policy the project copied or wrote — a module's own config, a
+#   `shape-policy/<dir>.conf`, a block lifted out of a recipe. It runs the same fixture pair, with
+#   the same per-mechanism assertions and the same per-fixture status assertions as the default
+#   mode; only the exact counts the *default* policy measures are asserted in the default mode,
+#   because a supplied policy legitimately moves the totals (a longer denylist reports more
+#   constructs, a shorter allowlist more types) — the discrimination floor is what this mode
+#   asserts. Two details of the run:
+#
+#     * the fixture directory's own package prefix (`example/`) is appended to the supplied policy's
+#       `allowedTypes`, the `allowedTypes() :+ ownPackagePrefix` convention every consumer's build
+#       follows. Without it the fixtures' own `object Example` is reported by design, and no
+#       project's policy could pass. The wrapper this produces is written to the work directory and
+#       printed, so the exact run can be reproduced by hand. One consequence worth knowing: an empty
+#       `allowedTypes` in the supplied file cannot be tested here as "types off" — the append turns
+#       the type half on for the fixtures.
+#     * it tests that the supplied policy still *discriminates this fixture pair*: each mechanism
+#       fires, the clean fixture stays clean, the CLI's statuses are the expected ones. It does not
+#       test the policy against the project's own sources, and it cannot see a typo in an entry the
+#       fixtures never use.
+#
+#   The one-command answer to the class of defect the list separators below exist for: entries must
+#   be comma- or newline-separated, because adjacent quoted strings concatenate into a single entry
+#   that matches nothing. A wrong `allowedTypes` shouts (everything is flagged); a wrong
+#   `disallowedConstructs` says nothing at all — README, "List entries are comma- or
+#   newline-separated", and run a copied policy through this mode before trusting it.
 #
 #   ALLOWED_TYPES         space-separated symbol prefixes/types (a symbol is
 #                         allowed when it starts with one of these strings).
@@ -50,7 +77,8 @@
 #                         default a temporary directory is created and removed
 #
 # Exit status: 0 the fixtures behaved; 1 the check ran and the artifact under
-# test did not behave; 2 the check could not be set up on this machine.
+# test did not behave (the rule, the fixtures — or, in `--config` mode, the
+# supplied policy); 2 the check could not be set up on this machine.
 # =============================================================================
 set -eu
 
@@ -93,18 +121,45 @@ DEFAULT_DISALLOWED_CONSTRUCTS='TermIf'
 
 # ---------------------------------------------------------------- locations --
 kit_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
+
+# Exit statuses: 0 when the fixtures behaved, 1 when a check ran and the
+# artifact did not behave (missing registration, missing fixture, a fixture that
+# does not compile, a CLI failure, a count that moved, a supplied policy that
+# stopped discriminating this fixture pair), 2 when the check could not be set up
+# on this machine (no work directory, `scala-cli`/`cs` missing, `--config` naming
+# no file, the rule did not compile against the scalafix-rules artifact).
+fail() { echo "check.sh: $1" >&2; exit 1; }
+fail_setup() { echo "check.sh: $1" >&2; exit 2; }
+
+# ------------------------------------------------------------- arguments ----
+# `--config <file>` (or `--config=<file>`) tests a supplied policy; everything
+# else is the default mode, with the same positional and environment overrides.
+supplied_config=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --config)
+      [ $# -ge 2 ] || fail_setup "--config needs a file argument"
+      supplied_config=$2
+      shift 2
+      ;;
+    --config=*)
+      supplied_config=${1#--config=}
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      fail_setup "unknown option '$1' (usage: sh check.sh [--config <file>] [<allowed types> [<disallowed constructs>]])"
+      ;;
+    *) break ;;
+  esac
+done
 allowed_types=${ALLOWED_TYPES:-$DEFAULT_ALLOWED_TYPES}
 disallowed_constructs=${DISALLOWED_CONSTRUCTS:-$DEFAULT_DISALLOWED_CONSTRUCTS}
 if [ $# -gt 0 ]; then allowed_types=$1; fi
 if [ $# -gt 1 ]; then disallowed_constructs=$2; fi
-
-# Exit statuses: 0 when the fixtures behaved, 1 when a check ran and the
-# artifact did not behave (missing registration, missing fixture, a fixture that
-# does not compile, a CLI failure, a count that moved), 2 when the check could
-# not be set up on this machine (no work directory, `scala-cli`/`cs` missing,
-# the rule did not compile against the scalafix-rules artifact).
-fail() { echo "check.sh: $1" >&2; exit 1; }
-fail_setup() { echo "check.sh: $1" >&2; exit 2; }
 
 work_dir=${ALLOWED_SHAPE_WORKDIR:-}
 own_work_dir=no
@@ -122,25 +177,51 @@ trap 'exit 1' 1 2 3 15
 command -v scala-cli >/dev/null 2>&1 || fail_setup "'scala-cli' is not on PATH (needed to compile the rule and the fixtures)"
 command -v cs >/dev/null 2>&1 || fail_setup "'cs' (coursier) is not on PATH (needed to launch the scalafix CLI)"
 
+# ------------------------------------------------------- the rule's config --
+# Default mode generates the config from the defaults above — the kit's own
+# fixture policy. `--config <file>` includes the supplied policy as-is and
+# appends the fixture directory's own package prefix to its `allowedTypes` (see
+# the header): every consumer's build appends its own prefix the same way, and
+# without it the fixtures' own `object Example` is reported by design. The
+# wrapper is written here and printed below, so the run is reproducible by hand;
+# `${?…}` keeps a supplied file that never mentions `allowedTypes` working.
+# Never widen the appended prefix or the expectations to make a policy pass
+# (R-10): a policy this refuses is a policy that stopped discriminating.
+config="$work_dir/allowed-shape.conf"
+if [ -n "$supplied_config" ]; then
+  [ -f "$supplied_config" ] || fail_setup "--config: no such file: $supplied_config"
+  supplied_config=$(CDPATH= cd "$(dirname "$supplied_config")" && pwd)/$(basename "$supplied_config")
+  {
+    echo "# check.sh --config wrapper: the supplied policy, plus the fixture directory's own package"
+    echo "# prefix — the allowedTypes() :+ ownPackagePrefix convention every consumer's build follows."
+    echo "include file(\"$supplied_config\")"
+    echo 'AllowedShape.allowedTypes = ${?AllowedShape.allowedTypes} ["example/"]'
+  } > "$config"
+else
+  {
+    echo 'AllowedShape {'
+    echo '  allowedTypes = ['
+    for t in $allowed_types; do echo "    \"$t\""; done
+    echo '  ]'
+    echo '  disallowedConstructs = ['
+    for c in $disallowed_constructs; do echo "    \"$c\""; done
+    echo '  ]'
+    echo '}'
+  } > "$config"
+fi
+
 echo "allowed-shape check: $kit_dir"
 echo "  rule + fixtures compiled with scala-cli $SCALA_VERSION, scalafix CLI $SCALAFIX_VERSION"
-echo "  allowedTypes         = [$allowed_types]"
-echo "  disallowedConstructs = [$disallowed_constructs]"
+if [ -n "$supplied_config" ]; then
+  echo "  config               = supplied: $supplied_config"
+  echo "                         + \"example/\" appended to allowedTypes (the fixture directory's own prefix)"
+  echo "                         wrapper: $config"
+else
+  echo "  allowedTypes         = [$allowed_types]"
+  echo "  disallowedConstructs = [$disallowed_constructs]"
+fi
 echo "  work dir             = $work_dir"
 echo
-
-# ------------------------------------------------------- the rule's config --
-config="$work_dir/allowed-shape.conf"
-{
-  echo 'AllowedShape {'
-  echo '  allowedTypes = ['
-  for t in $allowed_types; do echo "    \"$t\""; done
-  echo '  ]'
-  echo '  disallowedConstructs = ['
-  for c in $disallowed_constructs; do echo "    \"$c\""; done
-  echo '  ]'
-  echo '}'
-} > "$config"
 
 # ------------------------------------------------------- compile the rule ---
 # The rule is compiled from the vendored file itself, against the exact
@@ -264,30 +345,40 @@ for name in violating clean; do
     measured_violating_importees=$importees
     measured_violating_object_terms=$object_terms
     measured_violating_constructs=$constructs
+    # The four floors are the discrimination assertions and hold in both modes: a policy under which
+    # a mechanism never fires is a policy that stopped checking that mechanism. The messages name the
+    # supplied file in `--config` mode, because that is the artifact under test there.
     [ "$type_refs" -ge 1 ] ||
-      fail "the violating fixture produced no plain Type.Name diagnostic: mechanism 1 (referenced types) did not run"
+      fail "the violating fixture produced no plain Type.Name diagnostic: mechanism 1 (referenced types) did not run${supplied_config:+ — supplied policy: $supplied_config (list entries must be comma- or newline-separated; see the README, \"List entries\")}"
     [ "$importees" -ge 1 ] ||
-      fail "the violating fixture produced no importee diagnostic: mechanism 3 (importees) did not run"
+      fail "the violating fixture produced no importee diagnostic: mechanism 3 (importees) did not run${supplied_config:+ — supplied policy: $supplied_config (list entries must be comma- or newline-separated; see the README, \"List entries\")}"
     [ "$object_terms" -ge 1 ] ||
-      fail "the violating fixture produced no object-valued-term diagnostic: mechanism 2 did not catch a disallowed type reached as a term"
+      fail "the violating fixture produced no object-valued-term diagnostic: mechanism 2 did not catch a disallowed type reached as a term${supplied_config:+ — supplied policy: $supplied_config}"
     [ "$constructs" -ge 1 ] ||
-      fail "the violating fixture produced no disallowedConstruct diagnostic: mechanism 4 (construct denylist) did not run"
-    [ "$type_refs" -eq "$EXPECT_VIOLATING_TYPE_REFS" ] &&
-      [ "$importees" -eq "$EXPECT_VIOLATING_IMPORTEES" ] &&
-      [ "$object_terms" -eq "$EXPECT_VIOLATING_OBJECT_TERMS" ] &&
-      [ "$constructs" -eq "$EXPECT_VIOLATING_CONSTRUCTS" ] ||
-      fail "the violating fixture produced type references $type_refs, importees $importees, object-valued terms $object_terms, constructs $constructs; expected $EXPECT_VIOLATING_TYPE_REFS, $EXPECT_VIOLATING_IMPORTEES, $EXPECT_VIOLATING_OBJECT_TERMS and $EXPECT_VIOLATING_CONSTRUCTS. Re-measure them deliberately if the rule, the fixtures, the allowlist arguments or the toolchain moved — never widen the allowlist or lower an expectation to make a run pass (R-10)"
+      fail "the violating fixture produced no disallowedConstruct diagnostic: mechanism 4 (construct denylist) did not run${supplied_config:+ — supplied policy: $supplied_config (list entries must be comma- or newline-separated; see the README, \"List entries\")}"
+    if [ -z "$supplied_config" ]; then
+      [ "$type_refs" -eq "$EXPECT_VIOLATING_TYPE_REFS" ] &&
+        [ "$importees" -eq "$EXPECT_VIOLATING_IMPORTEES" ] &&
+        [ "$object_terms" -eq "$EXPECT_VIOLATING_OBJECT_TERMS" ] &&
+        [ "$constructs" -eq "$EXPECT_VIOLATING_CONSTRUCTS" ] ||
+        fail "the violating fixture produced type references $type_refs, importees $importees, object-valued terms $object_terms, constructs $constructs; expected $EXPECT_VIOLATING_TYPE_REFS, $EXPECT_VIOLATING_IMPORTEES, $EXPECT_VIOLATING_OBJECT_TERMS and $EXPECT_VIOLATING_CONSTRUCTS. Re-measure them deliberately if the rule, the fixtures, the allowlist arguments or the toolchain moved — never widen the allowlist or lower an expectation to make a run pass (R-10)"
+    else
+      echo "  supplied policy discriminates: every mechanism fired; the default policy's exact counts ($EXPECT_VIOLATING_TYPE_REFS, $EXPECT_VIOLATING_IMPORTEES, $EXPECT_VIOLATING_OBJECT_TERMS, $EXPECT_VIOLATING_CONSTRUCTS) are asserted in the default mode only, because a supplied policy legitimately moves the totals"
+    fi
   else
     measured_clean_type_refs=$type_refs
     measured_clean_importees=$importees
     measured_clean_object_terms=$object_terms
     measured_clean_constructs=$constructs
     [ "$type_total" -eq 0 ] && [ "$constructs" -eq 0 ] ||
-      fail "the clean fixture produced type references $type_refs, importees $importees, object-valued terms $object_terms, constructs $constructs: the check does not discriminate"
+      fail "the clean fixture produced type references $type_refs, importees $importees, object-valued terms $object_terms, constructs $constructs: the check does not discriminate${supplied_config:+ — supplied policy: $supplied_config}"
   fi
   echo
 done
 
 echo "violating: $((measured_violating_type_refs + measured_violating_importees + measured_violating_object_terms + measured_violating_constructs)) diagnostics [type references $measured_violating_type_refs, importees $measured_violating_importees, object-valued terms $measured_violating_object_terms, constructs $measured_violating_constructs]"
 echo "clean: $((measured_clean_type_refs + measured_clean_importees + measured_clean_object_terms + measured_clean_constructs)) diagnostics [type references $measured_clean_type_refs, importees $measured_clean_importees, object-valued terms $measured_clean_object_terms, constructs $measured_clean_constructs]"
+if [ -n "$supplied_config" ]; then
+  echo "config under test: $supplied_config (+ the fixture directory's own prefix appended to allowedTypes)"
+fi
 echo "OK"
