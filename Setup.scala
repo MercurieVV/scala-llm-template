@@ -54,6 +54,9 @@ object Setup extends IOApp:
     def id: String
     def run(ctx: SetupContext): StepResult
 
+  /** One fenced code block of a recipe: the language it is tagged with, and its body without the fences. */
+  private final case class CodeBlock(lang: String, body: String)
+
   def getFeaturesList(defaultScalaVersion: String): List[Feature] = List(
     // 1. Build & Compilation
     Feature(
@@ -185,6 +188,13 @@ object Setup extends IOApp:
       "Scoverage Code Coverage",
       "Enable Scoverage code coverage? (yes/no)",
       "yes"
+    ),
+    Feature(
+      "kit",
+      "Quality Assurance",
+      "Arhitecture-shape rule, skills and lint wiring",
+      "Vendor the AllowedShape rule, its build wiring and the five skills? (yes/no)",
+      "no"
     ),
 
     // 4. Data Utilities
@@ -438,6 +448,7 @@ object Setup extends IOApp:
       InitializeProjectLayout,
       ConfigureStryker,
       RunSpecializedSetupScripts,
+      InstallKit,
       FormatProject,
       StageGitChanges
     )
@@ -648,6 +659,420 @@ object Setup extends IOApp:
         "ran delegated setup scripts",
         List(scriptsDir.toString)
       )
+
+  /** The reengineering kit: the `AllowedShape` rule, the wiring the chosen recipe states, the five skills and the
+    * digest block. Every file it writes is read from `kit/` at run time — the rule, its registration, the Mill
+    * helper, the recipes' own code blocks, the skills and the digest — so no recipe or rule text is duplicated here.
+    * The markers below are this file's only literals besides the paths the recipes' file trees state.
+    *
+    * Inserted after `RunSpecializedSetupScripts` (the build files exist by then, and the Mill and sbt wiring patch
+    * them) and before `FormatProject`, so what it writes is formatted and staged with everything else.
+    */
+  private object InstallKit extends SetupStep:
+    val id = "install-kit"
+
+    /** Stable markers: a second run replaces the marked block rather than appending a second copy. */
+    private val MarkdownBegin = "<!-- reengineering-kit:begin -->"
+    private val MarkdownEnd   = "<!-- reengineering-kit:end -->"
+    private val CodeBegin     = "// >>> reengineering-kit:begin"
+    private val CodeEnd       = "// <<< reengineering-kit:end"
+
+    /** The five skill directories `kit/skills/` ships; the digest names the same five. */
+    private val SkillNames = List(
+      "shaping-a-module",
+      "reengineering-module",
+      "reshaping-module-by-linters",
+      "verify-before-done",
+      "verification-lane"
+    )
+
+    def run(ctx: SetupContext): StepResult =
+      if ctx.answers.getOrElse("kit", "no").toLowerCase != "yes" then
+        StepResult(id, "skipped", "kit not selected")
+      else
+        findKitRoot() match
+          case None =>
+            Console.err.println(
+              "⚠ kit was selected, but no kit/ directory was found at or above the working directory."
+            )
+            StepResult(
+              id,
+              "failed",
+              "kit sources not found; run Setup.scala from the checkout that carries kit/"
+            )
+          case Some(kit) =>
+            val buildTool =
+              ctx.answers.getOrElse("build-tool", "mill").toLowerCase
+            try
+              val written = install(kit, ctx, buildTool)
+              Console.err.println(
+                s"✓ Vendored the reengineering kit for $buildTool (${written.size} files)"
+              )
+              StepResult(
+                id,
+                "completed",
+                s"vendored the kit rule, wiring and skills for $buildTool",
+                written
+              )
+            catch
+              case e: Exception =>
+                Console.err.println(s"⚠ kit install failed: ${e.getMessage}")
+                StepResult(id, "failed", s"kit install failed: ${e.getMessage}")
+
+    /** `kit/` sits beside `Setup.scala`, and the installer may be started from anywhere, so the search walks up
+      * from the working directory — the same local-or-nothing choice `RunSpecializedSetupScripts` makes.
+      */
+    private def findKitRoot(): Option[os.Path] =
+      @annotation.tailrec
+      def loop(dir: os.Path): Option[os.Path] =
+        if os.exists(dir / "kit" / "arhitecture-shape" / "AllowedShape.scala")
+        then Some(dir / "kit")
+        else
+          val parent = dir / os.up
+          if parent == dir then None else loop(parent)
+      loop(os.pwd)
+
+    private def install(
+        kit: os.Path,
+        ctx: SetupContext,
+        buildTool: String
+    ): List[String] =
+      var files = List.empty[String]
+
+      def write(rel: String, content: String): Unit =
+        val path = ctx.targetDir / os.RelPath(rel)
+        os.makeDir.all(path / os.up)
+        os.write.over(path, content)
+        files = files :+ path.toString
+
+      def readKit(rel: String): String =
+        val path = kit / os.RelPath(rel)
+        if !os.exists(path) then
+          throw new IllegalStateException(s"kit file missing: kit/$rel")
+        os.read(path)
+
+      def pick(
+          blocks: List[CodeBlock],
+          lang: String,
+          anchor: String,
+          recipe: String
+      ): String =
+        blocks
+          .find(b => b.lang == lang && b.body.contains(anchor))
+          .map(_.body)
+          .getOrElse(
+            throw new IllegalStateException(
+              s"kit/recipes/$recipe has no '$lang' block containing '$anchor'"
+            )
+          )
+
+      val millBlocks = codeBlocks(readKit("recipes/mill.md"))
+      val sbtBlocks  = codeBlocks(readKit("recipes/sbt.md"))
+      val cliBlocks  = codeBlocks(readKit("recipes/scala-cli.md"))
+
+      def installMill(): Unit =
+        val head = forProjectScala(
+          pick(millBlocks, "scala", "object BuildPaths", "mill.md"),
+          ctx.finalScalaVersion
+        )
+        val (fileLevel, declarations) =
+          head.linesIterator.toList.span(l => !l.trim.startsWith("val scala3Version"))
+        val depLines = fileLevel.filter(l => l.startsWith("//|") && l.trim != "//| mvnDeps:")
+        val importLines = fileLevel.filter(_.trim.startsWith("import "))
+        val packageLine = fileLevel
+          .find(_.trim.startsWith("package "))
+          .map(_.trim)
+          .getOrElse("package build")
+
+        write(
+          "scalafixRules/src/AllowedShape.scala",
+          readKit("arhitecture-shape/AllowedShape.scala")
+        )
+        write(
+          "scalafixRules/resources/META-INF/services/scalafix.v1.Rule",
+          readKit("arhitecture-shape/META-INF/services/scalafix.v1.Rule")
+        )
+        val helper = readKit("recipes/mill/ArchitectureShapeModule.mill")
+        write("buildKit/ArchitectureShapeModule.mill", helper)
+        // The anchor file carries just the helper's own package line, so the two cannot disagree.
+        write("buildKit/package.mill", helper.linesIterator.next() + "\n")
+        // The generic half of the wiring the helper mixes in: ExtraScalafixRules, ScalafixValue, RuleSettings.
+        write(
+          "ScalafixExtra.mill",
+          pick(millBlocks, "scala", "trait ExtraScalafixRules", "mill.md") + "\n"
+        )
+        if !os.exists(ctx.targetDir / ".scalafix.conf") then
+          write(
+            ".scalafix.conf",
+            pick(millBlocks, "hocon", "rules = []", "mill.md") + "\n"
+          )
+
+        val layer = pick(millBlocks, "scala", "scalafixToolClasspath", "mill.md")
+        val mixin = asTemplate(
+          "Adapt this to the project's shaped modules — the kit cannot know which modules they are, " +
+            "and the policy is per module (R-10).",
+          pick(millBlocks, "scala", "object engine extends Module", "mill.md")
+        )
+        val buildMill = ctx.targetDir / "build.mill"
+        // The check must ignore the marked block: after a first run the kit's own `val scala3Version` is in there,
+        // and reading it as the project's would drop it on the second run and break `scalafixRules`.
+        val targetHasScalaVersion =
+          os.exists(buildMill) &&
+            outsideMarkedBlock(os.read(buildMill), CodeBegin, CodeEnd)
+              .contains("val scala3Version")
+        // A `build.sc` is what Mill 0.12 read; Mill 1.x reads `build.mill` only, so a project that has one and no
+        // `build.mill` is told where its modules belong rather than being silently split across two build files.
+        val notice =
+          if os.exists(ctx.targetDir / "build.sc") then
+            List(
+              "// Notice: Mill 1.x reads build.mill, not build.sc — the build.sc left in this project is",
+              "// ignored by Mill, and the project's own modules belong in this file or in sibling .mill files."
+            ).mkString("\n")
+          else ""
+        val body = List(
+          if targetHasScalaVersion then "" else declarations.headOption.getOrElse(""),
+          declarations.drop(1).mkString("\n").stripLeading(),
+          layer,
+          mixin,
+          notice
+        ).filter(_.nonEmpty).mkString("\n\n")
+
+        if os.exists(buildMill) then
+          write(
+            "build.mill",
+            patchMillBuild(
+              os.read(buildMill),
+              depLines,
+              packageLine,
+              importLines,
+              body
+            )
+          )
+          Console.err.println("✓ Patched the Mill build (build.mill)")
+        else
+          write(
+            "build.mill",
+            fileLevel.mkString("\n").stripLineEnd + "\n\n" + markCode(body)
+          )
+          Console.err.println("✓ Wrote the Mill wiring (build.mill)")
+        Console.err.println(
+          "→ Mix `Layer with ArchitectureShapeModule` into each shaped module (see the marked block in build.mill)."
+        )
+
+      def installSbt(): Unit =
+        write(
+          "scalafix-rules/src/main/scala/AllowedShape.scala",
+          readKit("arhitecture-shape/AllowedShape.scala")
+        )
+        write(
+          "scalafix-rules/src/main/resources/META-INF/services/scalafix.v1.Rule",
+          readKit("arhitecture-shape/META-INF/services/scalafix.v1.Rule")
+        )
+
+        val pluginLine = pick(sbtBlocks, "scala", "addSbtPlugin", "sbt.md").trim
+        val pluginsFile = ctx.targetDir / "project" / "plugins.sbt"
+        val plugins = if os.exists(pluginsFile) then os.read(pluginsFile) else ""
+        if !plugins.contains("sbt-scalafix") then
+          write(
+            "project/plugins.sbt",
+            plugins.stripLineEnd + (if plugins.isEmpty then "" else "\n") + pluginLine + "\n"
+          )
+          Console.err.println("✓ Added sbt-scalafix to project/plugins.sbt")
+
+        val body = List(
+          forProjectScala(
+            pick(sbtBlocks, "scala", "semanticdbEnabled", "sbt.md"),
+            ctx.finalScalaVersion
+          ),
+          pick(sbtBlocks, "scala", "disablePlugins(ScalafixPlugin)", "sbt.md"),
+          asTemplate(
+            "Each shaped module opts in like this and states its own policy (R-10).",
+            pick(sbtBlocks, "scala", "lazy val mymodule", "sbt.md")
+          )
+        ).mkString("\n\n")
+        val buildSbt = ctx.targetDir / "build.sbt"
+        write(
+          "build.sbt",
+          plantCodeBlock(
+            if os.exists(buildSbt) then os.read(buildSbt) else "",
+            body
+          )
+        )
+        Console.err.println("✓ Patched the sbt build (build.sbt)")
+
+      def installScalaCli(): Unit =
+        // scala-cli.md's tree copies the kit's whole `arhitecture-shape/` directory in as-is.
+        val shapeDir = kit / "arhitecture-shape"
+        os.walk(shapeDir)
+          .filter(os.isFile)
+          .foreach { path =>
+            write(s"arhitecture-shape/${path.relativeTo(shapeDir)}", os.read(path))
+          }
+        write(
+          "allowed-shape.sh",
+          forProjectScala(
+            pick(cliBlocks, "sh", "RULE_DIR=arhitecture-shape", "scala-cli.md"),
+            ctx.finalScalaVersion
+          ) + "\n"
+        )
+        Console.err.println("✓ Wrote the scala-cli wiring (allowed-shape.sh)")
+        Console.err.println(
+          "→ Run it per shaped directory: sh allowed-shape.sh <sources-dir> <config-file> — the config is that directory's own policy."
+        )
+
+      buildTool match
+        case "mill"      => installMill()
+        case "sbt"       => installSbt()
+        case "scala-cli" => installScalaCli()
+        case other =>
+          throw new IllegalArgumentException(
+            s"unknown build-tool '$other' (expected mill, sbt or scala-cli)"
+          )
+
+      SkillNames.foreach { name =>
+        write(s".dsh/skills/$name/SKILL.md", readKit(s"skills/$name/SKILL.md"))
+      }
+
+      val digest = readKit("digest.md").stripLineEnd
+      val digestBlock = s"$MarkdownBegin\n$digest\n$MarkdownEnd\n"
+      val digestTargets =
+        "AGENTS.md" :: List(".agents/AGENTS.md", "scala-rules.md")
+          .filter(rel => os.exists(ctx.targetDir / os.RelPath(rel)))
+      digestTargets.foreach { rel =>
+        val path = ctx.targetDir / os.RelPath(rel)
+        val existing = if os.exists(path) then os.read(path) else ""
+        write(rel, replaceOrAppend(existing, MarkdownBegin, MarkdownEnd, digestBlock))
+      }
+      Console.err.println(
+        s"✓ Planted the kit digest in ${digestTargets.mkString(", ")}"
+      )
+
+      files
+
+    /** The recipe examples are pinned to the Scala version they were measured with, and the vendored rule must be
+      * compiled against the same Scala version whose scalafix CLI loads it (`mill.md` §1) — so those literals carry
+      * the project's own answer. With the recipes' own version (3.8.4) every rewrite below is a byte-for-byte no-op.
+      */
+    private def forProjectScala(block: String, version: String): String =
+      block.linesIterator
+        .map { line =>
+          val trimmed = line.trim
+          if trimmed.startsWith("val scala3Version") then
+            s"""val scala3Version = "$version""""
+          else if trimmed.startsWith("SCALA=") then s"SCALA=$version"
+          else if trimmed.startsWith("ThisBuild / scalaVersion") then
+            s"""ThisBuild / scalaVersion := "$version""""
+          else line.replace("_3.8.4:", s"_$version:")
+        }
+        .mkString("\n")
+
+    /** The per-module half of a recipe is the project's own decision (R-10), so its example is installed commented,
+      * beside the mechanism it configures, instead of guessing module names.
+      */
+    private def asTemplate(title: String, block: String): String =
+      s"// $title\n" + block.linesIterator
+        .map { line =>
+          if line.trim.isEmpty then "//"
+          else if line.trim.startsWith("//") then line
+          else s"// $line"
+        }
+        .mkString("\n")
+
+    private def markCode(body: String): String =
+      s"$CodeBegin\n$body\n$CodeEnd\n"
+
+    private def plantCodeBlock(existing: String, body: String): String =
+      replaceOrAppend(existing, CodeBegin, CodeEnd, markCode(body))
+
+    /** Plants `block` between the markers, replacing the marked span when the file already carries one, so a second
+      * run never appends a second copy.
+      */
+    private def replaceOrAppend(
+        existing: String,
+        begin: String,
+        end: String,
+        block: String
+    ): String =
+      val start = existing.indexOf(begin)
+      if start < 0 then
+        if existing.isEmpty then block
+        else existing.stripLineEnd + "\n\n" + block
+      else
+        val close = existing.indexOf(end, start)
+        if close < 0 then existing.substring(0, start) + block
+        else
+          val tail = existing.substring(close + end.length).dropWhile(_ == '\n')
+          existing.substring(0, start) + block + tail
+
+    /** The file without the marked span: what the *project* declared, as opposed to what a previous run planted. */
+    private def outsideMarkedBlock(text: String, begin: String, end: String): String =
+      val start = text.indexOf(begin)
+      if start < 0 then text
+      else
+        val close = text.indexOf(end, start)
+        if close < 0 then text.substring(0, start)
+        else text.substring(0, start) + text.substring(close + end.length)
+
+    /** Adds only what the Mill build is missing — the mill-scalafix build dependency, the `package build` line and
+      * the two imports — then plants (or replaces) the marked block that carries `BuildPaths`, the `scalafixRules`
+      * module, the tool-classpath trait and the mix-in template.
+      */
+    private def patchMillBuild(
+        existing: String,
+        depLines: List[String],
+        packageLine: String,
+        importLines: List[String],
+        body: String
+    ): String =
+      val withHeader =
+        if existing.contains("mill-scalafix") then existing
+        else
+          val lines = existing.linesIterator.toList
+          val headerEnd = lines.takeWhile(_.startsWith("//|")).size
+          val inject =
+            if headerEnd > 0 then depLines else "//| mvnDeps:" :: depLines
+          (lines.take(headerEnd) ++ inject ++ lines.drop(headerEnd))
+            .mkString("\n") + "\n"
+      val withPackage =
+        if withHeader.linesIterator.exists(_.trim == packageLine) then withHeader
+        else insertAfterHeader(withHeader, packageLine)
+      val withImports = importLines.foldLeft(withPackage) { (text, line) =>
+        if text.contains(line) then text else insertAfterImports(text, line)
+      }
+      plantCodeBlock(withImports, body)
+
+    private def insertAfterHeader(text: String, line: String): String =
+      val lines = text.linesIterator.toList
+      val headerEnd = lines.takeWhile(_.startsWith("//|")).size
+      (lines.take(headerEnd) ++ List(line) ++ lines.drop(headerEnd))
+        .mkString("\n") + "\n"
+
+    private def insertAfterImports(text: String, line: String): String =
+      val lines = text.linesIterator.toList
+      val lastImport = lines.lastIndexWhere(_.trim.startsWith("import "))
+      val packageAt = lines.lastIndexWhere(_.trim.startsWith("package "))
+      val at =
+        if lastImport >= 0 then lastImport + 1
+        else if packageAt >= 0 then packageAt + 1
+        else lines.takeWhile(_.startsWith("//|")).size
+      (lines.take(at) ++ List(line) ++ lines.drop(at)).mkString("\n") + "\n"
+
+    /** Reads the fenced code blocks out of a recipe, in the order they appear. */
+    private def codeBlocks(markdown: String): List[CodeBlock] =
+      var lang: Option[String] = None
+      var buffer = List.empty[String]
+      var blocks = List.empty[CodeBlock]
+      markdown.linesIterator.foreach { line =>
+        if line.startsWith("```") then
+          lang match
+            case Some(l) =>
+              blocks = blocks :+ CodeBlock(l, buffer.reverse.mkString("\n"))
+              buffer = Nil
+              lang = None
+            case None => lang = Some(line.drop(3).trim)
+        else if lang.isDefined then buffer = line :: buffer
+      }
+      blocks.reverse
 
   private object FormatProject extends SetupStep:
     val id = "format-project"
