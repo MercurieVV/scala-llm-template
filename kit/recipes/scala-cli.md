@@ -17,12 +17,15 @@ repo/
 ├── arhitecture-shape/                      # the kit's directory, copied in as-is
 │   ├── AllowedShape.scala                  #   the rule, verbatim
 │   ├── META-INF/services/scalafix.v1.Rule  #   the registration (one line, the FQCN)
-│   └── configs/
-│       ├── engine-arhitecture.conf         # one config per shaped directory — its own policy
-│       └── backend-api.conf
+│   └── README.md, check.sh, fixtures/…     #   the kit's own fixture check — not a project lint runner (R16)
+├── shape-policy/
+│   └── engine-arhitecture.conf             # ← you write one of these per shaped directory: its own policy
 ├── allowed-shape.sh                        # the runner below
 └── src/…                                   # the sources under check
 ```
+
+Only `AllowedShape.scala` and the registration come from the kit; the policy files are the project's own, and the
+runner takes them as arguments — which is what makes the policy per directory.
 
 ## Why not `scala-cli --power scalafix .`
 
@@ -80,8 +83,10 @@ scala-cli compile "$SRC" \
   --semanticdb --semanticdb-sourceroot "$PWD" \
   --workspace "$WORK/ws-src" -d "$WORK/classes"
 
-# 4. run the rule. 64 = diagnostics reported; 8 = no SemanticDB found (both measured — see below); the kit README's
-#    exit-status notes cover the rest (4 = a rule that did not load, 2 = the check could not be set up).
+# 4. run the rule. The CLI's own exit codes, from scalafix's `ExitStatus`: 0 Ok, 1 UnexpectedError,
+#    2 ParseError, 4 CommandLineError, 8 MissingSemanticdbError, 16 StaleSemanticdbError, 32 TestError
+#    (--check found a rewrite to apply), 64 LinterError (diagnostics reported). 64 and 8 are measured below.
+#    `check.sh`'s own 0/1/2 mean something different — do not read one table as the other.
 cs launch "ch.epfl.scala:scalafix-cli_${SCALA}:${SCALAFIX}" --main-class scalafix.cli.Cli -- \
   --tool-classpath "$WORK/tool-classes" \
   --rules AllowedShape \
@@ -92,7 +97,7 @@ cs launch "ch.epfl.scala:scalafix-cli_${SCALA}:${SCALAFIX}" --main-class scalafi
 ```
 
 ```sh
-sh allowed-shape.sh src/engine/arhitecture arhitecture-shape/configs/engine-arhitecture.conf
+sh allowed-shape.sh src/engine/arhitecture shape-policy/engine-arhitecture.conf
 ```
 
 ## Keeping the rule out of the project's own compile
@@ -108,10 +113,11 @@ For a project whose sources live at the repo root (this kit's own template is on
 
 ## The config, both keys
 
-Each shaped directory carries its own config — that is where its policy lives, never in the rule file:
+Each shaped directory gets its own config, written by you, at whatever path you pass to the runner — that is where its
+policy lives, never in the rule file:
 
 ```hocon
-# arhitecture-shape/configs/engine-arhitecture.conf
+# shape-policy/engine-arhitecture.conf
 AllowedShape {
   allowedTypes = [
     "scala/Predef.String"
@@ -171,9 +177,9 @@ mechanism; copy the commands, not the expectations.
 
 | Run | Result |
 |---|---|
-| `sh allowed-shape.sh src arhitecture-shape/allowed-shape.conf` — the runner above, extracted from this file and run as it stands | exit **64**, 4 diagnostics: type references 1, importees 1, object-valued terms 1, constructs 1 |
+| `sh allowed-shape.sh src shape-policy/engine-arhitecture.conf` — the runner above, extracted from this file and run as it stands | exit **64**, 4 diagnostics: type references 1, importees 1, object-valued terms 1, constructs 1 |
 | the same runner on a clean source directory | exit **0**, 0 diagnostics |
-| rule compile (step 1) | exit 0; `target/rule-classes/io/github/mercurievv/arhitecture/scalafix/AllowedShape.class` |
+| rule compile (step 1) | exit 0; `.allowed-shape/rule-classes/io/github/mercurievv/arhitecture/scalafix/AllowedShape.class` |
 | the same sources compiled without `--semanticdb` | exit **8**, `error: SemanticDB not found: src/example/Example.scala` |
 | `scala-cli --power fix src` with `AllowedShape` in `.scalafix.conf` | exit **0**, `Running scalafix rules... No rules requested to run` |
 | `//> using scalafixDependency io.github.mercurievv::arhitecture-shape:0.0.0` | download attempted, failed, exit **0** |

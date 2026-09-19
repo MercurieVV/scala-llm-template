@@ -12,7 +12,7 @@ fails on a finding.
 
 ```
 repo/
-├── build.mill                            # the rule module, the tool classpath, a shaped module  (steps 1, 2, 4)
+├── build.mill                            # the rule module, BuildPaths, the tool classpath, a shaped module  (1, 2, 4)
 ├── ScalafixExtra.mill                    # generic: extra rules + typed settings → a generated config  (step 3)
 ├── buildKit/
 │   ├── package.mill                      # anchor file: Mill finds sibling .mill files only next to it
@@ -20,8 +20,12 @@ repo/
 ├── scalafixRules/
 │   ├── src/AllowedShape.scala            # the rule, verbatim from kit/arhitecture-shape/
 │   └── resources/META-INF/services/scalafix.v1.Rule
-└── .scalafix.conf                        # the project's base ruleset
+└── .scalafix.conf                        # the project's own ruleset — the helper `include`s it  (step 4)
 ```
+
+The build-side code blocks below are **fragments of the same `build.mill`, in the order they appear** (steps 1, 2 and
+4); step 3 is `ScalafixExtra.mill`, and step 4 also copies the helper and the anchor file. Nothing else is added to
+the build — every symbol the fragments use is defined in one of them.
 
 ## 1. Put the rule in its own module
 
@@ -38,8 +42,18 @@ package build
 
 import mill._
 import mill.scalalib._
+import com.goyeau.mill.scalafix.ScalafixModule
+import build.buildKit.ArchitectureShapeModule
 
 val scala3Version = "3.8.4"
+
+/** Repo-global paths, resolved from Mill's own build root rather than a module's directory (modules sharing a base
+  * directory collapse in an IDE import). An `object`, not a top-level `val`: only `object`/`class`/`trait` cross
+  * sibling `.mill` files in Mill's file-based build — and the helper's `baseScalafixConfigFile` reads it.
+  */
+object BuildPaths {
+  val repoRoot: os.Path = mill.api.BuildCtx.workspaceRoot
+}
 
 /** Project-local scalafix rules (`AllowedShape`), checked in-repo, never published. Not a shaped module itself:
   * it compiles the tool classpath those modules need, so it cannot lint itself.
@@ -189,11 +203,10 @@ directory has that anchor. The helper mixes `ExtraScalafixRules` in and names th
 | `def disallowedConstructs: T[Seq[String]]` | the construct denylist (default: the kit's R-3 list) |
 
 ```scala
+// build.mill (the file from steps 1 and 2, continued)
 object engine extends Module {
   /** The abstract level: arrows and abstract types, nothing concrete. */
   object arhitecture extends Layer with ArchitectureShapeModule {
-    def moduleDeps = Seq(core)
-
     def packageRoot = "com/example/myapp/"
 
     def baseAllowedTypes = Task(
@@ -203,10 +216,22 @@ object engine extends Module {
       )
     )
 
-    // Only when this module's own policy differs (R-10): state the difference here, in this module's own list.
-    // def disallowedConstructs = Task(super.disallowedConstructs().filterNot(Set("TermIf")))
+    // `disallowedConstructs` is deliberately not overridden here: omitting it inherits the helper's default — the
+    // kit's R-3 list of node kinds — which is what a shaped module wants unless its own policy differs. When it
+    // does, the difference is stated here, in this module's own list (R-10):
+    //   def disallowedConstructs = Task(super.disallowedConstructs().filterNot(Set("TermIf")))
   }
 }
+```
+
+`.scalafix.conf` at the repo root is the project's **own** ruleset — the helper `include`s it, so it has to exist.
+Create it even if it is nearly empty; `AllowedShape` does not belong here, because the generated config adds it per
+module:
+
+```hocon
+# .scalafix.conf — whatever the project already runs (OrganizeImports, DisableSyntax, …), or nothing yet.
+# The shape rule's own settings are generated per module; this file is only included.
+rules = []
 ```
 
 What Mill renders for that module is `out/engine/arhitecture/scalafixConfig.dest/extra-rules.conf` — the base config,
