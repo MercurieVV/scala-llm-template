@@ -187,6 +187,6 @@ not to a widened allowlist. Closing the gap means changing the rule's logic: a k
 |---|---|
 | `AllowedShape.scala` | the canonical rule, vendored verbatim (package line differs) |
 | `META-INF/services/scalafix.v1.Rule` | the registration: `--rules AllowedShape` resolves through it |
-| `check.sh` | compiles rule + fixtures with SemanticDB, runs the CLI, asserts the counts |
-| `fixtures/violating/Example.scala` | must produce an importee diagnostic, an object-valued-term diagnostic *and* a construct diagnostic |
+| `check.sh` | compiles rule + fixtures with SemanticDB, asserts the CLI's exit status, runs the CLI, asserts the per-mechanism counts |
+| `fixtures/violating/Example.scala` | must produce one diagnostic per mechanism: a type reference, an importee, an object-valued term *and* a construct |
 | `fixtures/clean/Example.scala` | declares its own `object`, uses allowlisted types only, must produce none |
