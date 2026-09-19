@@ -147,8 +147,10 @@ AllowedShape {
 The entries are comma-separated on purpose: HOCON concatenates adjacent quoted values, so
 `["TermIf" "TermMatch"]` is one entry that matches nothing — and a denylist that matches nothing fails
 **silently** (the type half still reports). `kit/arhitecture-shape/README.md`, "List entries are comma- or
-newline-separated", states the full pitfall; `sh check.sh --config shape-policy/engine-arhitecture.conf` runs
-this file through the kit's own fixture pair before the directory does.
+newline-separated", states the full pitfall; from the project root, `sh .kit/arhitecture-shape/check.sh --config
+shape-policy/engine-arhitecture.conf` runs this file through the kit's own fixture pair before the directory does
+(this recipe is the one that vendors the script with the kit's directory; in a kit checkout the same script is at
+`kit/arhitecture-shape/check.sh`).
 
 The `AllowedShape` section name, the two keys, the symbol-prefix semantics of `allowedTypes` and the
 own-package-prefix convention are the rule's own config decoder — `kit/arhitecture-shape/README.md` states the schema
@@ -198,7 +200,7 @@ mechanism; copy the commands, not the expectations.
 | the same sources compiled without `--semanticdb` | exit **8**, `error: SemanticDB not found: src/example/Example.scala` |
 | `scala-cli --power fix src` with `AllowedShape` in `.scalafix.conf` | exit **0**, `Running scalafix rules... No rules requested to run` |
 | `//> using scalafixDependency io.github.mercurievv::arhitecture-shape:0.0.0` | download attempted, failed, exit **0** |
-| the `shape-policy/engine-arhitecture.conf` block above, **extracted from this file as committed** and run through `sh check.sh --config <block>` (R28) | exit **0**: violating **4** diagnostics [type references 1, importees 1, object-valued terms 1, constructs 1], clean **0** — the committed commas are list separators, so all fourteen construct names are entries |
+| the `shape-policy/engine-arhitecture.conf` block above, **extracted from this file as committed** and run through `sh check.sh --config <block>` from the kit directory (R28) | exit **0**: violating **4** diagnostics [type references 1, importees 1, object-valued terms 1, constructs 1], clean **0** — the committed commas are list separators, so all fourteen construct names are entries |
 
 The 4-and-0 counts are the same numbers `kit/arhitecture-shape/check.sh` asserts for the committed pair (its README,
 "What this check measures"), reproduced here through this recipe's own commands.

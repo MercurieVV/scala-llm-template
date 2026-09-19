@@ -113,8 +113,9 @@ AllowedShape {
 The entries are comma-separated on purpose: HOCON concatenates adjacent quoted values, so
 `["TermIf" "TermMatch"]` is one entry that matches nothing — and a denylist that matches nothing fails
 **silently** (the type half still reports). `kit/arhitecture-shape/README.md`, "List entries are comma- or
-newline-separated", states the full pitfall; `sh check.sh --config mymodule/.scalafix.conf` runs this file
-through the kit's own fixture pair before the module does.
+newline-separated", states the full pitfall; `sh <scala-llm-template-checkout>/kit/arhitecture-shape/check.sh
+--config mymodule/.scalafix.conf` runs this file through the kit's own fixture pair before the module does. The
+script stays in the kit checkout — this recipe vendors the rule and the wiring, not `check.sh`.
 
 Unlike the CLI form, the `rules` list **is** how this run selects rules: sbt-scalafix hands the config file to the CLI,
 and `scalafixAll` runs over the configurations where scalafix is enabled (Compile and Test by default). `AllowedShape`
@@ -176,7 +177,7 @@ an `if`.
 | `sbt "scalafixAll --check"`, violating source | exit **1**, `[error] (mymodule / scalafixAll) scalafix.sbt.ScalafixFailed: LinterError`, 4 diagnostics: 1 construct, 1 importee, 1 object-valued term, 1 plain type reference |
 | the same command, source made clean | exit **0**, `[success] Total time: 3 s` |
 | the rule's own `object Thing` | no diagnostic — the module's own package prefix in `allowedTypes` covers it |
-| the `.scalafix.conf` block above, **extracted from this file as committed** and run through `sh check.sh --config <block>` (R28) | exit **0**: violating **4** diagnostics [type references 1, importees 1, object-valued terms 1, constructs 1], clean **0** — the committed commas are list separators, so all fourteen construct names are entries |
+| the `.scalafix.conf` block above, **extracted from this file as committed** and run through `sh check.sh --config <block>` from the kit directory (R28) | exit **0**: violating **4** diagnostics [type references 1, importees 1, object-valued terms 1, constructs 1], clean **0** — the committed commas are list separators, so all fourteen construct names are entries |
 
 The plain-type-reference diagnostic is the proof that SemanticDB was in play (`semanticdbEnabled := true` on Scala
 3.8.4), so the allowlist half really ran.

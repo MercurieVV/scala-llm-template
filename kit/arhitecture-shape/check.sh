@@ -44,7 +44,8 @@
 #   mode; only the exact counts the *default* policy measures are asserted in the default mode,
 #   because a supplied policy legitimately moves the totals (a longer denylist reports more
 #   constructs, a shorter allowlist more types) — the discrimination floor is what this mode
-#   asserts. Two details of the run:
+#   asserts. `--config` with no argument, `--config=`, or an empty value is a setup failure (exit 2)
+#   and never a silent fall-through to the default policy. Two details of the run:
 #
 #     * the fixture directory's own package prefix (`example/`) is appended to the supplied policy's
 #       `allowedTypes`, the `allowedTypes() :+ ownPackagePrefix` convention every consumer's build
@@ -127,23 +128,58 @@ kit_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
 # does not compile, a CLI failure, a count that moved, a supplied policy that
 # stopped discriminating this fixture pair), 2 when the check could not be set up
 # on this machine (no work directory, `scala-cli`/`cs` missing, `--config` naming
-# no file, the rule did not compile against the scalafix-rules artifact).
+# no file or an empty one, the rule did not compile against the scalafix-rules
+# artifact).
 fail() { echo "check.sh: $1" >&2; exit 1; }
 fail_setup() { echo "check.sh: $1" >&2; exit 2; }
+
+# A floor failure has more than one honest diagnosis, and the message says which
+# rather than always blaming the separators: a list whose entries concatenated or
+# are misspelled, or a policy that legitimately never gives that mechanism
+# anything to find (a types-only policy has no denylist; an allowlist that covers
+# the fixtures' types leaves the type mechanisms nothing to report). Both are red
+# runs here — the floor is "the fixture pair can still see this mechanism" — but
+# only the first is a defect to fix. Default mode has nothing to add: a floor
+# moving there means the kit's own artifacts moved, which the exact-count
+# assertion above states in full.
+floor_hint() {
+  [ "$config_mode" = yes ] || return 0
+  case $1 in
+    construct)
+      if grep -q 'disallowedConstructs' "$supplied_config" 2>/dev/null; then
+        echo " — the supplied policy names 'disallowedConstructs' but no construct matched it: entries must be comma- or newline-separated (adjacent quoted strings concatenate into one entry that matches nothing), or the names are misspelled. See the README, \"List entries\""
+      else
+        echo " — the supplied policy defines no 'disallowedConstructs' key, so its construct half is off by its own policy (legal — a types-only policy; this floor cannot be satisfied by it). If the key lives in a file this policy includes, its entries are the ones to check"
+      fi
+      ;;
+    type)
+      echo " — the supplied policy's 'allowedTypes' lets this mechanism's type through, so it has nothing to report on these fixtures; a fixture pair can only measure a mechanism with something to find"
+      ;;
+  esac
+}
 
 # ------------------------------------------------------------- arguments ----
 # `--config <file>` (or `--config=<file>`) tests a supplied policy; everything
 # else is the default mode, with the same positional and environment overrides.
+# `config_mode` — never the emptiness of the string — decides which mode runs:
+# an empty value is the setup failure it is documented as, and cannot fall
+# through to the default policy (a mode built against silent passes must not
+# contain one).
 supplied_config=""
+config_mode=no
 while [ $# -gt 0 ]; do
   case $1 in
     --config)
       [ $# -ge 2 ] || fail_setup "--config needs a file argument"
+      [ -n "$2" ] || fail_setup "--config was given an empty file argument"
       supplied_config=$2
+      config_mode=yes
       shift 2
       ;;
     --config=*)
       supplied_config=${1#--config=}
+      [ -n "$supplied_config" ] || fail_setup "--config= was given an empty file argument"
+      config_mode=yes
       shift
       ;;
     --)
@@ -188,7 +224,10 @@ command -v cs >/dev/null 2>&1 || fail_setup "'cs' (coursier) is not on PATH (nee
 # Never widen the appended prefix or the expectations to make a policy pass
 # (R-10): a policy this refuses is a policy that stopped discriminating.
 config="$work_dir/allowed-shape.conf"
-if [ -n "$supplied_config" ]; then
+if [ "$config_mode" = yes ]; then
+  # The mode, not the string, decided this branch; the guard is the last thing
+  # between an empty value and a silent fall-through to the default policy.
+  [ -n "$supplied_config" ] || fail_setup "--config: empty file argument"
   [ -f "$supplied_config" ] || fail_setup "--config: no such file: $supplied_config"
   supplied_config=$(CDPATH= cd "$(dirname "$supplied_config")" && pwd)/$(basename "$supplied_config")
   {
@@ -212,7 +251,7 @@ fi
 
 echo "allowed-shape check: $kit_dir"
 echo "  rule + fixtures compiled with scala-cli $SCALA_VERSION, scalafix CLI $SCALAFIX_VERSION"
-if [ -n "$supplied_config" ]; then
+if [ "$config_mode" = yes ]; then
   echo "  config               = supplied: $supplied_config"
   echo "                         + \"example/\" appended to allowedTypes (the fixture directory's own prefix)"
   echo "                         wrapper: $config"
@@ -349,14 +388,14 @@ for name in violating clean; do
     # a mechanism never fires is a policy that stopped checking that mechanism. The messages name the
     # supplied file in `--config` mode, because that is the artifact under test there.
     [ "$type_refs" -ge 1 ] ||
-      fail "the violating fixture produced no plain Type.Name diagnostic: mechanism 1 (referenced types) did not run${supplied_config:+ — supplied policy: $supplied_config (list entries must be comma- or newline-separated; see the README, \"List entries\")}"
+      fail "the violating fixture produced no plain Type.Name diagnostic: mechanism 1 (referenced types) did not run${supplied_config:+ — supplied policy: $supplied_config}$(floor_hint type)"
     [ "$importees" -ge 1 ] ||
-      fail "the violating fixture produced no importee diagnostic: mechanism 3 (importees) did not run${supplied_config:+ — supplied policy: $supplied_config (list entries must be comma- or newline-separated; see the README, \"List entries\")}"
+      fail "the violating fixture produced no importee diagnostic: mechanism 3 (importees) did not run${supplied_config:+ — supplied policy: $supplied_config}$(floor_hint type)"
     [ "$object_terms" -ge 1 ] ||
-      fail "the violating fixture produced no object-valued-term diagnostic: mechanism 2 did not catch a disallowed type reached as a term${supplied_config:+ — supplied policy: $supplied_config}"
+      fail "the violating fixture produced no object-valued-term diagnostic: mechanism 2 did not catch a disallowed type reached as a term${supplied_config:+ — supplied policy: $supplied_config}$(floor_hint type)"
     [ "$constructs" -ge 1 ] ||
-      fail "the violating fixture produced no disallowedConstruct diagnostic: mechanism 4 (construct denylist) did not run${supplied_config:+ — supplied policy: $supplied_config (list entries must be comma- or newline-separated; see the README, \"List entries\")}"
-    if [ -z "$supplied_config" ]; then
+      fail "the violating fixture produced no disallowedConstruct diagnostic: mechanism 4 (construct denylist) did not run${supplied_config:+ — supplied policy: $supplied_config}$(floor_hint construct)"
+    if [ "$config_mode" = no ]; then
       [ "$type_refs" -eq "$EXPECT_VIOLATING_TYPE_REFS" ] &&
         [ "$importees" -eq "$EXPECT_VIOLATING_IMPORTEES" ] &&
         [ "$object_terms" -eq "$EXPECT_VIOLATING_OBJECT_TERMS" ] &&
@@ -378,7 +417,7 @@ done
 
 echo "violating: $((measured_violating_type_refs + measured_violating_importees + measured_violating_object_terms + measured_violating_constructs)) diagnostics [type references $measured_violating_type_refs, importees $measured_violating_importees, object-valued terms $measured_violating_object_terms, constructs $measured_violating_constructs]"
 echo "clean: $((measured_clean_type_refs + measured_clean_importees + measured_clean_object_terms + measured_clean_constructs)) diagnostics [type references $measured_clean_type_refs, importees $measured_clean_importees, object-valued terms $measured_clean_object_terms, constructs $measured_clean_constructs]"
-if [ -n "$supplied_config" ]; then
+if [ "$config_mode" = yes ]; then
   echo "config under test: $supplied_config (+ the fixture directory's own prefix appended to allowedTypes)"
 fi
 echo "OK"

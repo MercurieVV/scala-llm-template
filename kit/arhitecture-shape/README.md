@@ -166,7 +166,13 @@ what it does and does not settle:
 The exact counts the *default* policy measures (1, 1, 1, 1) are asserted in the default mode only: a supplied
 policy legitimately moves the totals, and the mode reports what it measured. Exit statuses are unchanged —
 0 the fixtures (and the supplied policy) behaved; 1 an artifact under test did not behave; 2 the check could
-not be set up (including `--config` naming no file).
+not be set up (including `--config` naming no file, `--config=`, or an empty value — the mode is decided by the
+argument, never by a silent fall-through to the default policy).
+
+A floor failure says which of its two shapes it is: a denylist that is configured but matched nothing (the
+spelling defect above), or a policy that gives that mechanism nothing to find — a types-only policy, or an
+allowlist that already covers the fixtures' types. Both are red runs here, because the mode's floor is "the
+fixture pair can still see this mechanism"; only the first is a defect to fix.
 
 Measured with the committed fixtures (scala-cli 3.8.4, scalafix 0.14.7):
 
