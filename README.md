@@ -56,3 +56,20 @@ This repository avoids local rule files (`.cursorrules`, `.agents/AGENTS.md`) to
 
 *   **Master Rules File:** Located globally in the shared directory: `~/.config/llm-rules/scala-rules.md`
 *   **Applying Guidelines:** When writing Scala code in this project, you must fetch and follow the rules stored in `~/.config/llm-rules/scala-rules.md` (or write code matching Scala 3 optional braces syntax, pure immutability, and explicit type-safe error handling using `Either` or `Try`).
+
+---
+
+## 4. Reengineering Kit
+
+Brings a project under the kit — the `AllowedShape` scalafix rule with its build wiring, the five process skills and
+the `R-n` digest — in one installed commit:
+
+```bash
+scala-cli run Setup.scala --server=false -- --agent --answers '{"kit":"yes","build-tool":"mill"}' <target-dir>
+```
+
+`build-tool` takes `mill`, `sbt` or `scala-cli`. Run it **from a local checkout of this repository**: the kit's files
+are read from `kit/` at run time, so the remote one-liner above cannot install them.
+
+The procedure that follows the install — read the ground and get the module list approved, baseline the gate,
+reshape one module through the four skills, record, repeat to the exit condition — is [`kit/apply.md`](kit/apply.md).

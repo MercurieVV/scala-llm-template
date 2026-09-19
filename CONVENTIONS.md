@@ -21,6 +21,7 @@ Use the following commands to build, test, and format the project:
 | **Compile Docs (Mdoc)** | `scala-cli run mdoc-docs/src/main/scala/DocsMain.scala -- .` |
 | **Start Git Worktree** | `scala-cli run scripts/worktree-start.scala -- <branch>` |
 | **Finish Git Worktree** | `scala-cli run scripts/worktree-finish.scala` |
+| **Install Reengineering Kit** | `scala-cli run Setup.scala --server=false -- --agent --answers '{"kit":"yes","build-tool":"mill"}' <target-dir>` (from a local checkout; see [kit/apply.md](kit/apply.md)) |
 
 ---
 
