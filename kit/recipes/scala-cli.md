@@ -14,15 +14,20 @@ project runs its own copy of it (see R16 at the bottom).
 
 ```
 repo/
-├── arhitecture-shape/                      # the kit's directory, copied in as-is
-│   ├── AllowedShape.scala                  #   the rule, verbatim
-│   ├── META-INF/services/scalafix.v1.Rule  #   the registration (one line, the FQCN)
-│   └── README.md, check.sh, fixtures/…     #   the kit's own fixture check — not a project lint runner (R16)
+├── .kit/
+│   └── arhitecture-shape/                  # the kit's directory, copied in as-is
+│       ├── AllowedShape.scala              #   the rule, verbatim
+│       ├── META-INF/services/scalafix.v1.Rule  #   the registration (one line, the FQCN)
+│       └── README.md, check.sh, fixtures/… #   the kit's own fixture check — not a project lint runner (R16)
 ├── shape-policy/
 │   └── engine-arhitecture.conf             # ← you write one of these per shaped directory: its own policy
 ├── allowed-shape.sh                        # the runner below
 └── src/…                                   # the sources under check
 ```
+
+The kit's directory is dot-prefixed on purpose: scala-cli skips dot-directories, so the project's own
+`scala-cli compile .` never picks up a rule that is compiled against scalafix's API rather than the project's
+(see "Keeping the rule out of the project's own compile" below).
 
 Only `AllowedShape.scala` and the registration come from the kit; the policy files are the project's own, and the
 runner takes them as arguments — which is what makes the policy per directory.
@@ -60,7 +65,7 @@ set -eu
 
 SRC=${1:?usage: allowed-shape.sh <sources-dir> <config-file>}
 CONF=${2:?usage: allowed-shape.sh <sources-dir> <config-file>}
-RULE_DIR=arhitecture-shape                                   # the kit's directory, copied in as-is
+RULE_DIR=.kit/arhitecture-shape                               # the kit's directory, copied in as-is (dot-prefixed: the project's own compile must skip it)
 SCALA=3.8.4
 SCALAFIX=0.14.7
 WORK=.allowed-shape                                          # by-products, safe to delete
@@ -111,7 +116,8 @@ For a project whose sources live at the repo root (this kit's own template is on
   the rule directory is never in that list;
 - `--exclude arhitecture-shape` does **not** do it: the rule was still compiled and the run failed with 5 errors;
 - scala-cli skips dot-directories: with the rule under `.kit/`, `scala-cli compile .` compiled the project's sources
-  and left the rule alone (exit 0).
+  and left the rule alone (exit 0) — which is why the tree above installs the kit at `.kit/arhitecture-shape/` and
+  the runner's `RULE_DIR` names that path.
 
 ## The config, both keys
 
@@ -181,6 +187,7 @@ mechanism; copy the commands, not the expectations.
 |---|---|
 | `sh allowed-shape.sh src shape-policy/engine-arhitecture.conf` — the runner above, extracted from this file and run as it stands | exit **64**, 4 diagnostics: type references 1, importees 1, object-valued terms 1, constructs 1 |
 | the same runner on a clean source directory | exit **0**, 0 diagnostics |
+| the runner at this file's tree path, `.kit/arhitecture-shape/` (re-run when the tree and `RULE_DIR` moved out of the compiled tree — R25) | exit **64** with the same 4 diagnostics; clean directory exit **0** |
 | rule compile (step 1) | exit 0; `.allowed-shape/rule-classes/io/github/mercurievv/arhitecture/scalafix/AllowedShape.class` |
 | the same sources compiled without `--semanticdb` | exit **8**, `error: SemanticDB not found: src/example/Example.scala` |
 | `scala-cli --power fix src` with `AllowedShape` in `.scalafix.conf` | exit **0**, `Running scalafix rules... No rules requested to run` |
