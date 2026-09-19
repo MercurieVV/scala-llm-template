@@ -1,0 +1,88 @@
+package build.buildKit
+
+import mill._
+import build.{BuildPaths, ExtraScalafixRules, RuleSettings, ScalafixValue}
+
+/** Wires the kit's `AllowedShape` rule into every module that mixes this trait in, so a project with several shaped
+  * modules configures the rule in one place instead of each module wiring it itself.
+  *
+  * `ScalafixValue`/`RuleSettings`/`ExtraScalafixRules` are generic mechanics (see the Mill recipe's
+  * `ScalafixExtra.mill`); only the rule name and its two config keys — `AllowedShape`, `allowedTypes`,
+  * `disallowedConstructs` — are named here. Those three spellings are frozen: the rule resolves its settings through
+  * them, and the rule file itself never carries policy.
+  *
+  * The rule is vendored, not published (`kit/arhitecture-shape/README.md`, "vendored, not published"), so it reaches
+  * the tool classpath from the in-repo rule module — the recipe's `scalafixToolClasspath` override — never from
+  * `scalafixIvyDeps`.
+  */
+trait ArchitectureShapeModule extends ExtraScalafixRules {
+
+  /** The project's root package, `/`-separated and with a trailing slash — `"com/example/myapp/"`. Required, and
+    * deliberately without a default: a wrong or missing root package would report the module's own definitions as
+    * references to something disallowed, so the build should say it rather than guess it.
+    *
+    * The module's own path is appended below, derived from Mill's own `moduleSegments`, so it cannot drift from the
+    * module declaring it: under `object backend { object api }` the prefix becomes `com/example/myapp/backend/api/`.
+    */
+  def packageRoot: String
+
+  /** Every module may reference its own types freely — the allowlist polices what it reaches OUTSIDE its own package,
+    * and the module's own package prefix (derived above) is appended to this list for exactly that reason
+    * (`allowedTypes() :+ ownPackagePrefix`).
+    */
+  private def ownPackagePrefix: String =
+    packageRoot + moduleSegments.parts.mkString("/") + "/"
+
+  /** The allowlist every shaped module of this project starts from — types routine enough to be named anywhere, so no
+    * module has to repeat them. The default is the minimal stdlib set; a project overrides it with its own base
+    * (its shared types, and a library prefix such as `cats/arrow` when the project uses one).
+    *
+    * Entries are symbol prefixes: `cats/arrow` allows everything under it, `scala/Int` allows `scala/Int#`.
+    */
+  def baseAllowedTypes: T[Seq[String]] = Task(
+    Seq(
+      "scala/Predef.String",
+      "scala/Int",
+      "scala/Boolean",
+      "scala/Unit",
+      "scala/Any",
+      "scala/Option",
+      "scala/Some",
+      "scala/None",
+      "scala/Predef.Map",
+      "scala/package.Either",
+    )
+  )
+
+  /** The imperative/branching constructs this rule actually gates — everything else (name, select, definition,
+    * import) passes by default as unavoidable scaffolding. Names are scalameta AST node kinds with the generated
+    * `Impl` suffix stripped (`AllowedShape.constructNameOf`); `Case`/`TermPartialFunction`/`TermCasesBlock` are
+    * pattern-match-as-branching, denied alongside `TermMatch` rather than grouped with structural `PatVar`/`PatTuple`.
+    *
+    * The default is the kit's R-3 list; a module whose own list differs states that difference in its own override
+    * (R-10: an exception removes the entry from the module's own list, it never widens a shared one).
+    */
+  def disallowedConstructs: T[Seq[String]] = Task(
+    Seq(
+      "TermIf", "TermMatch", "TermWhile", "TermFor", "TermForYield", "TermTry", "TermThrow", "TermReturn",
+      "LitNull", "DefnVar", "DeclVar", "Case", "TermPartialFunction", "TermCasesBlock",
+    )
+  )
+
+  /** The ruleset this module already runs, before the shape rule is layered on top. The module's own generated config
+    * `include`s this file, so the project keeps one `.scalafix.conf` and the shape rule's settings stay per module.
+    */
+  protected def baseScalafixConfigFile: os.Path = BuildPaths.repoRoot / ".scalafix.conf"
+
+  override def extraRules: T[Seq[String]] = Task(Seq("AllowedShape"))
+
+  override def extraRuleSettings: T[Seq[RuleSettings]] = Task(
+    Seq(
+      RuleSettings.of(
+        "AllowedShape",
+        "allowedTypes" -> ScalafixValue.strs(baseAllowedTypes() :+ ownPackagePrefix),
+        "disallowedConstructs" -> ScalafixValue.strs(disallowedConstructs()),
+      )
+    )
+  )
+}
