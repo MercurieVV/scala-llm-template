@@ -266,7 +266,7 @@ a run whose allowlist half proved nothing.
 
 ```sh
 ./mill <module>.fix --check          # one module: out/engine/arhitecture/...
-./mill __.fix --check                # every module, recursively
+./mill __.fix --check                # every module, recursively — skips the ones with no `fix` task (the rule module)
 ```
 
 `--check` writes nothing and fails on findings: the rule's diagnostics are error severity by default (scalafix's
@@ -293,19 +293,25 @@ and never suppresses a finding another way. A finding that cannot be fixed hones
 
 ## How this recipe was checked
 
-**Executed**, end to end, on a scratch Mill project built from this recipe's own text (Mill 1.1.8, mill-scalafix
-0.6.2, Scala 3.8.4, scalafix 0.14.7): the rule at `scalafixRules/src/AllowedShape.scala` with its registration under
-`scalafixRules/resources/`, this recipe's `ScalafixExtra.mill` copied out of the code block above, the helper at
-`buildKit/ArchitectureShapeModule.mill` with `buildKit/package.mill`, and one module —
-`object engine { object arhitecture extends Layer with ArchitectureShapeModule { def packageRoot = "com/example/myapp/" } }`
-with a source under `com.example.myapp.engine.arhitecture` that writes a disallowed type as a type, imports it,
-reaches a disallowed object as a term, and uses an `if`.
+**Executed from this recipe's text alone.** A scratch project was assembled by extracting the code blocks out of this
+file — the three `build.mill` fragments concatenated in order, `ScalafixExtra.mill`, `.scalafix.conf` — and copying
+the two files the recipe says to copy (the helper, and the rule with its registration from
+`kit/arhitecture-shape/`). Nothing was added by hand except the module's own source under check, which is the
+consumer's code. Mill 1.1.8, mill-scalafix 0.6.2, Scala 3.8.4, scalafix 0.14.7; the module is the example's
+`object engine { object arhitecture … }` with `packageRoot = "com/example/myapp/"` and a source under
+`com.example.myapp.engine.arhitecture` that writes a disallowed type as a type, imports it, reaches a disallowed
+object as a term, and uses an `if`.
 
-| Run | Result |
+That assembly is also what found the recipe's last installability defect: the head fragment had a `build.mill` label
+comment above the `//|` lines, and Mill refused the build with
+`build.mill:2:1 YAML header comments can only occur at the start of the file`. The block now starts with the header
+(it is what made the difference between "the snippets work when typed into a build" and "the recipe works").
+
+| Run (in the assembled project) | Result |
 |---|---|
-| `mill -i engine.arhitecture.fix --check`, violating source | exit **1**, `[error] engine.arhitecture.fix A Scalafix linter error was reported`, 4 diagnostics: 1 construct, 1 importee, 1 object-valued term, 1 plain type reference |
+| `mill engine.arhitecture.fix --check`, violating source | exit **1**, `[error] engine.arhitecture.fix A Scalafix linter error was reported`, 4 diagnostics: 1 construct, 1 importee, 1 object-valued term, 1 plain type reference |
 | the same command, source made clean | exit **0**, `SUCCESS`, 0 diagnostics |
-| the violating run repeated | exit **1**, the same 4 diagnostics |
+| `mill __.fix --check`, violating source | exit **1**, the same 4 diagnostics — and the log shows `engine.arhitecture.*` tasks only, with no complaint about the rule module, so the recursive form skips the modules that have no `fix` task |
 | generated config | `out/engine/arhitecture/scalafixConfig.dest/extra-rules.conf` — `include file("<repo>/.scalafix.conf")`, `rules += "AllowedShape"`, both keys, and `"com/example/myapp/engine/arhitecture/"` appended to `allowedTypes` |
 | SemanticDB | `out/engine/arhitecture/semanticDbDataDetailed.dest/{classes,data}/META-INF/semanticdb/engine/arhitecture/src/Thing.scala.semanticdb` — produced with no scalac option in the build, and the plain-type-reference diagnostic is the proof it was used |
 
