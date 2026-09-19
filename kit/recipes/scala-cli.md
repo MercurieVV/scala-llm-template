@@ -48,8 +48,9 @@ then it is not a check.
 
 Save this as `allowed-shape.sh` (POSIX `sh`, `set -eu`; `--server=false` keeps scala-cli non-interactive — this
 sandbox cannot start Bloop, and a gate should not need a compilation server either). It takes the directory to check
-and that directory's own config, and it **asserts the CLI's exit status** rather than merely printing the output: a
-failed run leaves no diagnostics, so counting alone would read a failure as "no findings".
+and that directory's own config, and it **ends on the CLI's own exit status** rather than counting diagnostics: under
+`set -eu` a failing CLI fails the script with its code (64 for a finding, 8 for missing SemanticDB, …), and a failed
+run leaves no diagnostics at all — so counting alone would read a failure as "no findings".
 
 ```sh
 #!/bin/sh
@@ -83,10 +84,11 @@ scala-cli compile "$SRC" \
   --semanticdb --semanticdb-sourceroot "$PWD" \
   --workspace "$WORK/ws-src" -d "$WORK/classes"
 
-# 4. run the rule. The CLI's own exit codes, from scalafix's `ExitStatus`: 0 Ok, 1 UnexpectedError,
-#    2 ParseError, 4 CommandLineError, 8 MissingSemanticdbError, 16 StaleSemanticdbError, 32 TestError
-#    (--check found a rewrite to apply), 64 LinterError (diagnostics reported). 64 and 8 are measured below.
-#    `check.sh`'s own 0/1/2 mean something different — do not read one table as the other.
+# 4. run the rule. The CLI's own exit codes — scalafix's `ExitStatus` has ten base codes and ORs them together when
+#    several apply: 0 Ok, 1 UnexpectedError, 2 ParseError, 4 CommandLineError, 8 MissingSemanticdbError,
+#    16 StaleSemanticdbError, 32 TestError (--check found a rewrite to apply), 64 LinterError (diagnostics
+#    reported), 128 NoFilesError, 256 NoRulesError. 64 and 8 are measured below; `check.sh`'s own 0/1/2 mean
+#    something different — do not read one table as the other.
 cs launch "ch.epfl.scala:scalafix-cli_${SCALA}:${SCALAFIX}" --main-class scalafix.cli.Cli -- \
   --tool-classpath "$WORK/tool-classes" \
   --rules AllowedShape \
