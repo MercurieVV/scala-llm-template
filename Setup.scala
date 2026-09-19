@@ -782,15 +782,16 @@ object Setup extends IOApp:
         importLines: List[String],
         body: String
     ): String =
+      val lines = existing.linesIterator.toList
+      val headerEnd = lines.takeWhile(_.startsWith("//|")).size
+      val header = lines.take(headerEnd)
+      // The guard reads the directive region — the `//|` header — not the whole file: a body comment that mentions
+      // mill-scalafix must not stop the build dependency from being declared.
       val withHeader =
-        if existing.contains("mill-scalafix") then existing
+        if header.exists(_.contains("mill-scalafix")) then existing
         else
-          val lines = existing.linesIterator.toList
-          val headerEnd = lines.takeWhile(_.startsWith("//|")).size
-          val inject =
-            if headerEnd > 0 then depLines else "//| mvnDeps:" :: depLines
-          (lines.take(headerEnd) ++ inject ++ lines.drop(headerEnd))
-            .mkString("\n") + "\n"
+          val (at, inject) = millMvnDepsInjection(header, depLines)
+          (lines.take(at) ++ inject ++ lines.drop(at)).mkString("\n") + "\n"
       val withPackage =
         if withHeader.linesIterator.exists(_.trim == packageLine) then withHeader
         else insertAfterHeader(withHeader, packageLine)
@@ -798,6 +799,46 @@ object Setup extends IOApp:
         if text.contains(line) then text else insertAfterImports(text, line)
       }
       plantCodeBlock(withImports, body)
+
+    /** Where the mill-scalafix `//|` entries go in a Mill YAML header, and where they do not. Mill reads a
+      * `build.mill` header as YAML, so an entry is a dependency only when it sits under the `mvnDeps:` key:
+      *
+      *   - header names `mvnDeps:` as a block list → after the last of that key's items (`- …`, or a continuation
+      *     comment/blank line), before the next key;
+      *   - header names other keys only (or there is no header) → a new `mvnDeps:` key at the end of the header
+      *     (position 0 when there is none);
+      *   - header names `mvnDeps:` with an inline flow list → inside its brackets.
+      *
+      * Appending after the whole header — what this replaced — put the entry under whichever key came last, where it
+      * is that key's value and declares no dependency at all.
+      */
+    private def millMvnDepsInjection(
+        header: List[String],
+        depLines: List[String]
+    ): (Int, List[String]) =
+      val keyAt = header.lastIndexWhere(_.trim.startsWith("//| mvnDeps:"))
+      if keyAt < 0 then (header.size, "//| mvnDeps:" :: depLines)
+      else
+        val value = header(keyAt).trim.stripPrefix("//| mvnDeps:").trim
+        if value.isEmpty then
+          // The items already under the key: `- …` entries plus any continuation comment or blank `//|` line.
+          val items = header
+            .drop(keyAt + 1)
+            .takeWhile { line =>
+              val item = line.stripPrefix("//|").trim
+              item.isEmpty || item.startsWith("-") || item.startsWith("#")
+            }
+            .size
+          (keyAt + 1 + items, depLines)
+        else if value.startsWith("[") && value.endsWith("]") then
+          val coords = depLines.map(_.stripPrefix("//|").trim.stripPrefix("-").trim)
+          val inside = value.drop(1).dropRight(1).trim
+          val merged = if inside.isEmpty then coords else inside :: coords
+          (keyAt, List(s"//| mvnDeps: [${merged.mkString(", ")}]"))
+        else
+          throw new IllegalStateException(
+            s"build.mill's 'mvnDeps:' header line carries a value this installer cannot extend: ${header(keyAt)}"
+          )
 
     private def insertAfterHeader(text: String, line: String): String =
       val lines = text.linesIterator.toList
@@ -844,6 +885,8 @@ object Setup extends IOApp:
       """scalafix-rules_[0-9.]+:([0-9]+\.[0-9]+\.[0-9]+)""".r
     private val SbtScalaVersion =
       """ThisBuild / scalaVersion\s*:=\s*"([^"]+)"""".r
+    private val SbtPluginVersion =
+      """sbt-scalafix"\s*%\s*"([0-9]+\.[0-9]+\.[0-9]+)"""".r
     private val SbtScalafixVersion =
       """"scalafix-rules"\s*%\s*"([0-9]+\.[0-9]+\.[0-9]+)"""".r
     private val CliScalaVersion = """SCALA=([0-9]+\.[0-9]+\.[0-9]+)""".r
@@ -912,6 +955,28 @@ object Setup extends IOApp:
         os.write.over(path, content)
         files = files :+ path.toString
 
+      /** A copy of kit text the project owns once it lands. The kit is **vendored**: the design's L2 says a project
+        * may tune its copy, so a re-install must not destroy that tuning silently. Differing content is left exactly
+        * where it is and the kit's version goes beside it as `<name>.kit-new`, named on stderr; identical content is
+        * rewritten in place, so an untouched re-install stays idempotent.
+        *
+        * The files the installer owns instead — the marked blocks in `build.mill`/`build.sbt`/`AGENTS.md`/
+        * `scala-rules.md`, `project/plugins.sbt`, `.scalafix.conf` and the copies it derives from the target's own
+        * build — keep using `write`: replacing them is the install's job, and the target's own text in them is
+        * preserved by construction (a marked span is replaced, a missing line is added).
+        */
+      def writeVendored(rel: String, content: String): Unit =
+        val path = ctx.targetDir / os.RelPath(rel)
+        if os.exists(path) && os.read(path) != content then
+          val beside = path / os.up / (path.last + ".kit-new")
+          os.makeDir.all(path / os.up)
+          os.write.over(beside, content)
+          files = files :+ beside.toString
+          Console.err.println(
+            s"⚠ $rel differs from the kit's copy (a tuned vendored file): it was left as it is and the kit's version written to $beside — diff the two and merge by hand; the kit never overwrites tuned content."
+          )
+        else write(rel, content)
+
       def readKit(rel: String): String =
         val path = kit / os.RelPath(rel)
         if !os.exists(path) then
@@ -919,20 +984,65 @@ object Setup extends IOApp:
         os.read(path)
 
       /** The enforcement README is what the digest points at: the schema, the symbol-prefix semantics and the rule's
-        * named blind spot live there, and the digest restates none of them. `scala-cli.md`'s tree copies the kit's
-        * whole directory, so its branch writes this with everything else.
+        * named blind spot live there, and the digest restates none of them. Only `scala-cli.md`'s tree copies the
+        * kit's whole directory; the Mill and sbt branches vendor the README without `check.sh` and `fixtures/`, so
+        * the note appended here says which parts are in this project and where the rest lives. That keeps the
+        * digest's pointer honest without restructuring the README's own content.
         */
       def writeReadme(): Unit =
-        write(
+        writeVendored(
           ".kit/arhitecture-shape/README.md",
-          readKit("arhitecture-shape/README.md")
+          readKit("arhitecture-shape/README.md").stripLineEnd + "\n\n" + readmeNote()
         )
+
+      /** Tool-aware, appended to the vendored README: which pieces of `arhitecture-shape/` this project has, and
+        * where `check.sh` and its fixtures are for a project that did not get them.
+        */
+      def readmeNote(): String =
+        val checkout = "`scala-llm-template` checkout, under `kit/arhitecture-shape/`"
+        val runIt =
+          "run it from that checkout: `sh <checkout>/kit/arhitecture-shape/check.sh --config <policy>`"
+        val lines = buildTool match
+          case "scala-cli" => List(
+            "## What is present in this project",
+            "",
+            "Appended by `Setup.scala`'s kit step (the README above is the kit's own text). This project carries the " +
+              "whole directory at `.kit/arhitecture-shape/`: this README, `AllowedShape.scala`, its registration, " +
+              "`check.sh` and `fixtures/`.",
+            "The project's own lint runner is `allowed-shape.sh` with a `shape-policy/<dir>.conf` per shaped " +
+              "directory; `check.sh` is the kit's own fixture check, not that runner."
+          )
+          case "mill" => List(
+            "## What is present in this project",
+            "",
+            "Appended by `Setup.scala`'s kit step (the README above is the kit's own text). This project carries the " +
+              "rule and its wiring: `scalafixRules/src/AllowedShape.scala` with its `META-INF/services/scalafix.v1.Rule` " +
+              "registration, `buildKit/ArchitectureShapeModule.mill`, `ScalafixExtra.mill` and the marked block in " +
+              "`build.mill`.",
+            s"`check.sh` and `fixtures/` are **not** vendored here — they live in the $checkout, together with this " +
+              s"README; $runIt.",
+            "The project's per-module policy lives in `build.mill`, not in this directory: the Mill recipe in that " +
+              "checkout, `kit/recipes/mill.md`, states the wiring."
+          )
+          case _ => List(
+            "## What is present in this project",
+            "",
+            "Appended by `Setup.scala`'s kit step (the README above is the kit's own text). This project carries the " +
+              "rule and its wiring: `scalafix-rules/src/main/scala/AllowedShape.scala` with its " +
+              "`META-INF/services/scalafix.v1.Rule` registration, the `sbt-scalafix` plugin line in " +
+              "`project/plugins.sbt` and the marked block in `build.sbt`.",
+            s"`check.sh` and `fixtures/` are **not** vendored here — they live in the $checkout, together with this " +
+              s"README; $runIt.",
+            "The project's per-module policy lives in each module's own `.scalafix.conf`: the sbt recipe in that " +
+              "checkout, `kit/recipes/sbt.md`, states the wiring."
+          )
+        lines.mkString("\n") + "\n"
 
       val millBlocks = KitText.codeBlocks(readKit("recipes/mill.md"))
       val sbtBlocks  = KitText.codeBlocks(readKit("recipes/sbt.md"))
       val cliBlocks  = KitText.codeBlocks(readKit("recipes/scala-cli.md"))
 
-      def installMill(): (String, String) =
+      def installMill(): (String, String, Boolean) =
         val head = KitText.block(millBlocks, "scala", "object BuildPaths", "mill.md")
         // Read the pair the recipe was measured with before writing anything: a recipe that drifted must fail here,
         // not complete with wiring the installer only half understands.
@@ -947,21 +1057,21 @@ object Setup extends IOApp:
           .map(_.trim)
           .getOrElse("package build")
 
-        write(
+        writeVendored(
           "scalafixRules/src/AllowedShape.scala",
           readKit("arhitecture-shape/AllowedShape.scala")
         )
-        write(
+        writeVendored(
           "scalafixRules/resources/META-INF/services/scalafix.v1.Rule",
           readKit("arhitecture-shape/META-INF/services/scalafix.v1.Rule")
         )
         val helper = readKit("recipes/mill/ArchitectureShapeModule.mill")
-        write("buildKit/ArchitectureShapeModule.mill", helper)
+        writeVendored("buildKit/ArchitectureShapeModule.mill", helper)
         // The anchor file carries just the helper's own package line, so the two cannot disagree.
-        write("buildKit/package.mill", helper.linesIterator.next() + "\n")
+        writeVendored("buildKit/package.mill", helper.linesIterator.next() + "\n")
         writeReadme()
         // The generic half of the wiring the helper mixes in: ExtraScalafixRules, ScalafixValue, RuleSettings.
-        write(
+        writeVendored(
           "ScalafixExtra.mill",
           KitText.block(millBlocks, "scala", "trait ExtraScalafixRules", "mill.md") + "\n"
         )
@@ -1033,9 +1143,11 @@ object Setup extends IOApp:
         Console.err.println(
           "→ Mix `Layer with ArchitectureShapeModule` into each shaped module (see the marked block in build.mill)."
         )
-        (measuredScala, measuredScalafix)
+        // The rule module follows the project's `val scala3Version` when the project declares one (the marked block
+        // then omits the kit's declaration), so the measured pair is pinned only when this run wrote that declaration.
+        (measuredScala, measuredScalafix, !targetHasScalaVersion)
 
-      def installSbt(): (String, String) =
+      def installSbt(): (String, String, Boolean) =
         val semanticDb =
           KitText.block(sbtBlocks, "scala", "semanticdbEnabled", "sbt.md")
         val ruleProject = KitText.block(
@@ -1049,11 +1161,11 @@ object Setup extends IOApp:
         val measuredScalafix =
           KitText.versionIn(ruleProject, SbtScalafixVersion, "sbt.md")
 
-        write(
+        writeVendored(
           "scalafix-rules/src/main/scala/AllowedShape.scala",
           readKit("arhitecture-shape/AllowedShape.scala")
         )
-        write(
+        writeVendored(
           "scalafix-rules/src/main/resources/META-INF/services/scalafix.v1.Rule",
           readKit("arhitecture-shape/META-INF/services/scalafix.v1.Rule")
         )
@@ -1061,6 +1173,8 @@ object Setup extends IOApp:
 
         val pluginLine =
           KitText.block(sbtBlocks, "scala", "addSbtPlugin", "sbt.md").trim
+        val measuredPlugin =
+          KitText.versionIn(pluginLine, SbtPluginVersion, "sbt.md")
         val pluginsFile = ctx.targetDir / "project" / "plugins.sbt"
         val plugins = if os.exists(pluginsFile) then os.read(pluginsFile) else ""
         if !plugins.contains("sbt-scalafix") then
@@ -1069,6 +1183,15 @@ object Setup extends IOApp:
             plugins.stripLineEnd + (if plugins.isEmpty then "" else "\n") + pluginLine + "\n"
           )
           Console.err.println("✓ Added sbt-scalafix to project/plugins.sbt")
+        else
+          // Presence alone says nothing: an older plugin loads a different scalafix CLI, so the wiring planted in
+          // build.sbt was never measured against it. Warn like the Scala-version mismatch does.
+          warnOnDeclaredSbtPlugin(
+            plugins,
+            measuredPlugin,
+            measuredScala,
+            measuredScalafix
+          )
 
         val body = List(
           semanticDb,
@@ -1091,34 +1214,40 @@ object Setup extends IOApp:
           "→ Each shaped module opts in with `.dependsOn(`scalafix-rules` % ScalafixConfig)` and carries its own " +
             ".scalafix.conf (see the marked block in build.sbt)."
         )
-        (measuredScala, measuredScalafix)
+        // The planted marked block declares `ThisBuild / scalaVersion` itself, so the rule project and the CLI
+        // sbt-scalafix resolves for a module are the measured ones.
+        (measuredScala, measuredScalafix, true)
 
-      def installScalaCli(): (String, String) =
+      def installScalaCli(): (String, String, Boolean) =
         // scala-cli.md's tree copies the kit's whole `arhitecture-shape/` directory in as-is, under `.kit/` so the
         // project's own `scala-cli compile .` cannot pick the rule up (it is compiled against scalafix, not the
-        // project). The README the digest points at travels with it.
+        // project). The README the digest points at travels with it, with the tool-aware note writeReadme appends.
         val shapeDir = kit / "arhitecture-shape"
         os.walk(shapeDir)
           .filter(os.isFile)
+          .filterNot(_.last == "README.md")
           .foreach { path =>
-            write(
+            writeVendored(
               s".kit/arhitecture-shape/${path.relativeTo(shapeDir)}",
               os.read(path)
             )
           }
+        writeReadme()
         val runner =
           KitText.block(cliBlocks, "sh", "RULE_DIR=.kit/arhitecture-shape", "scala-cli.md")
-        write("allowed-shape.sh", runner + "\n")
+        writeVendored("allowed-shape.sh", runner + "\n")
         Console.err.println("✓ Wrote the scala-cli wiring (allowed-shape.sh)")
         Console.err.println(
           "→ Run it per shaped directory: sh allowed-shape.sh <sources-dir> <config-file> — the config is that directory's own policy."
         )
+        // `SCALA=` is a literal in the runner, so the measured pair is pinned by what this run wrote.
         (
           KitText.versionIn(runner, CliScalaVersion, "scala-cli.md"),
-          KitText.versionIn(runner, CliScalafixVersion, "scala-cli.md")
+          KitText.versionIn(runner, CliScalafixVersion, "scala-cli.md"),
+          true
         )
 
-      val (measuredScala, measuredScalafix) = buildTool match
+      val (measuredScala, measuredScalafix, pinned) = buildTool match
         case "mill"      => installMill()
         case "sbt"       => installSbt()
         case "scala-cli" => installScalaCli()
@@ -1126,10 +1255,10 @@ object Setup extends IOApp:
           throw new IllegalArgumentException(
             s"unknown build-tool '$other' (expected mill, sbt or scala-cli)"
           )
-      warnOnMeasuredPair(ctx, buildTool, measuredScala, measuredScalafix)
+      warnOnMeasuredPair(ctx, buildTool, measuredScala, measuredScalafix, pinned)
 
       SkillNames.foreach { name =>
-        write(s".dsh/skills/$name/SKILL.md", readKit(s"skills/$name/SKILL.md"))
+        writeVendored(s".dsh/skills/$name/SKILL.md", readKit(s"skills/$name/SKILL.md"))
       }
 
       val digest = readKit("digest.md").stripLineEnd
@@ -1161,25 +1290,71 @@ object Setup extends IOApp:
       * CLI loads the rule — and the installer leaves that pair intact rather than generalising half of it: rewriting
       * only the Scala version would install wiring whose artifacts do not resolve (measured: `scalafix-rules_3.9.0`
       * publishes 0.14.8 and 0.14.9, not the recipes' 0.14.7). When the project's own answer differs, the step says so
-      * loudly instead of installing something that cannot build.
+      * loudly instead of installing something that cannot build — and it says *which* install it is talking about:
+      * `pinned` is whether this run wrote the Scala-version literal the rule module compiles at.
       */
     private def warnOnMeasuredPair(
         ctx: SetupContext,
         buildTool: String,
         measuredScala: String,
-        measuredScalafix: String
+        measuredScalafix: String,
+        pinned: Boolean
     ): Unit =
       if ctx.finalScalaVersion != measuredScala then
         val location = buildTool match
           case "mill" => "`val scala3Version` in build.mill"
           case "sbt"  => "`ThisBuild / scalaVersion` in build.sbt"
           case _      => "`SCALA=` in allowed-shape.sh"
+        val remedy =
+          s"""  To build the rule for this project's own Scala version, raise the pair together: $location, and the scalafix version (ch.epfl.scala:scalafix-rules_${ctx.finalScalaVersion} for the build, ch.epfl.scala:scalafix-cli_${ctx.finalScalaVersion} for the CLI that loads it).
+             |  Check the coordinate on Maven Central first — Scala 3.9.0, for instance, has 0.14.8 and 0.14.9 but no $measuredScalafix.""".stripMargin
+        if pinned then
+          Console.err.println(
+            s"""
+               |⚠ scala-version = ${ctx.finalScalaVersion}, but the kit's rule wiring is measured against Scala $measuredScala with scalafix $measuredScalafix.
+               |  The wiring pins that measured pair deliberately — the two are published together — so what was just installed resolves and compiles as it stands.
+               |$remedy
+               |""".stripMargin
+          )
+        else
+          val depLiteral = s"scalafix-rules_${measuredScala}:${measuredScalafix}"
+          Console.err.println(
+            s"""
+               |⚠ scala-version = ${ctx.finalScalaVersion}, but the kit's rule wiring is measured against Scala $measuredScala with scalafix $measuredScalafix.
+               |  This project already declares its own Scala version, so the installer left that declaration alone: the rule module follows the project's Scala version ${ctx.finalScalaVersion}, while its dependency still says ch.epfl.scala:$depLiteral — and mill-scalafix resolves its CLI from the linted module's version (${ctx.finalScalaVersion}). This install therefore does NOT resolve and compile as it stands.
+               |  Change both literals together: the project's own Scala-version declaration, and the dependency literal `ch.epfl.scala:$depLiteral` in the marked `scalafixRules` block of build.mill (${ctx.finalScalaVersion} then resolves the CLI as ch.epfl.scala:scalafix-cli_${ctx.finalScalaVersion}:<same version>).
+               |  Check the coordinate on Maven Central first — Scala 3.9.0, for instance, has 0.14.8 and 0.14.9 but no $measuredScalafix.
+               |""".stripMargin
+          )
+
+    /** The sbt plugin line is the other measured literal: the recipe's `addSbtPlugin(… "sbt-scalafix" % "<version>")`
+      * is what the block planted in `build.sbt` was executed against, and an older plugin brings a different scalafix
+      * CLI. A target that already declares sbt-scalafix is therefore not "done" — when the declared version differs
+      * (or cannot be read), the step says which version is there, which one the wiring was measured with, and what to
+      * change.
+      */
+    private def warnOnDeclaredSbtPlugin(
+        plugins: String,
+        measuredPlugin: String,
+        measuredScala: String,
+        measuredScalafix: String
+    ): Unit =
+      val declared =
+        SbtPluginVersion.findAllMatchIn(plugins).map(_.group(1)).toList.distinct
+      if declared.isEmpty then
         Console.err.println(
           s"""
-             |⚠ scala-version = ${ctx.finalScalaVersion}, but the kit's rule wiring is measured against Scala $measuredScala with scalafix $measuredScalafix.
-             |  The wiring pins that measured pair deliberately — the two are published together — so what was just installed resolves and compiles as it stands.
-             |  To build the rule for this project's own Scala version, raise the pair together: $location, and the scalafix version (ch.epfl.scala:scalafix-rules_${ctx.finalScalaVersion} for the build, ch.epfl.scala:scalafix-cli_${ctx.finalScalaVersion} for the CLI that loads it).
-             |  Check the coordinate on Maven Central first — Scala 3.9.0, for instance, has 0.14.8 and 0.14.9 but no $measuredScalafix.
+             |⚠ project/plugins.sbt names sbt-scalafix, but the installer could not read a version literal from it, so it cannot tell whether the plugin matches the wiring it just wrote.
+             |  The sbt block planted in build.sbt (Scala $measuredScala, scalafix $measuredScalafix) was measured with sbt-scalafix $measuredPlugin; a different plugin version loads a different scalafix CLI.
+             |  Make sure the declared plugin is that one: addSbtPlugin("ch.epfl.scala" % "sbt-scalafix" % "$measuredPlugin").
+             |""".stripMargin
+        )
+      else if !declared.contains(measuredPlugin) then
+        Console.err.println(
+          s"""
+             |⚠ project/plugins.sbt declares sbt-scalafix ${declared.mkString(", ")}, but the kit's sbt wiring was measured with $measuredPlugin.
+             |  The block just planted in build.sbt (Scala $measuredScala, scalafix $measuredScalafix, the rule project and the per-module ScalafixConfig opt-in) was executed against sbt-scalafix $measuredPlugin; ${declared.mkString(", ")} loads a different scalafix CLI, so the wiring does not resolve as it stands.
+             |  Raise it: project/plugins.sbt — addSbtPlugin("ch.epfl.scala" % "sbt-scalafix" % "$measuredPlugin").
              |""".stripMargin
         )
 
