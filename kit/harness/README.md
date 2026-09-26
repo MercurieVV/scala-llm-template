@@ -39,10 +39,10 @@ The engine directory is **the same tree** in both places: `kit/harness/` in the 
 sh kit/harness/install.sh <project>      # run from a scala-llm-template checkout
 ```
 
-- **The target must be a git repository.** `Setup.scala`'s `kit` feature runs this script as its
-  `install-harness` step, but Setup's own `git init` (its `stage-git-changes` step) runs last — so on a
-  brand-new target directory the step reports `failed: install.sh exited 2: … not a git repository`. Remedy:
-  `git init <dir>` and re-run.
+- **The target must be a git repository** (exit `2` otherwise). `Setup.scala`'s `kit` feature runs this script as
+  its `install-harness` step and initialises git in a brand-new target first (stderr: `initialised git in <dir> for
+  the harness install`); its later `stage-git-changes` step skips `git init` when `.git` exists. Run by hand on a
+  plain directory: `git init <dir>` first.
 - **The engine is replaced wholesale**: built in a temporary directory beside the live one, the template-only
   paths and every `.DS_Store` stripped, stamped, then renamed into place. No merge, no stale file survives, and a
   copy that fails part-way leaves the previous `.dsh/engine/` untouched and complete.

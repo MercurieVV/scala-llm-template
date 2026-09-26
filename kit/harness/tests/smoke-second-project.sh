@@ -182,13 +182,12 @@ is "sbt: dirty Stop: the gate did not crash" no "$(yn hasF "$out" "$crashed")"
 is "sbt: dirty Stop names the stand-down" yes "$(yn hasF "$out" "$note")"
 
 # --- 12. Setup.scala end to end ----------------------------------------------------------------------------------
-# install-harness runs after install-kit and before any step that initialises git, so the fresh target is a
-# git repository first (Setup's own StageGitChanges is the last step).
+# The target is a fresh, NON-git directory: install-harness initialises git itself (Setup's StageGitChanges runs
+# last), so this proves Setup's default path.
 if [ "${SMOKE_SKIP_SETUP:-0}" = 1 ]; then
   skip "setup: install-harness completed (SMOKE_SKIP_SETUP=1)"
 else
   f=$(newdir); track "$f"
-  git -C "$f" init -q
   say "scala-cli run Setup.scala into $f (many minutes)"
   # Agent mode answers `need-input` (exit 2) until every question has an answer, so the rest are given their
   # defaults; scala-version is the recipe's measured 3.8.4 rather than Maven Central's latest.
@@ -199,6 +198,9 @@ else
   st=$(tr -d '\n' < "$bin/setup.json" | grep -o '"id" *: *"install-harness" *, *"status" *: *"[a-z]*"' | sed 's/.*"\([a-z]*\)"$/\1/')
   is "setup: install-harness completed" completed "$st"
   is "setup: .dsh/engine/STAMP" yes "$(yn test -f "$f/.dsh/engine/STAMP")"
+  is "setup: install-harness initialised git" yes "$(yn grep -q 'initialised git in' "$bin/setup.err")"
+  is "setup: .gitignore anchors /out/" yes "$(yn grep -qx '/out/' "$f/.gitignore")"
+  is "setup: no gitignored engine file" no "$(yn grep -q '^ignored  ' "$bin/setup.err")"
   if [ "$st" != completed ] || [ "$code" != 0 ]; then
     tail -20 "$bin/setup.err"; grep -o '"id" *: *"install-harness"[^}]*' "$bin/setup.json"
     grep -q '"need-input"' "$bin/setup.json" && printf '# setup still needs: %s\n' "$(grep -o '"id":"[^"]*"' "$bin/setup.json" | tr '\n' ' ')"

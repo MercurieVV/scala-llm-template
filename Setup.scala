@@ -1463,8 +1463,9 @@ object Setup extends IOApp:
   /** The harness engine (spec 2026-09-26): `kit/harness/install.sh` vendors it
     * into `<target>/.dsh/engine/` and seeds the project's gate state. Mill only
     * — the engine's checks run Mill tasks by name — so any other build tool is
-    * a named skip, never a silent one. The step's status is install.sh's exit
-    * status.
+    * a named skip, never a silent one. A target without `.git` is initialised
+    * first (named on stderr), since install.sh refuses a non-repository. The
+    * step's status is install.sh's exit status.
     */
   private object InstallHarness extends SetupStep:
     val id = "install-harness"
@@ -1483,28 +1484,52 @@ object Setup extends IOApp:
               "kit sources not found: run Setup.scala from a scala-llm-template checkout"
             )
           case Some(kit) =>
-            val r = os
-              .proc(
-                "sh",
-                (kit / "harness" / "install.sh").toString,
-                ctx.targetDir.toString
-              )
-              .call(check = false, mergeErrIntoOut = true)
-            val out = r.out.text()
-            Console.err.print(out)
-            if r.exitCode == 0 then
-              StepResult(
-                id,
-                "completed",
-                "vendored the harness engine into .dsh/engine",
-                List((ctx.targetDir / ".dsh" / "engine").toString)
-              )
-            else
-              StepResult(
-                id,
-                "failed",
-                s"install.sh exited ${r.exitCode}: ${out.linesIterator.toList.lastOption.getOrElse("")}"
-              )
+            // install.sh needs a git repository, and StageGitChanges (the only
+            // other `git init`) runs last; it skips an existing .git.
+            val gitInit =
+              if os.exists(ctx.targetDir / ".git") then None
+              else
+                val g = os
+                  .proc("git", "init", "-q")
+                  .call(
+                    cwd = ctx.targetDir,
+                    check = false,
+                    mergeErrIntoOut = true
+                  )
+                if g.exitCode == 0 then
+                  Console.err.println(
+                    s"initialised git in ${ctx.targetDir} for the harness install"
+                  )
+                  None
+                else
+                  Some(s"git init exited ${g.exitCode}: ${g.out.text().trim}")
+            gitInit match
+              case Some(err) => StepResult(id, "failed", err)
+              case None      => runInstall(ctx, kit)
+
+    private def runInstall(ctx: SetupContext, kit: os.Path): StepResult =
+      val r = os
+        .proc(
+          "sh",
+          (kit / "harness" / "install.sh").toString,
+          ctx.targetDir.toString
+        )
+        .call(check = false, mergeErrIntoOut = true)
+      val out = r.out.text()
+      Console.err.print(out)
+      if r.exitCode == 0 then
+        StepResult(
+          id,
+          "completed",
+          "vendored the harness engine into .dsh/engine",
+          List((ctx.targetDir / ".dsh" / "engine").toString)
+        )
+      else
+        StepResult(
+          id,
+          "failed",
+          s"install.sh exited ${r.exitCode}: ${out.linesIterator.toList.lastOption.getOrElse("")}"
+        )
 
   private object FormatProject extends SetupStep:
     val id = "format-project"

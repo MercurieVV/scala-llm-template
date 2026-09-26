@@ -114,9 +114,10 @@ engine later:
 sh kit/harness/install.sh <target-dir>
 ```
 
-- **The target must already be a git repository.** Setup's own `git init` is its last step, after
-  `install-harness`, so on a brand-new target directory that step reports
-  `failed: install.sh exited 2: … not a git repository`. Remedy: `git init <target-dir>` and re-run.
+- **Setup initialises git if needed.** Its `install-harness` step runs `git init` in a target that has no `.git`
+  (stderr: `initialised git in <dir> for the harness install`); the later `stage-git-changes` step skips its own
+  init when `.git` exists. By hand, `install.sh` still needs a git repository (exit `2` otherwise): `git init
+  <target-dir>` first.
 - It replaces `.dsh/engine/` wholesale, writes `.dsh/engine/STAMP`, and seeds `.dsh/contract`, `frozen-paths`,
   `hooks.json`, `cc-settings.json`, `policy/*.tsv` and `instructions/{local,scalac-kinds}.tsv` **only where
   absent** — one `seeded` / `kept` / `replaced` line per file. Exit codes are in the README.
