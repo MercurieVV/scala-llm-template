@@ -20,6 +20,20 @@ is "fresh_install_seeds: no seed/ inside the engine" no "$([ -e "$p/.dsh/engine/
 is "fresh_install_seeds: verdict" ok "$(dsh_engine_stamp_verdict "$p/.dsh/engine")"
 is "fresh_install_seeds: says seeded" yes "$(printf '%s\n' "$out" | grep -q '^seeded .*contract' && echo yes || echo no)"
 
+# vendored_engine_is_runtime_only: the template-only files (seed/, install.sh, its test) never land in a
+# project -- a vendored install-test.sh would call a vendored install.sh, which refuses (exit 5).
+for f in install.sh tests/install-test.sh seed; do
+  is "vendored_engine_is_runtime_only: no $f" no "$([ -e "$p/.dsh/engine/$f" ] && echo yes || echo no)"
+done
+is "vendored_engine_is_runtime_only: verdict" ok "$(dsh_engine_stamp_verdict "$p/.dsh/engine")"
+
+# template_ahead_compare_matches_fresh_vendor: group G's "moved ahead" comparison shapes the template the
+# way install.sh does (both read dsh_engine_template_only), so a fresh vendor of this very tree compares
+# equal. Tested on dsh_engine_template_hash, the function G calls, rather than through a full
+# check-harness run, which costs ~4 minutes (it runs run.sh and every suite).
+is "template_ahead_compare_matches_fresh_vendor: template hash = STAMP tree" \
+  "$(dsh_engine_stamp_field "$p/.dsh/engine" tree)" "$(dsh_engine_template_hash "$engine")"
+
 # reinstall_keeps_state: tuned state survives byte-for-byte; the engine is replaced.
 printf 'roots = src\n' >> "$p/.dsh/contract"; before=$(dsh_file_hash "$p/.dsh/contract")
 printf 'junk\n' > "$p/.dsh/engine/stale-file"
@@ -63,8 +77,10 @@ is "failed_copy_keeps_old_engine: STAMP unchanged" "$v_before" "$(dsh_file_hash 
 is "failed_copy_keeps_old_engine: verdict" ok "$(dsh_engine_stamp_verdict "$p2/.dsh/engine")"
 is "failed_copy_keeps_old_engine: no temp dirs left" "" "$(ls -a "$p2/.dsh" | grep '^\.engine\.' || true)"
 
-# vendored_install_refused: a vendored engine ships install.sh but is not a template checkout; it must
-# refuse before writing anything into the target.
+# vendored_install_refused: a vendored engine no longer carries install.sh (see
+# vendored_engine_is_runtime_only), but a copy that somehow does is still not a template checkout; it must
+# refuse before writing anything into the target. The copy is planted by hand to simulate that.
+cp "$engine/install.sh" "$p/.dsh/engine/install.sh"
 q=$(scratch)
 sh "$p/.dsh/engine/install.sh" "$q" >/dev/null 2>&1; code=$?
 is "vendored_install_refused: exit" 5 "$code"

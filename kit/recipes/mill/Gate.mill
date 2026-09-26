@@ -57,7 +57,7 @@ trait GateLayer extends ScalafixModule {
 
   /** Applies only the scalafix patches whose every text edit lies inside one of the given line ranges
     * (spec 2026-09-25-purrism-loop-and-memorisation-design §2). `rangesFile` holds `path TAB startLine
-    * TAB endLine` rows — root-relative path, 0-based, end-exclusive, the format `.dsh/lib.sh`'s
+    * TAB endLine` rows — root-relative path, 0-based, end-exclusive, the format `.dsh/engine/lib.sh`'s
     * `dsh_diff_ranges` writes. Code the agent did not write is never rewritten without review: a patch
     * with any edit outside the ranges is left alone, and an atomic patch that reaches outside is skipped
     * whole rather than split. Prints `fixRanges: applied N` last; exits 0 only when every range was

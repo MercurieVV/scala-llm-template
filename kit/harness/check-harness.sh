@@ -992,10 +992,9 @@ if dsh_is_vendored_engine "$engine" "$repo"; then
   esac
   [ "$(dsh_engine_stamp_field "$engine" dirty)" = 1 ] && note "the engine was vendored from an uncommitted template (STAMP dirty=1)"
   if [ -n "${SCALA_LLM_TEMPLATE:-}" ] && [ -d "$SCALA_LLM_TEMPLATE/kit/harness" ]; then
-    th=$(dsh_engine_tree_hash "$SCALA_LLM_TEMPLATE/kit/harness")
-    # The template's tree includes seed/ and has no STAMP; hash a vendored-shaped copy to compare like for like.
-    tmpv=$(mktemp -d) && cp -R "$SCALA_LLM_TEMPLATE/kit/harness/." "$tmpv/" && rm -rf "$tmpv/seed" \
-      && th=$(dsh_engine_tree_hash "$tmpv"); rm -rf "$tmpv"
+    # The template's tree carries the template-only paths (dsh_engine_template_only) and no STAMP; hash
+    # a vendored-shaped copy, exactly as install.sh would build it, to compare like for like.
+    th=$(dsh_engine_template_hash "$SCALA_LLM_TEMPLATE/kit/harness")
     [ "$th" = "$(dsh_engine_stamp_field "$engine" tree)" ] || note "the template at \$SCALA_LLM_TEMPLATE has moved ahead of the vendored engine -- re-run its install.sh to take it"
   fi
 else

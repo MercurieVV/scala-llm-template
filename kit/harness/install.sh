@@ -37,7 +37,8 @@ fail() { printf 'install: %s -- the live .dsh/engine is untouched\n' "$1" >&2; e
 mkdir "$new" || fail "cannot create $new"
 cp -R "$src/." "$new/" || fail "copy into $new failed"
 [ -n "${DSH_INSTALL_FAIL_COPY:-}" ] && fail "copy failed (DSH_INSTALL_FAIL_COPY test seam)"
-rm -rf "$new/seed" "$new/STAMP"
+dsh_engine_template_only | while IFS= read -r rel; do rm -rf "${new:?}/$rel"; done
+rm -f "$new/STAMP"
 find "$new" -name .DS_Store -type f -exec rm -f {} + 2>/dev/null
 printf 'template=%s\ndirty=%s\ntree=%s\n' "$sha" "$dirty" "$(dsh_engine_tree_hash "$new")" > "$new/STAMP" || fail "cannot write STAMP"
 
