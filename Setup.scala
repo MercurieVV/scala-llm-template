@@ -485,7 +485,7 @@ object Setup extends IOApp:
       if !os.exists(gitignore) then
         os.write(
           gitignore,
-          "out/\n.bsp/\n.metals/\n.vscode/\n.idea/\n.DS_Store\n"
+          "/out/\n/.dsh/.state/\n/.scala-semantic/\n.bsp/\n.metals/\n.vscode/\n.idea/\n.DS_Store\n"
         )
         files = files :+ gitignore.toString
 

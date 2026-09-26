@@ -2,7 +2,8 @@
 # Vendor this engine into <project>/.dsh/engine/ and seed the project's gate state (spec 2026-09-26 §2).
 #   sh kit/harness/install.sh <project>
 # The engine is replaced wholesale (built beside the live copy, then renamed in); project state is seeded
-# only where absent and never overwritten. One line per file: seeded | kept | replaced.
+# only where absent and never overwritten. One line per file: seeded | kept | replaced, then `ignored` for each
+# vendored engine file the project's .gitignore would drop from a commit (exit stays 0; a remedy line on stderr).
 # Exit 0 installed; 1 usage or not a directory; 2 not a git repository; 3 no sha256 tool; 4 copy failed;
 # 5 not run from a template checkout (a vendored .dsh/engine/install.sh has no seed/ and would re-stamp
 # an engine edited in place as `ok`, so it refuses before any write).
@@ -59,4 +60,15 @@ for rel in contract frozen-paths hooks.json cc-settings.json policy/allowed-type
     printf 'seeded   .dsh/%s\n' "$rel"
   fi
 done
+
+# A vendored engine file the project's .gitignore matches (an unanchored `out/` matches the fixture trees under
+# tests/cases/*/root/out/) is dropped on commit, and every clone's stamp then reads as edited in place. The install
+# itself succeeded, so the exit stays 0 -- but each such file is named, with the rule and the remedy, never silently.
+ign=$(cd "$dst" && find .dsh/engine -type f | git check-ignore --stdin 2>/dev/null)
+if [ -n "$ign" ]; then
+  printf '%s\n' "$ign" | sed 's/^/ignored  /'
+  rules=$(printf '%s\n' "$ign" | (cd "$dst" && git check-ignore -v --stdin 2>/dev/null) | cut -f1 | sort -u | tr '\n' ' ')
+  printf 'install: %s vendored engine file(s) are gitignored (by %s) -- a commit would drop them and a clone would report the engine edited in place; anchor the rule (e.g. /out/) or add `!/.dsh/engine/**` after it in .gitignore\n' \
+    "$(printf '%s\n' "$ign" | wc -l | tr -d ' ')" "${rules% }" >&2
+fi
 exit 0

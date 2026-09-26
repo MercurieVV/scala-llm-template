@@ -19,6 +19,30 @@ is "fresh_install_seeds: engine gate" yes "$([ -f "$p/.dsh/engine/gate.sh" ] && 
 is "fresh_install_seeds: no seed/ inside the engine" no "$([ -e "$p/.dsh/engine/seed" ] && echo yes || echo no)"
 is "fresh_install_seeds: verdict" ok "$(dsh_engine_stamp_verdict "$p/.dsh/engine")"
 is "fresh_install_seeds: says seeded" yes "$(printf '%s\n' "$out" | grep -q '^seeded .*contract' && echo yes || echo no)"
+is "fresh_install_seeds: no ignored lines without a .gitignore" 0 "$(printf '%s\n' "$out" | grep -c '^ignored ')"
+
+# gitignored_engine_files_are_named: an unanchored `out/` also matches the engine's fixture trees
+# (.dsh/engine/tests/cases/*/root/out/...); a commit would drop those files and every clone would report the
+# engine edited in place. install still succeeds (exit 0) but names each such file and the remedy.
+g=$(scratch); printf 'out/\n' > "$g/.gitignore"
+out=$(sh "$engine/install.sh" "$g" 2>&1); code=$?
+is "gitignored_engine_files_are_named: exit" 0 "$code"
+is "gitignored_engine_files_are_named: ignored lines" yes "$(printf '%s\n' "$out" | grep -Eq '^ignored  \.dsh/engine/.*/out/' && echo yes || echo no)"
+is "gitignored_engine_files_are_named: one line per ignored file" \
+  "$(cd "$g" && find .dsh/engine -type f | git check-ignore --stdin | wc -l | tr -d ' ')" "$(printf '%s\n' "$out" | grep -c '^ignored  ')"
+is "gitignored_engine_files_are_named: remedy names the negation" yes "$(printf '%s\n' "$out" | grep -q '!/\.dsh/engine/\*\*' && echo yes || echo no)"
+is "gitignored_engine_files_are_named: remedy names the pattern" yes "$(printf '%s\n' "$out" | grep -v '^ignored ' | grep -q 'out/' && echo yes || echo no)"
+printf '!/.dsh/engine/**\n' >> "$g/.gitignore"
+is "gitignored_engine_files_are_named: the named negation clears it" 0 "$(sh "$engine/install.sh" "$g" 2>&1 | grep -c '^ignored ')"
+
+# committed_clone_keeps_stamp: a fresh install, committed and cloned, still verifies -- no engine file was
+# lost to a .gitignore. The .gitignore is the anchored shape Setup.scala writes.
+c=$(scratch); printf '/out/\n/.dsh/.state/\n/.scala-semantic/\n.bsp/\n.metals/\n.DS_Store\n' > "$c/.gitignore"
+out=$(sh "$engine/install.sh" "$c" 2>&1)
+is "committed_clone_keeps_stamp: no ignored lines" 0 "$(printf '%s\n' "$out" | grep -c '^ignored ')"
+git -C "$c" add -A && git -C "$c" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -qm install
+cl=$(mktemp -d); git clone -q "$c" "$cl/clone"
+is "committed_clone_keeps_stamp: clone verdict" ok "$(dsh_engine_stamp_verdict "$cl/clone/.dsh/engine")"
 
 # vendored_engine_is_runtime_only: the template-only files (seed/, install.sh, its test, the second-project
 # smoke) never land in a project -- a vendored install-test.sh would call a vendored install.sh, which refuses

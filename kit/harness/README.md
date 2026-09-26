@@ -50,6 +50,13 @@ sh kit/harness/install.sh <project>      # run from a scala-llm-template checkou
   `frozen-paths` (containing `.dsh/engine/**`), `hooks.json`, `cc-settings.json`, `policy/allowed-types.tsv`,
   `policy/memorisation.tsv`, `instructions/local.tsv`, `instructions/scalac-kinds.tsv`. One line per file:
   `seeded`, `kept`, or `replaced` (the engine only).
+- **A gitignored engine file is named, never dropped silently.** After the swap, any vendored engine file the
+  project's `.gitignore` matches is listed as `ignored  .dsh/engine/<path>`, followed by one remedy line on stderr
+  naming the matching rule(s) — anchor it (an unanchored `out/` also matches the fixture trees under
+  `tests/cases/*/root/out/`; write `/out/`) or add `!/.dsh/engine/**` after it. The exit stays `0` (the install
+  itself succeeded), but a commit would drop those files and every clone's `STAMP` check (group G) would report
+  the engine edited in place. `Setup.scala` writes an anchored `.gitignore` (`/out/`, `/.dsh/.state/`,
+  `/.scala-semantic/`, …) for this reason.
 - **`.claude/settings.json` is the human's step.** The installer seeds `.dsh/cc-settings.json`, the Claude Code
   wiring template; the human copies it to `.claude/settings.json` (`cp .dsh/cc-settings.json
   .claude/settings.json`, after merging anything already there). No script writes that file.
