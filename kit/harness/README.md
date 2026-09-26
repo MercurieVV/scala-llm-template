@@ -25,7 +25,8 @@ The engine directory is **the same tree** in both places: `kit/harness/` in the 
 - **The split rule:** what the engine reads at a fixed path under `.dsh/` is project state; everything
   executable is engine. `instructions/purrism.tsv` is project state — its version follows the project's purrism
   dependency.
-- **Template-only paths** — `seed`, `install.sh`, `tests/install-test.sh` (lib.sh's `dsh_engine_template_only`,
+- **Template-only paths** — `seed`, `install.sh`, `tests/install-test.sh`, `tests/smoke-second-project.sh` (lib.sh's
+  `dsh_engine_template_only`,
   the one list both `install.sh` and check-harness group G read) — are part of `kit/harness/` but never of a
   vendored engine. A vendored engine therefore has no `install.sh`: to update one, re-run `install.sh` from a
   scala-llm-template checkout.
@@ -61,7 +62,7 @@ Exit codes:
 | `1` | usage, or the target is not a directory |
 | `2` | the target is not a git repository |
 | `3` | no sha256 tool (`shasum` or `sha256sum`) — the stamp cannot be written |
-| `4` | the copy, the rename, the STAMP or a seed failed — the live `.dsh/engine` is untouched |
+| `4` | the copy, the rename or the STAMP failed — the live `.dsh/engine` is untouched; **or** a seed failed — seeding runs after the swap, so the engine is already replaced and project state is partly seeded: fix the cause and re-run `install.sh` from a scala-llm-template checkout to finish seeding (seeds already present are kept) |
 | `5` | not run from a scala-llm-template checkout (it must be `<toplevel>/kit/harness` and carry `seed/`); refused before any write, so a vendored copy can never re-stamp an engine edited in place as `ok` |
 
 **`STAMP`**, three `key=value` lines written into `.dsh/engine/STAMP`:
@@ -134,7 +135,10 @@ only. A contract without `holdout` is legal but weaker, and check-harness says s
 
 ## The Mill interface
 
-The engine runs these Mill tasks **by name** — they are an interface, not contract keys:
+The Mill interface is seven task names — an interface, not contract keys. The engine's hooks and scripts run the
+first four by name; `preCommit`, `prePush` and `scalaSemanticWriteClasspath` are the project's declared gate
+tasks, run by a human, a git hook or the contract's command lines — no hook runs them (see
+[Running the engine's checks](#running-the-engines-checks)):
 
 | task | run by |
 |---|---|
@@ -142,9 +146,9 @@ The engine runs these Mill tasks **by name** — they are an interface, not cont
 | `<module>.fixRanges --rangesFile <path>` | turn-end's rewrite stage |
 | `<module>.fixStrict` | post-edit, turn-end |
 | `<module>.compile` | post-edit, turn-end |
-| `preCommit` | the project's commit gate |
-| `prePush` | the project's push gate |
-| `scalaSemanticWriteClasspath` | the human, to write `.scala-semantic/classpath-mill.json` for ScalaSemanticMCP |
+| `preCommit` | not the engine: the project's commit gate (a human, a git hook) |
+| `prePush` | not the engine: the project's push gate (a human, a git hook); `tool-policy` runs `verify-diff.sh --staged` before it |
+| `scalaSemanticWriteClasspath` | not the engine: the human, to write `.scala-semantic/classpath-mill.json` for ScalaSemanticMCP |
 
 They ship as `kit/recipes/mill/Gate.mill` (`trait GateLayer` with `fixStrict` and `fixRanges`; `object Gate` with
 `moduleMapRows` and `ClasspathMetadata`) plus the root-task fragments in **`kit/recipes/mill.md` §7**. Three
@@ -158,7 +162,8 @@ things §7 records because Mill measured them:
 - a single Mill invocation of several tasks separates them with `+` (`./mill a.compile + b.compile`).
 
 `kit/harness/tests/smoke-second-project.sh` assembles a scratch project from §7's own text and gates it end to end.
-It is **machine-specific** and deliberately not a `*-test.sh` suite: it needs a global `mill` (1.1.8, which the
+It is **template-only** (never vendored: it needs the template's `install.sh` and `kit/recipes/mill.md`) and
+**machine-specific** and deliberately not a `*-test.sh` suite: it needs a global `mill` (1.1.8, which the
 recipe's wrapper execs), the network for coursier, scala-cli, and it copies the Mill wrapper from a local skreeep2
 checkout at a fixed path (falling back to a plain `exec mill` wrapper, and saying so, when that checkout is absent).
 
@@ -680,10 +685,11 @@ sh kit/harness/tests/module-map-test.sh      # which Mill module owns a path, an
 sh kit/harness/tests/health-test.sh          # the health probe's verdict and its lines (the non-Mill notes are run.sh cases)
 sh kit/harness/tests/vocabulary-test.sh      # payload shapes: both dialects' tool names and field spellings
 sh kit/harness/tests/frozen-mutations.sh     # every frozen-path rule removed on a copy — its fixtures must go red
-sh kit/harness/tests/smoke-second-project.sh # machine-specific end-to-end smoke (see The Mill interface)
+sh kit/harness/tests/smoke-second-project.sh # machine-specific end-to-end smoke (template-only: never vendored)
 ```
 
-In a project, the same suites run from the vendored copy under `.dsh/engine/tests/`, and
+In a project, the same suites — all but the two template-only ones, `install-test.sh` and
+`smoke-second-project.sh` — run from the vendored copy under `.dsh/engine/tests/`, and
 `sh .dsh/engine/check-harness.sh --project .` runs them together with the project's own suites (`.dsh/tests/`,
 e.g. `wiring-test.sh`, and `committed-tree-test.sh` under `--full`). Its groups: **A** the profile is materialized
 and composes; **B** `hooks.json` parses, names this gate and dispatches every subcommand it wires; **C** the

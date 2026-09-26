@@ -20,9 +20,10 @@ is "fresh_install_seeds: no seed/ inside the engine" no "$([ -e "$p/.dsh/engine/
 is "fresh_install_seeds: verdict" ok "$(dsh_engine_stamp_verdict "$p/.dsh/engine")"
 is "fresh_install_seeds: says seeded" yes "$(printf '%s\n' "$out" | grep -q '^seeded .*contract' && echo yes || echo no)"
 
-# vendored_engine_is_runtime_only: the template-only files (seed/, install.sh, its test) never land in a
-# project -- a vendored install-test.sh would call a vendored install.sh, which refuses (exit 5).
-for f in install.sh tests/install-test.sh seed; do
+# vendored_engine_is_runtime_only: the template-only files (seed/, install.sh, its test, the second-project
+# smoke) never land in a project -- a vendored install-test.sh would call a vendored install.sh, which refuses
+# (exit 5), and the smoke needs the template's install.sh and kit/recipes/mill.md.
+for f in install.sh tests/install-test.sh tests/smoke-second-project.sh seed; do
   is "vendored_engine_is_runtime_only: no $f" no "$([ -e "$p/.dsh/engine/$f" ] && echo yes || echo no)"
 done
 is "vendored_engine_is_runtime_only: verdict" ok "$(dsh_engine_stamp_verdict "$p/.dsh/engine")"

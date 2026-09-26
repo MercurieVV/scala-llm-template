@@ -124,8 +124,10 @@ sh kit/harness/install.sh <target-dir>
   by the human (merging anything already there); no installer and no agent writes it.
 - **Add recipe §7's root tasks.** Copy `kit/recipes/mill/Gate.mill` to `buildKit/Gate.mill`, mix `GateLayer`
   into every module scalafix checks, and add the root tasks from `kit/recipes/mill.md` §7 (`preCommit`,
-  `prePush`, `moduleMap`, `scalaSemanticWriteClasspath`) over the project's own module lists. The engine calls
-  those task names; without them its checks fail by name.
+  `prePush`, `moduleMap`, `scalaSemanticWriteClasspath`) over the project's own module lists. The engine's hooks run
+  `moduleMap`, `<module>.fixRanges`, `<module>.fixStrict` and `<module>.compile` by name, and fail by name without
+  them; `preCommit`, `prePush` and `scalaSemanticWriteClasspath` are the project's declared gate tasks, run by a
+  human, a git hook or the contract — no hook runs them.
 
 **Stop condition:** `sh .dsh/engine/check-harness.sh --project .` reports
 `ok   vendored engine matches its STAMP`, every other FAIL it prints is written into step 3's baseline with its

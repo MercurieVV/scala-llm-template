@@ -353,8 +353,9 @@ dsh_engine_tree_hash() {
 # The template-only paths (spec 2026-09-26 §2, fix round 2): part of scala-llm-template's kit/harness but
 # never of a vendored engine. install.sh strips them from the copy it vendors, and check-harness group G
 # strips them from the template before comparing -- one list, so the two cannot drift apart. A vendored
-# tests/install-test.sh would call a vendored install.sh, which refuses to run (exit 5).
-dsh_engine_template_only() { printf '%s\n' seed install.sh tests/install-test.sh; }
+# tests/install-test.sh would call a vendored install.sh, which refuses to run (exit 5); the second-project
+# smoke needs the template's install.sh and kit/recipes/mill.md, so it cannot run from a vendored copy either.
+dsh_engine_template_only() { printf '%s\n' seed install.sh tests/install-test.sh tests/smoke-second-project.sh; }
 
 # The tree hash a fresh vendor of <template kit/harness dir> would stamp: a copy with the template-only
 # paths removed, hashed like dsh_engine_tree_hash. `-` when there is no hasher or the copy fails.
