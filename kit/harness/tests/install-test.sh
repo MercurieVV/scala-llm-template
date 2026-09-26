@@ -63,6 +63,20 @@ is "failed_copy_keeps_old_engine: STAMP unchanged" "$v_before" "$(dsh_file_hash 
 is "failed_copy_keeps_old_engine: verdict" ok "$(dsh_engine_stamp_verdict "$p2/.dsh/engine")"
 is "failed_copy_keeps_old_engine: no temp dirs left" "" "$(ls -a "$p2/.dsh" | grep '^\.engine\.' || true)"
 
+# vendored_install_refused: a vendored engine ships install.sh but is not a template checkout; it must
+# refuse before writing anything into the target.
+q=$(scratch)
+sh "$p/.dsh/engine/install.sh" "$q" >/dev/null 2>&1; code=$?
+is "vendored_install_refused: exit" 5 "$code"
+is "vendored_install_refused: nothing written" no "$([ -e "$q/.dsh" ] && echo yes || echo no)"
+
+# vendored_reinstall_cannot_restamp: re-running the vendored copy over its own project cannot turn an
+# in-place edit back into `ok`.
+printf '\n' >> "$p/.dsh/engine/lib.sh"
+sh "$p/.dsh/engine/install.sh" "$p" >/dev/null 2>&1; code=$?
+is "vendored_reinstall_cannot_restamp: exit" 5 "$code"
+is "vendored_reinstall_cannot_restamp: verdict" mismatch "$(dsh_engine_stamp_verdict "$p/.dsh/engine")"
+
 # vendored_detection
 is "vendored_detection: vendored" 0 "$(dsh_is_vendored_engine "$p/.dsh/engine" "$p"; echo $?)"
 is "vendored_detection: source tree" 1 "$(dsh_is_vendored_engine "$engine" "$p"; echo $?)"

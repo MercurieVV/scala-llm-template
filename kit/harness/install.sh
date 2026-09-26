@@ -3,7 +3,9 @@
 #   sh kit/harness/install.sh <project>
 # The engine is replaced wholesale (built beside the live copy, then renamed in); project state is seeded
 # only where absent and never overwritten. One line per file: seeded | kept | replaced.
-# Exit 0 installed; 1 usage or not a directory; 2 not a git repository; 3 no sha256 tool; 4 copy failed.
+# Exit 0 installed; 1 usage or not a directory; 2 not a git repository; 3 no sha256 tool; 4 copy failed;
+# 5 not run from a template checkout (a vendored .dsh/engine/install.sh has no seed/ and would re-stamp
+# an engine edited in place as `ok`, so it refuses before any write).
 set -u
 src=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 . "$src/lib.sh"
@@ -17,6 +19,15 @@ sha=unknown; dirty=0
 if [ -n "$tpl" ]; then
   sha=$(git -C "$tpl" rev-parse HEAD 2>/dev/null) || sha=unknown
   [ -n "$(git -C "$tpl" status --porcelain -- "$src" 2>/dev/null)" ] && dirty=1
+fi
+
+# Only scala-llm-template's own kit/harness may install: it carries seed/, and it is <toplevel>/kit/harness.
+tplh=""
+[ -n "$tpl" ] && tplh=$(CDPATH= cd -P -- "$tpl/kit/harness" 2>/dev/null && pwd)
+srcp=$(CDPATH= cd -P -- "$src" && pwd)
+if [ ! -d "$src/seed" ] || [ -z "$tplh" ] || [ "$tplh" != "$srcp" ]; then
+  printf "install: %s is not scala-llm-template's kit/harness (a vendored engine cannot install itself) -- run install.sh from a scala-llm-template checkout\n" "$src" >&2
+  exit 5
 fi
 
 mkdir -p "$dst/.dsh" || exit 4

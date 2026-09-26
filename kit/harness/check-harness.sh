@@ -986,8 +986,8 @@ fi
 if dsh_is_vendored_engine "$engine" "$repo"; then
   case $(dsh_engine_stamp_verdict "$engine") in
     ok)       ok "vendored engine matches its STAMP (template $(dsh_engine_stamp_field "$engine" template))" ;;
-    missing)  bad "$engine/STAMP is missing -- re-run sh <scala-llm-template>/kit/harness/install.sh $repo" ;;
-    mismatch) bad "vendored engine edited in place; edit in scala-llm-template/kit/harness and re-run install.sh" ;;
+    missing)  bad "$engine/STAMP is missing -- re-run install.sh from a scala-llm-template checkout: sh <scala-llm-template>/kit/harness/install.sh $repo" ;;
+    mismatch) bad "vendored engine edited in place; edit in scala-llm-template/kit/harness and re-run install.sh from a scala-llm-template checkout" ;;
     nohasher) bad "no sha256 tool (shasum or sha256sum): the vendored engine cannot be compared with its STAMP" ;;
   esac
   [ "$(dsh_engine_stamp_field "$engine" dirty)" = 1 ] && note "the engine was vendored from an uncommitted template (STAMP dirty=1)"
