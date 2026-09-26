@@ -54,7 +54,9 @@ object Setup extends IOApp:
     def id: String
     def run(ctx: SetupContext): StepResult
 
-  /** One fenced code block of a recipe: the language it is tagged with, and its body without the fences. */
+  /** One fenced code block of a recipe: the language it is tagged with, and its
+    * body without the fences.
+    */
   private final case class CodeBlock(lang: String, body: String)
 
   def getFeaturesList(defaultScalaVersion: String): List[Feature] = List(
@@ -660,22 +662,28 @@ object Setup extends IOApp:
         List(scriptsDir.toString)
       )
 
-  /** The pure text half of the kit install: recipe-block extraction, the marked block, the Mill build patch and the
-    * version facts a recipe pins. It holds no filesystem state and never sees a `SetupContext` — `InstallKit`
-    * decides what to write and where.
+  /** The pure text half of the kit install: recipe-block extraction, the marked
+    * block, the Mill build patch and the version facts a recipe pins. It holds
+    * no filesystem state and never sees a `SetupContext` — `InstallKit` decides
+    * what to write and where.
     */
   private object KitText:
-    /** Stable markers: a second run replaces the marked block rather than appending a second copy. */
+    /** Stable markers: a second run replaces the marked block rather than
+      * appending a second copy.
+      */
     val MarkdownBegin = "<!-- reengineering-kit:begin -->"
-    val MarkdownEnd   = "<!-- reengineering-kit:end -->"
-    val CodeBegin     = "// >>> reengineering-kit:begin"
-    val CodeEnd       = "// <<< reengineering-kit:end"
+    val MarkdownEnd = "<!-- reengineering-kit:end -->"
+    val CodeBegin = "// >>> reengineering-kit:begin"
+    val CodeEnd = "// <<< reengineering-kit:end"
 
-    /** Says out loud what the markers do: only the block itself is replaced, so wiring moved out of it comes back. */
+    /** Says out loud what the markers do: only the block itself is replaced, so
+      * wiring moved out of it comes back.
+      */
     val BlockNote =
       "// Written and replaced by Setup.scala: wiring moved out of this block is re-added on the next run."
 
-    /** Reads the fenced code blocks out of a recipe, in the order they appear. */
+    /** Reads the fenced code blocks out of a recipe, in the order they appear.
+      */
     def codeBlocks(markdown: String): List[CodeBlock] =
       var lang: Option[String] = None
       var buffer = List.empty[String]
@@ -692,8 +700,9 @@ object Setup extends IOApp:
       }
       blocks.reverse
 
-    /** The one fenced block of `recipe` tagged `lang` and containing `anchor`. A drifted recipe fails loudly here,
-      * with the anchor and the recipe named, instead of installing half a wiring.
+    /** The one fenced block of `recipe` tagged `lang` and containing `anchor`.
+      * A drifted recipe fails loudly here, with the anchor and the recipe
+      * named, instead of installing half a wiring.
       */
     def block(
         blocks: List[CodeBlock],
@@ -710,11 +719,17 @@ object Setup extends IOApp:
           )
         )
 
-    /** The version a recipe pins, read out of the block that carries it. A pattern that no longer matches is an
-      * error naming the recipe and the pattern, for the same reason an anchor is: silently not knowing which pair
-      * the wiring was measured against is how a wording change turns into a wrong install.
+    /** The version a recipe pins, read out of the block that carries it. A
+      * pattern that no longer matches is an error naming the recipe and the
+      * pattern, for the same reason an anchor is: silently not knowing which
+      * pair the wiring was measured against is how a wording change turns into
+      * a wrong install.
       */
-    def versionIn(block: String, pattern: scala.util.matching.Regex, recipe: String): String =
+    def versionIn(
+        block: String,
+        pattern: scala.util.matching.Regex,
+        recipe: String
+    ): String =
       pattern
         .findFirstMatchIn(block)
         .map(_.group(1))
@@ -724,8 +739,9 @@ object Setup extends IOApp:
           )
         )
 
-    /** The per-module half of a recipe is the project's own decision (R-10), so its example is installed commented,
-      * beside the mechanism it configures, instead of guessing module names.
+    /** The per-module half of a recipe is the project's own decision (R-10), so
+      * its example is installed commented, beside the mechanism it configures,
+      * instead of guessing module names.
       */
     def asTemplate(title: String, block: String): String =
       s"// $title\n" + block.linesIterator
@@ -742,8 +758,8 @@ object Setup extends IOApp:
     def plantCodeBlock(existing: String, body: String): String =
       replaceOrAppend(existing, CodeBegin, CodeEnd, markCode(body))
 
-    /** Plants `block` between the markers, replacing the marked span when the file already carries one, so a second
-      * run never appends a second copy.
+    /** Plants `block` between the markers, replacing the marked span when the
+      * file already carries one, so a second run never appends a second copy.
       */
     def replaceOrAppend(
         existing: String,
@@ -762,7 +778,9 @@ object Setup extends IOApp:
           val tail = existing.substring(close + end.length).dropWhile(_ == '\n')
           existing.substring(0, start) + block + tail
 
-    /** The file without the marked span: what the *project* declared, as opposed to what a previous run planted. */
+    /** The file without the marked span: what the *project* declared, as
+      * opposed to what a previous run planted.
+      */
     def outsideMarkedBlock(text: String, begin: String, end: String): String =
       val start = text.indexOf(begin)
       if start < 0 then text
@@ -771,9 +789,11 @@ object Setup extends IOApp:
         if close < 0 then text.substring(0, start)
         else text.substring(0, start) + text.substring(close + end.length)
 
-    /** Adds only what the Mill build is missing — the mill-scalafix build dependency, the `package build` line and
-      * the two imports — then plants (or replaces) the marked block that carries `BuildPaths`, the `scalafixRules`
-      * module, the tool-classpath trait and the mix-in template.
+    /** Adds only what the Mill build is missing — the mill-scalafix build
+      * dependency, the `package build` line and the two imports — then plants
+      * (or replaces) the marked block that carries `BuildPaths`, the
+      * `scalafixRules` module, the tool-classpath trait and the mix-in
+      * template.
       */
     def patchMillBuild(
         existing: String,
@@ -793,24 +813,30 @@ object Setup extends IOApp:
           val (at, inject) = millMvnDepsInjection(header, depLines)
           (lines.take(at) ++ inject ++ lines.drop(at)).mkString("\n") + "\n"
       val withPackage =
-        if withHeader.linesIterator.exists(_.trim == packageLine) then withHeader
+        if withHeader.linesIterator.exists(_.trim == packageLine) then
+          withHeader
         else insertAfterHeader(withHeader, packageLine)
       val withImports = importLines.foldLeft(withPackage) { (text, line) =>
         if text.contains(line) then text else insertAfterImports(text, line)
       }
       plantCodeBlock(withImports, body)
 
-    /** Where the mill-scalafix `//|` entries go in a Mill YAML header, and where they do not. Mill reads a
-      * `build.mill` header as YAML, so an entry is a dependency only when it sits under the `mvnDeps:` key:
+    /** Where the mill-scalafix `//|` entries go in a Mill YAML header, and
+      * where they do not. Mill reads a `build.mill` header as YAML, so an entry
+      * is a dependency only when it sits under the `mvnDeps:` key:
       *
-      *   - header names `mvnDeps:` as a block list → after the last of that key's items (`- …`, or a continuation
-      *     comment/blank line), before the next key;
-      *   - header names other keys only (or there is no header) → a new `mvnDeps:` key at the end of the header
-      *     (position 0 when there is none);
-      *   - header names `mvnDeps:` with an inline flow list → inside its brackets.
+      *   - header names `mvnDeps:` as a block list → after the last of that
+      *     key's items (`- …`, or a continuation comment/blank line), before
+      *     the next key;
+      *   - header names other keys only (or there is no header) → a new
+      *     `mvnDeps:` key at the end of the header (position 0 when there is
+      *     none);
+      *   - header names `mvnDeps:` with an inline flow list → inside its
+      *     brackets.
       *
-      * Appending after the whole header — what this replaced — put the entry under whichever key came last, where it
-      * is that key's value and declares no dependency at all.
+      * Appending after the whole header — what this replaced — put the entry
+      * under whichever key came last, where it is that key's value and declares
+      * no dependency at all.
       */
     private def millMvnDepsInjection(
         header: List[String],
@@ -831,7 +857,8 @@ object Setup extends IOApp:
             .size
           (keyAt + 1 + items, depLines)
         else if value.startsWith("[") && value.endsWith("]") then
-          val coords = depLines.map(_.stripPrefix("//|").trim.stripPrefix("-").trim)
+          val coords =
+            depLines.map(_.stripPrefix("//|").trim.stripPrefix("-").trim)
           val inside = value.drop(1).dropRight(1).trim
           val merged = if inside.isEmpty then coords else inside :: coords
           (keyAt, List(s"//| mvnDeps: [${merged.mkString(", ")}]"))
@@ -856,18 +883,24 @@ object Setup extends IOApp:
         else lines.takeWhile(_.startsWith("//|")).size
       (lines.take(at) ++ List(line) ++ lines.drop(at)).mkString("\n") + "\n"
 
-  /** The reengineering kit: the `AllowedShape` rule, the wiring the chosen recipe states, the five skills and the
-    * digest block. Every file it writes is read from `kit/` at run time — the rule, its registration, the Mill
-    * helper, the recipes' own code blocks, the skills and the digest — so no recipe or rule text is duplicated here.
-    * The text mechanics live in `KitText`; this step decides what to write, where, and what to say about it.
+  /** The reengineering kit: the `AllowedShape` rule, the wiring the chosen
+    * recipe states, the five skills and the digest block. Every file it writes
+    * is read from `kit/` at run time — the rule, its registration, the Mill
+    * helper, the recipes' own code blocks, the skills and the digest — so no
+    * recipe or rule text is duplicated here. The text mechanics live in
+    * `KitText`; this step decides what to write, where, and what to say about
+    * it.
     *
-    * Inserted after `RunSpecializedSetupScripts` (the build files exist by then, and the Mill and sbt wiring patch
-    * them) and before `FormatProject`, so what it writes is formatted and staged with everything else.
+    * Inserted after `RunSpecializedSetupScripts` (the build files exist by
+    * then, and the Mill and sbt wiring patch them) and before `FormatProject`,
+    * so what it writes is formatted and staged with everything else.
     */
   private object InstallKit extends SetupStep:
     val id = "install-kit"
 
-    /** The five skill directories `kit/skills/` ships; the digest names the same five. */
+    /** The five skill directories `kit/skills/` ships; the digest names the
+      * same five.
+      */
     private val SkillNames = List(
       "shaping-a-module",
       "reengineering-module",
@@ -876,9 +909,11 @@ object Setup extends IOApp:
       "verification-lane"
     )
 
-    /** Where each recipe states the Scala version and the scalafix version its wiring was measured with. Reading
-      * them out of the recipe keeps the fact in one place; a recipe that stops matching fails the install
-      * (`KitText.versionIn`) instead of leaving the installer quietly unable to say what it installed.
+    /** Where each recipe states the Scala version and the scalafix version its
+      * wiring was measured with. Reading them out of the recipe keeps the fact
+      * in one place; a recipe that stops matching fails the install
+      * (`KitText.versionIn`) instead of leaving the installer quietly unable to
+      * say what it installed.
       */
     private val MillScalaVersion = """val scala3Version\s*=\s*"([^"]+)"""".r
     private val MillScalafixVersion =
@@ -928,9 +963,11 @@ object Setup extends IOApp:
                 Console.err.println(s"⚠ kit install failed: ${e.getMessage}")
                 StepResult(id, "failed", s"kit install failed: ${e.getMessage}")
 
-    /** `kit/` sits beside `Setup.scala`, and the installer may be started from anywhere, so the search walks up
-      * from the working directory — the same local-or-nothing choice `RunSpecializedSetupScripts` makes for its
-      * scripts. A run from outside a checkout has no kit to read, and says so rather than installing nothing.
+    /** `kit/` sits beside `Setup.scala`, and the installer may be started from
+      * anywhere, so the search walks up from the working directory — the same
+      * local-or-nothing choice `RunSpecializedSetupScripts` makes for its
+      * scripts. A run from outside a checkout has no kit to read, and says so
+      * rather than installing nothing.
       */
     private def findKitRoot(): Option[os.Path] =
       @annotation.tailrec
@@ -955,15 +992,19 @@ object Setup extends IOApp:
         os.write.over(path, content)
         files = files :+ path.toString
 
-      /** A copy of kit text the project owns once it lands. The kit is **vendored**: the design's L2 says a project
-        * may tune its copy, so a re-install must not destroy that tuning silently. Differing content is left exactly
-        * where it is and the kit's version goes beside it as `<name>.kit-new`, named on stderr; identical content is
-        * rewritten in place, so an untouched re-install stays idempotent.
+      /** A copy of kit text the project owns once it lands. The kit is
+        * **vendored**: the design's L2 says a project may tune its copy, so a
+        * re-install must not destroy that tuning silently. Differing content is
+        * left exactly where it is and the kit's version goes beside it as
+        * `<name>.kit-new`, named on stderr; identical content is rewritten in
+        * place, so an untouched re-install stays idempotent.
         *
-        * The files the installer owns instead — the marked blocks in `build.mill`/`build.sbt`/`AGENTS.md`/
-        * `scala-rules.md`, `project/plugins.sbt`, `.scalafix.conf` and the copies it derives from the target's own
-        * build — keep using `write`: replacing them is the install's job, and the target's own text in them is
-        * preserved by construction (a marked span is replaced, a missing line is added).
+        * The files the installer owns instead — the marked blocks in
+        * `build.mill`/`build.sbt`/`AGENTS.md`/ `scala-rules.md`,
+        * `project/plugins.sbt`, `.scalafix.conf` and the copies it derives from
+        * the target's own build — keep using `write`: replacing them is the
+        * install's job, and the target's own text in them is preserved by
+        * construction (a marked span is replaced, a missing line is added).
         */
       def writeVendored(rel: String, content: String): Unit =
         val path = ctx.targetDir / os.RelPath(rel)
@@ -983,74 +1024,89 @@ object Setup extends IOApp:
           throw new IllegalStateException(s"kit file missing: kit/$rel")
         os.read(path)
 
-      /** The enforcement README is what the digest points at: the schema, the symbol-prefix semantics and the rule's
-        * named blind spot live there, and the digest restates none of them. Only `scala-cli.md`'s tree copies the
-        * kit's whole directory; the Mill and sbt branches vendor the README without `check.sh` and `fixtures/`, so
-        * the note appended here says which parts are in this project and where the rest lives. That keeps the
-        * digest's pointer honest without restructuring the README's own content.
+      /** The enforcement README is what the digest points at: the schema, the
+        * symbol-prefix semantics and the rule's named blind spot live there,
+        * and the digest restates none of them. Only `scala-cli.md`'s tree
+        * copies the kit's whole directory; the Mill and sbt branches vendor the
+        * README without `check.sh` and `fixtures/`, so the note appended here
+        * says which parts are in this project and where the rest lives. That
+        * keeps the digest's pointer honest without restructuring the README's
+        * own content.
         */
       def writeReadme(): Unit =
         writeVendored(
           ".kit/arhitecture-shape/README.md",
-          readKit("arhitecture-shape/README.md").stripLineEnd + "\n\n" + readmeNote()
+          readKit(
+            "arhitecture-shape/README.md"
+          ).stripLineEnd + "\n\n" + readmeNote()
         )
 
-      /** Tool-aware, appended to the vendored README: which pieces of `arhitecture-shape/` this project has, and
-        * where `check.sh` and its fixtures are for a project that did not get them.
+      /** Tool-aware, appended to the vendored README: which pieces of
+        * `arhitecture-shape/` this project has, and where `check.sh` and its
+        * fixtures are for a project that did not get them.
         */
       def readmeNote(): String =
-        val checkout = "`scala-llm-template` checkout, under `kit/arhitecture-shape/`"
+        val checkout =
+          "`scala-llm-template` checkout, under `kit/arhitecture-shape/`"
         val runIt =
           "run it from that checkout: `sh <checkout>/kit/arhitecture-shape/check.sh --config <policy>`"
         val lines = buildTool match
-          case "scala-cli" => List(
-            "## What is present in this project",
-            "",
-            "Appended by `Setup.scala`'s kit step (the README above is the kit's own text). This project carries the " +
-              "whole directory at `.kit/arhitecture-shape/`: this README, `AllowedShape.scala`, its registration, " +
-              "`check.sh` and `fixtures/`.",
-            "The project's own lint runner is `allowed-shape.sh` with a `shape-policy/<dir>.conf` per shaped " +
-              "directory; `check.sh` is the kit's own fixture check, not that runner."
-          )
-          case "mill" => List(
-            "## What is present in this project",
-            "",
-            "Appended by `Setup.scala`'s kit step (the README above is the kit's own text). This project carries the " +
-              "rule and its wiring: `scalafixRules/src/AllowedShape.scala` with its `META-INF/services/scalafix.v1.Rule` " +
-              "registration, `buildKit/ArchitectureShapeModule.mill`, `ScalafixExtra.mill` and the marked block in " +
-              "`build.mill`.",
-            s"`check.sh` and `fixtures/` are **not** vendored here — they live in the $checkout, together with this " +
-              s"README; $runIt.",
-            "The project's per-module policy lives in `build.mill`, not in this directory: the Mill recipe in that " +
-              "checkout, `kit/recipes/mill.md`, states the wiring."
-          )
-          case _ => List(
-            "## What is present in this project",
-            "",
-            "Appended by `Setup.scala`'s kit step (the README above is the kit's own text). This project carries the " +
-              "rule and its wiring: `scalafix-rules/src/main/scala/AllowedShape.scala` with its " +
-              "`META-INF/services/scalafix.v1.Rule` registration, the `sbt-scalafix` plugin line in " +
-              "`project/plugins.sbt` and the marked block in `build.sbt`.",
-            s"`check.sh` and `fixtures/` are **not** vendored here — they live in the $checkout, together with this " +
-              s"README; $runIt.",
-            "The project's per-module policy lives in each module's own `.scalafix.conf`: the sbt recipe in that " +
-              "checkout, `kit/recipes/sbt.md`, states the wiring."
-          )
+          case "scala-cli" =>
+            List(
+              "## What is present in this project",
+              "",
+              "Appended by `Setup.scala`'s kit step (the README above is the kit's own text). This project carries the " +
+                "whole directory at `.kit/arhitecture-shape/`: this README, `AllowedShape.scala`, its registration, " +
+                "`check.sh` and `fixtures/`.",
+              "The project's own lint runner is `allowed-shape.sh` with a `shape-policy/<dir>.conf` per shaped " +
+                "directory; `check.sh` is the kit's own fixture check, not that runner."
+            )
+          case "mill" =>
+            List(
+              "## What is present in this project",
+              "",
+              "Appended by `Setup.scala`'s kit step (the README above is the kit's own text). This project carries the " +
+                "rule and its wiring: `scalafixRules/src/AllowedShape.scala` with its `META-INF/services/scalafix.v1.Rule` " +
+                "registration, `buildKit/ArchitectureShapeModule.mill`, `ScalafixExtra.mill` and the marked block in " +
+                "`build.mill`.",
+              s"`check.sh` and `fixtures/` are **not** vendored here — they live in the $checkout, together with this " +
+                s"README; $runIt.",
+              "The project's per-module policy lives in `build.mill`, not in this directory: the Mill recipe in that " +
+                "checkout, `kit/recipes/mill.md`, states the wiring."
+            )
+          case _ =>
+            List(
+              "## What is present in this project",
+              "",
+              "Appended by `Setup.scala`'s kit step (the README above is the kit's own text). This project carries the " +
+                "rule and its wiring: `scalafix-rules/src/main/scala/AllowedShape.scala` with its " +
+                "`META-INF/services/scalafix.v1.Rule` registration, the `sbt-scalafix` plugin line in " +
+                "`project/plugins.sbt` and the marked block in `build.sbt`.",
+              s"`check.sh` and `fixtures/` are **not** vendored here — they live in the $checkout, together with this " +
+                s"README; $runIt.",
+              "The project's per-module policy lives in each module's own `.scalafix.conf`: the sbt recipe in that " +
+                "checkout, `kit/recipes/sbt.md`, states the wiring."
+            )
         lines.mkString("\n") + "\n"
 
       val millBlocks = KitText.codeBlocks(readKit("recipes/mill.md"))
-      val sbtBlocks  = KitText.codeBlocks(readKit("recipes/sbt.md"))
-      val cliBlocks  = KitText.codeBlocks(readKit("recipes/scala-cli.md"))
+      val sbtBlocks = KitText.codeBlocks(readKit("recipes/sbt.md"))
+      val cliBlocks = KitText.codeBlocks(readKit("recipes/scala-cli.md"))
 
       def installMill(): (String, String, Boolean) =
-        val head = KitText.block(millBlocks, "scala", "object BuildPaths", "mill.md")
+        val head =
+          KitText.block(millBlocks, "scala", "object BuildPaths", "mill.md")
         // Read the pair the recipe was measured with before writing anything: a recipe that drifted must fail here,
         // not complete with wiring the installer only half understands.
         val measuredScala = KitText.versionIn(head, MillScalaVersion, "mill.md")
-        val measuredScalafix = KitText.versionIn(head, MillScalafixVersion, "mill.md")
+        val measuredScalafix =
+          KitText.versionIn(head, MillScalafixVersion, "mill.md")
         val (fileLevel, declarations) =
-          head.linesIterator.toList.span(l => !l.trim.startsWith("val scala3Version"))
-        val depLines = fileLevel.filter(l => l.startsWith("//|") && l.trim != "//| mvnDeps:")
+          head.linesIterator.toList.span(l =>
+            !l.trim.startsWith("val scala3Version")
+          )
+        val depLines =
+          fileLevel.filter(l => l.startsWith("//|") && l.trim != "//| mvnDeps:")
         val importLines = fileLevel.filter(_.trim.startsWith("import "))
         val packageLine = fileLevel
           .find(_.trim.startsWith("package "))
@@ -1068,12 +1124,20 @@ object Setup extends IOApp:
         val helper = readKit("recipes/mill/ArchitectureShapeModule.mill")
         writeVendored("buildKit/ArchitectureShapeModule.mill", helper)
         // The anchor file carries just the helper's own package line, so the two cannot disagree.
-        writeVendored("buildKit/package.mill", helper.linesIterator.next() + "\n")
+        writeVendored(
+          "buildKit/package.mill",
+          helper.linesIterator.next() + "\n"
+        )
         writeReadme()
         // The generic half of the wiring the helper mixes in: ExtraScalafixRules, ScalafixValue, RuleSettings.
         writeVendored(
           "ScalafixExtra.mill",
-          KitText.block(millBlocks, "scala", "trait ExtraScalafixRules", "mill.md") + "\n"
+          KitText.block(
+            millBlocks,
+            "scala",
+            "trait ExtraScalafixRules",
+            "mill.md"
+          ) + "\n"
         )
         if !os.exists(ctx.targetDir / ".scalafix.conf") then
           write(
@@ -1086,7 +1150,12 @@ object Setup extends IOApp:
         val mixin = KitText.asTemplate(
           "Adapt this to the project's shaped modules — the kit cannot know which modules they are, " +
             "and the policy is per module (R-10).",
-          KitText.block(millBlocks, "scala", "object engine extends Module", "mill.md")
+          KitText.block(
+            millBlocks,
+            "scala",
+            "object engine extends Module",
+            "mill.md"
+          )
         )
         val buildMill = ctx.targetDir / "build.mill"
         // The check must ignore the marked block: after a first run the kit's own `val scala3Version` is in there,
@@ -1110,7 +1179,8 @@ object Setup extends IOApp:
             ).mkString("\n")
           else ""
         val body = List(
-          if targetHasScalaVersion then "" else declarations.headOption.getOrElse(""),
+          if targetHasScalaVersion then ""
+          else declarations.headOption.getOrElse(""),
           declarations.drop(1).mkString("\n").stripLeading(),
           layer,
           mixin,
@@ -1132,7 +1202,9 @@ object Setup extends IOApp:
         else
           write(
             "build.mill",
-            fileLevel.mkString("\n").stripLineEnd + "\n\n" + KitText.markCode(body)
+            fileLevel.mkString("\n").stripLineEnd + "\n\n" + KitText.markCode(
+              body
+            )
           )
           Console.err.println("✓ Wrote the Mill wiring (build.mill)")
           if os.exists(ctx.targetDir / "build.sc") then
@@ -1176,11 +1248,13 @@ object Setup extends IOApp:
         val measuredPlugin =
           KitText.versionIn(pluginLine, SbtPluginVersion, "sbt.md")
         val pluginsFile = ctx.targetDir / "project" / "plugins.sbt"
-        val plugins = if os.exists(pluginsFile) then os.read(pluginsFile) else ""
+        val plugins =
+          if os.exists(pluginsFile) then os.read(pluginsFile) else ""
         if !plugins.contains("sbt-scalafix") then
           write(
             "project/plugins.sbt",
-            plugins.stripLineEnd + (if plugins.isEmpty then "" else "\n") + pluginLine + "\n"
+            plugins.stripLineEnd + (if plugins.isEmpty then ""
+                                    else "\n") + pluginLine + "\n"
           )
           Console.err.println("✓ Added sbt-scalafix to project/plugins.sbt")
         else
@@ -1234,7 +1308,12 @@ object Setup extends IOApp:
           }
         writeReadme()
         val runner =
-          KitText.block(cliBlocks, "sh", "RULE_DIR=.kit/arhitecture-shape", "scala-cli.md")
+          KitText.block(
+            cliBlocks,
+            "sh",
+            "RULE_DIR=.kit/arhitecture-shape",
+            "scala-cli.md"
+          )
         writeVendored("allowed-shape.sh", runner + "\n")
         Console.err.println("✓ Wrote the scala-cli wiring (allowed-shape.sh)")
         Console.err.println(
@@ -1251,14 +1330,23 @@ object Setup extends IOApp:
         case "mill"      => installMill()
         case "sbt"       => installSbt()
         case "scala-cli" => installScalaCli()
-        case other =>
+        case other       =>
           throw new IllegalArgumentException(
             s"unknown build-tool '$other' (expected mill, sbt or scala-cli)"
           )
-      warnOnMeasuredPair(ctx, buildTool, measuredScala, measuredScalafix, pinned)
+      warnOnMeasuredPair(
+        ctx,
+        buildTool,
+        measuredScala,
+        measuredScalafix,
+        pinned
+      )
 
       SkillNames.foreach { name =>
-        writeVendored(s".dsh/skills/$name/SKILL.md", readKit(s"skills/$name/SKILL.md"))
+        writeVendored(
+          s".dsh/skills/$name/SKILL.md",
+          readKit(s"skills/$name/SKILL.md")
+        )
       }
 
       val digest = readKit("digest.md").stripLineEnd
@@ -1286,12 +1374,16 @@ object Setup extends IOApp:
 
       files
 
-    /** The recipes' wiring is measured against one published pair — a Scala version and the scalafix version whose
-      * CLI loads the rule — and the installer leaves that pair intact rather than generalising half of it: rewriting
-      * only the Scala version would install wiring whose artifacts do not resolve (measured: `scalafix-rules_3.9.0`
-      * publishes 0.14.8 and 0.14.9, not the recipes' 0.14.7). When the project's own answer differs, the step says so
-      * loudly instead of installing something that cannot build — and it says *which* install it is talking about:
-      * `pinned` is whether this run wrote the Scala-version literal the rule module compiles at.
+    /** The recipes' wiring is measured against one published pair — a Scala
+      * version and the scalafix version whose CLI loads the rule — and the
+      * installer leaves that pair intact rather than generalising half of it:
+      * rewriting only the Scala version would install wiring whose artifacts do
+      * not resolve (measured: `scalafix-rules_3.9.0` publishes 0.14.8 and
+      * 0.14.9, not the recipes' 0.14.7). When the project's own answer differs,
+      * the step says so loudly instead of installing something that cannot
+      * build — and it says *which* install it is talking about: `pinned` is
+      * whether this run wrote the Scala-version literal the rule module
+      * compiles at.
       */
     private def warnOnMeasuredPair(
         ctx: SetupContext,
@@ -1317,7 +1409,8 @@ object Setup extends IOApp:
                |""".stripMargin
           )
         else
-          val depLiteral = s"scalafix-rules_${measuredScala}:${measuredScalafix}"
+          val depLiteral =
+            s"scalafix-rules_${measuredScala}:${measuredScalafix}"
           Console.err.println(
             s"""
                |⚠ scala-version = ${ctx.finalScalaVersion}, but the kit's rule wiring is measured against Scala $measuredScala with scalafix $measuredScalafix.
@@ -1327,11 +1420,13 @@ object Setup extends IOApp:
                |""".stripMargin
           )
 
-    /** The sbt plugin line is the other measured literal: the recipe's `addSbtPlugin(… "sbt-scalafix" % "<version>")`
-      * is what the block planted in `build.sbt` was executed against, and an older plugin brings a different scalafix
-      * CLI. A target that already declares sbt-scalafix is therefore not "done" — when the declared version differs
-      * (or cannot be read), the step says which version is there, which one the wiring was measured with, and what to
-      * change.
+    /** The sbt plugin line is the other measured literal: the recipe's
+      * `addSbtPlugin(… "sbt-scalafix" % "<version>")` is what the block planted
+      * in `build.sbt` was executed against, and an older plugin brings a
+      * different scalafix CLI. A target that already declares sbt-scalafix is
+      * therefore not "done" — when the declared version differs (or cannot be
+      * read), the step says which version is there, which one the wiring was
+      * measured with, and what to change.
       */
     private def warnOnDeclaredSbtPlugin(
         plugins: String,
@@ -1352,8 +1447,13 @@ object Setup extends IOApp:
       else if !declared.contains(measuredPlugin) then
         Console.err.println(
           s"""
-             |⚠ project/plugins.sbt declares sbt-scalafix ${declared.mkString(", ")}, but the kit's sbt wiring was measured with $measuredPlugin.
-             |  The block just planted in build.sbt (Scala $measuredScala, scalafix $measuredScalafix, the rule project and the per-module ScalafixConfig opt-in) was executed against sbt-scalafix $measuredPlugin; ${declared.mkString(", ")} loads a different scalafix CLI, so the wiring does not resolve as it stands.
+             |⚠ project/plugins.sbt declares sbt-scalafix ${declared.mkString(
+              ", "
+            )}, but the kit's sbt wiring was measured with $measuredPlugin.
+             |  The block just planted in build.sbt (Scala $measuredScala, scalafix $measuredScalafix, the rule project and the per-module ScalafixConfig opt-in) was executed against sbt-scalafix $measuredPlugin; ${declared
+              .mkString(
+                ", "
+              )} loads a different scalafix CLI, so the wiring does not resolve as it stands.
              |  Raise it: project/plugins.sbt — addSbtPlugin("ch.epfl.scala" % "sbt-scalafix" % "$measuredPlugin").
              |""".stripMargin
         )
