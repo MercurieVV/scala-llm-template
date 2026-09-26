@@ -1,0 +1,3 @@
+#!/bin/sh
+# After the base commit: the turn's own edit to a Scala file.
+printf '\n// touched by this turn\n' >> src/A.scala

@@ -100,6 +100,13 @@ case "$path" in
 esac
 [ -f "$path" ] || exit 0
 
+# A project with positive evidence of another build tool (plan ruling, spec §3): the engine's checks are
+# Mill tasks, so it stands down, named, instead of blocking on "no Mill". It sits before the module-map
+# lookup, not beside `resolve_mill`, because that lookup already runs ./mill and fails closed.
+if nm=$(dsh_non_mill_build "$root"); then
+  allow "DSH gate: gate engine supports Mill builds only; found: $nm -- checks stand down for this turn"
+fi
+
 # `pwd` is logical in dash and in bash, so a root or a file spelled through a symlink (/tmp and /var
 # on macOS are symlinks) would not match the absolute paths Mill prints. module-map.sh canonicalises
 # both sides the same way, so the path looked up here is the path that gets answered.

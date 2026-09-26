@@ -31,6 +31,9 @@
 #   E. cwd binding -- this checkout is the git root process.cwd() resolves from at boot
 #   F. the guidance layer -- every skill under .dsh/skills/ carries a name the provider can load
 #      (I2: a name outside dsh-skill's grammar makes the provider skip the skill, silently)
+#   G. the vendored engine -- a .dsh/engine/ vendored by install.sh still matches its STAMP (FAIL when
+#      edited in place or the STAMP is missing); a note when run from the unvendored template tree,
+#      when vendored from an uncommitted template, or when $SCALA_LLM_TEMPLATE has moved ahead
 #
 # What it deliberately does NOT do. The wiring suite (the project's own wiring-test.sh, beside it under <project>/.dsh/) owns the matcher
 # vocabulary, the seam of every hook and the parity of the two dialects; this file only cross-checks
@@ -976,6 +979,27 @@ elif [ -n "$skills_bad" ]; then
   bad "skill front matter that cannot load:$skills_bad"
 else
   ok "every projected skill has a loadable name and a description ($skills_checked skills: name: matches dsh-skill's grammar and the directory, description: non-empty)"
+fi
+
+# G. the vendored engine (spec 2026-09-26 §2) -- the engine is edited in scala-llm-template/kit/harness and
+#    vendored by install.sh; a tree that no longer matches its STAMP was edited in place.
+if dsh_is_vendored_engine "$engine" "$repo"; then
+  case $(dsh_engine_stamp_verdict "$engine") in
+    ok)       ok "vendored engine matches its STAMP (template $(dsh_engine_stamp_field "$engine" template))" ;;
+    missing)  bad "$engine/STAMP is missing -- re-run sh <scala-llm-template>/kit/harness/install.sh $repo" ;;
+    mismatch) bad "vendored engine edited in place; edit in scala-llm-template/kit/harness and re-run install.sh" ;;
+    nohasher) bad "no sha256 tool (shasum or sha256sum): the vendored engine cannot be compared with its STAMP" ;;
+  esac
+  [ "$(dsh_engine_stamp_field "$engine" dirty)" = 1 ] && note "the engine was vendored from an uncommitted template (STAMP dirty=1)"
+  if [ -n "${SCALA_LLM_TEMPLATE:-}" ] && [ -d "$SCALA_LLM_TEMPLATE/kit/harness" ]; then
+    th=$(dsh_engine_tree_hash "$SCALA_LLM_TEMPLATE/kit/harness")
+    # The template's tree includes seed/ and has no STAMP; hash a vendored-shaped copy to compare like for like.
+    tmpv=$(mktemp -d) && cp -R "$SCALA_LLM_TEMPLATE/kit/harness/." "$tmpv/" && rm -rf "$tmpv/seed" \
+      && th=$(dsh_engine_tree_hash "$tmpv"); rm -rf "$tmpv"
+    [ "$th" = "$(dsh_engine_stamp_field "$engine" tree)" ] || note "the template at \$SCALA_LLM_TEMPLATE has moved ahead of the vendored engine -- re-run its install.sh to take it"
+  fi
+else
+  note "check run from an unvendored engine at $engine -- no STAMP to compare (this is the template's own tree)"
 fi
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"

@@ -378,6 +378,16 @@ elif [ -n "$vd_out" ]; then
   vd_note=$vd_out
 fi
 
+# A project with positive evidence of another build tool (plan ruling, spec §3): the engine's checks are
+# Mill tasks, so it stands down, named, instead of blocking on "no Mill". It sits here, not beside
+# `resolve_mill` below, because the module-map lookup that follows already runs ./mill and fails closed;
+# diff-scoped verification above is build-tool-agnostic and keeps its say (a block, or `vd_note`).
+if nm=$(dsh_non_mill_build "$root"); then
+  reset_counter
+  allow "DSH gate: gate engine supports Mill builds only; found: $nm -- checks stand down for this turn${vd_note:+
+$vd_note}"
+fi
+
 # --- which modules own them, and what each row grants -----------------------------------------
 : > "$tmpd/mods"      # <module> TAB <capabilities>
 : > "$tmpd/modfiles"  # <module> TAB <root-relative path>, one line per touched file

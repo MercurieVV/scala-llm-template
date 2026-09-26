@@ -226,4 +226,16 @@ else
   printf 'DSH harness: semantic guard stands down -- health: healthy=%s reason=%s notes=%s -- fix: %s\n' \
     "$healthy" "$reason" "$notes_line" "$fix"
 fi
+
+# --- the engine's own provenance and the build tool (spec 2026-09-26 §2, §3) -----------------------
+# Printed as separate note lines, never folded into `notes=` (whose caps belong to doctor and coverage).
+# Only a vendored engine has a stamp to compare; the template's own runs are not vendored.
+eng=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if dsh_is_vendored_engine "$eng" "$root"; then
+  sv=$(dsh_engine_stamp_verdict "$eng")
+  [ "$sv" = ok ] || printf 'DSH harness: note -- vendored engine does not match its stamp (%s); run sh .dsh/engine/check-harness.sh\n' "$sv"
+fi
+if nm=$(dsh_non_mill_build "$root"); then
+  printf 'DSH harness: note -- gate engine supports Mill builds only; found: %s -- checks stand down\n' "$nm"
+fi
 exit 0
