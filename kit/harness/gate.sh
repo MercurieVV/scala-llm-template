@@ -6,9 +6,9 @@
 # Reads the hook payload from stdin, exits 0 to allow and 2 to block.
 #
 # The hook is executed by the interpreter in `GATE_SH`, defaulting to `sh` — the value production
-# uses, since both wiring files invoke `sh .dsh/gate.sh <sub>`. It is a test seam exactly like
-# `GATE_ROOT` (lib.sh): `.dsh/tests/run.sh` passes the interpreter it is itself running under, so
-# `dash .dsh/tests/run.sh` exercises gate.sh, every hook and lib.sh under dash instead of only
+# uses, since both wiring files invoke `sh .dsh/engine/gate.sh <sub>`. It is a test seam exactly like
+# `GATE_ROOT` (lib.sh): `.dsh/engine/tests/run.sh` passes the interpreter it is itself running under, so
+# `dash .dsh/engine/tests/run.sh` exercises gate.sh, every hook and lib.sh under dash instead of only
 # proving them `dash -n`-clean. A hook is never the place for a hardcoded interpreter: this one
 # line is what makes a POSIX-portability claim measurable rather than aspirational.
 set -u

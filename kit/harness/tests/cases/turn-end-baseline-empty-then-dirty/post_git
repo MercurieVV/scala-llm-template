@@ -2,6 +2,6 @@
 # The session starts on a CLEAN tree, so its baseline holds no paths at all — and an empty baseline is
 # still a baseline: the gate must treat every dirty path as this session's (and say it is scoped),
 # never fall back to the tree-based rule because the record happened to be empty.
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
-GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
 printf 'package x\nobject New { val  a=1 }\n' > engine/details/src/New.scala

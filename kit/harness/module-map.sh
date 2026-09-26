@@ -40,7 +40,7 @@
 # which makes the output unparseable and dirties the diagnostics shown to an agent. That is why the
 # refresh below passes it, and why the map it installs is validated before it is installed.
 #
-# Usage: sh .dsh/module-map.sh <absolute source path>
+# Usage: sh .dsh/engine/module-map.sh <absolute source path>
 # POSIX sh only: no arrays, no `local`, no `set -e`.
 set -u
 . "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/lib.sh"

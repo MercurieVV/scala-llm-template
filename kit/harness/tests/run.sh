@@ -1,14 +1,14 @@
 #!/bin/sh
 # Fixture runner: each case directory holds payload.json, expect.code, optionally expect.grep (one
 # needle per line, each of which must appear), optionally env (KEY=VALUE lines) and optionally root/
-# (a subtree copied into the scratch root). Stubs in .dsh/tests/bin go first on PATH, so no case ever
+# (a subtree copied into the scratch root). Stubs in .dsh/engine/tests/bin go first on PATH, so no case ever
 # runs real Mill.
 #
-# The gate is run with the interpreter that is running this file, so `sh .dsh/tests/run.sh` and
-# `dash .dsh/tests/run.sh` are two different runs of run.sh, gate.sh, every hook and lib.sh, and the
+# The gate is run with the interpreter that is running this file, so `sh .dsh/engine/tests/run.sh` and
+# `dash .dsh/engine/tests/run.sh` are two different runs of run.sh, gate.sh, every hook and lib.sh, and the
 # banner below names which one this is. That is what the GATE_SH seam buys (F58): gate.sh execs the
 # hook through `GATE_SH`, default `sh` — the value production uses, since .dsh/hooks.json and
-# .claude/settings.json both invoke `sh .dsh/gate.sh <sub>` — and this runner passes, and exports,
+# .claude/settings.json both invoke `sh .dsh/engine/gate.sh <sub>` — and this runner passes, and exports,
 # the interpreter it resolved below, so a dash run genuinely EXECUTES every hook under dash
 # (measured with hooks that record their own interpreter: 124 of 124 invocations under dash, where a
 # fixture's own gate call used to stay under `sh`). Before that seam gate.sh ended in
@@ -54,8 +54,8 @@
 # on a file under its own root — and a payload the token does not appear in is passed through
 # untouched (the substitution runs only when the token is there).
 set -u
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-cases_dir="$repo/.dsh/tests/cases"
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cases_dir="$engine/tests/cases"
 passed=0
 failed=0
 cases=0
@@ -64,7 +64,7 @@ cases=0
 # macOS, a path on Linux, nothing at all in some containers), so a path is reduced to its basename and
 # `sh` is the fallback — comparing a `ps` path against a `command -v` path is what makes this
 # assertion flaky, and that is what the basename normalisation avoids. The assertion is what makes
-# `dash .dsh/tests/run.sh` mean what it says.
+# `dash .dsh/engine/tests/run.sh` mean what it says.
 runner=$(ps -p $$ -o comm= 2>/dev/null | tr -d ' ')
 case "$runner" in
   */*) runner=$(basename -- "$runner") ;;
@@ -188,8 +188,8 @@ for case_dir in "$cases_dir"/*/; do
 $pre_out"
     [ "$pre_code" = 0 ] || fail_case_pending=1
   fi
-  out=$(env $env_args GATE_ROOT="$scratch" GATE_SH="$shell_bin" PATH="$repo/.dsh/tests/bin:$PATH" MILL_STUB_LOG="$mill_log" \
-        "$shell_bin" "$repo/.dsh/gate.sh" "$sub" < "$payload_file" 2>&1)
+  out=$(env $env_args GATE_ROOT="$scratch" GATE_SH="$shell_bin" PATH="$engine/tests/bin:$PATH" MILL_STUB_LOG="$mill_log" \
+        "$shell_bin" "$engine/gate.sh" "$sub" < "$payload_file" 2>&1)
   code=$?
   if [ -n "$pre_out" ]; then out="$pre_out$out"; fi
 
@@ -222,8 +222,8 @@ mutate_between failed"
       fi
     fi
     # shellcheck disable=SC2086
-    out2=$(env $env_args GATE_ROOT="$scratch" GATE_SH="$shell_bin" PATH="$repo/.dsh/tests/bin:$PATH" MILL_STUB_LOG="$mill_log" \
-           "$shell_bin" "$repo/.dsh/gate.sh" "$sub" < "$payload_file" 2>&1)
+    out2=$(env $env_args GATE_ROOT="$scratch" GATE_SH="$shell_bin" PATH="$engine/tests/bin:$PATH" MILL_STUB_LOG="$mill_log" \
+           "$shell_bin" "$engine/gate.sh" "$sub" < "$payload_file" 2>&1)
     code2=$?
     [ "$code2" = "$want_code" ] || fail_case "the second run exited $code2 (wanted $want_code)"
     out="$out

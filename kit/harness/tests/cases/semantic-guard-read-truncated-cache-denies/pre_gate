@@ -5,11 +5,11 @@
 # gone; without it the read of a covered file would be stood down. The setup drives the gate, not the
 # lib.sh helpers, so this fixture means the same thing against any version of the harness.
 set -u
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 root=$(pwd)
 cache=.dsh/.state/index-coverage
 printf '{"tool_name":"read","tool_input":{"file_path":"engine/shape/src/A.scala"}}' > .dsh/pre-gate-payload.json
-GATE_ROOT="$root" PATH="$repo/.dsh/tests/bin:$PATH" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" semantic-guard \
+GATE_ROOT="$root" PATH="$engine/tests/bin:$PATH" "${GATE_SH:-sh}" "$engine/gate.sh" semantic-guard \
   < .dsh/pre-gate-payload.json >/dev/null 2>&1
 [ -s "$cache" ] || { echo "pre_gate: the gate did not write a coverage cache"; exit 1; }
 rows=$(wc -l < "$cache" | tr -d ' ')

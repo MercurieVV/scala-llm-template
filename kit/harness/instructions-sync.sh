@@ -3,7 +3,7 @@
 # §2): extract purrism/findings.tsv from the scala-purrism-scalafix jar for the version
 # buildKit/Layer.mill declares, check the jar's `# purrism <version>` header against that version, and
 # replace the table atomically. Human-run, after a purrism bump; check-harness rule 2 says when.
-#   sh .dsh/instructions-sync.sh          DSH_PURRISM_JAR=<path> overrides the jar lookup (tests).
+#   sh .dsh/engine/instructions-sync.sh          DSH_PURRISM_JAR=<path> overrides the jar lookup (tests).
 # Exit 0 written; 1 jar not found; 2 header/version mismatch (table untouched); 3 not a table.
 set -u
 . "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/lib.sh"

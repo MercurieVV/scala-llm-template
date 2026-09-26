@@ -1,12 +1,12 @@
 #!/bin/sh
-# Direct tests for .dsh/lib.sh and the gate.sh stand-down path. Unlike tests/run.sh, which
+# Direct tests for .dsh/engine/lib.sh and the gate.sh stand-down path. Unlike tests/run.sh, which
 # drives gate.sh through fixture case directories, these call the helpers in-process, so the
 # JSON backends, the root precedence and the no-reader path can each be pinned on their own.
 #
-# Run: .dsh/tests/lib-test.sh
+# Run: .dsh/engine/tests/lib-test.sh
 set -u
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-cd "$repo" || exit 1
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$engine" || exit 1
 passed=0
 failed=0
 
@@ -49,8 +49,8 @@ fi
 [ "$have_jq" = 1 ] && ln -s "$jq_bin" "$jq_only/jq"
 [ "$have_py" = 1 ] && ln -s "$python_bin" "$python_only/python3"
 
-get() { PATH="$1" /bin/sh -c '. "$1/.dsh/lib.sh"; payload_get "$2"' _ "$repo" "$2"; }
-tool_with() { PATH="$1" /bin/sh -c '. "$1/.dsh/lib.sh"; payload_with_tool "$2"' _ "$repo" "$2"; }
+get() { PATH="$1" /bin/sh -c '. "$1/lib.sh"; payload_get "$2"' _ "$engine" "$2"; }
+tool_with() { PATH="$1" /bin/sh -c '. "$1/lib.sh"; payload_with_tool "$2"' _ "$engine" "$2"; }
 field() { # field <field> <want>
   [ "$have_jq" = 1 ] && is "jq      payload_get $1" "$2" "$(get "$jq_only" "$1")"
   [ "$have_py" = 1 ] && is "python3 payload_get $1" "$2" "$(get "$python_only" "$1")"
@@ -86,11 +86,11 @@ fi
 
 # --- (b) gate_root precedence: GATE_ROOT -> CLAUDE_PROJECT_DIR -> git -> PWD ----------
 root() { # root <env args...> — gate_root in a child holding exactly these variables
-  env "$@" /bin/sh -c '. "$1/.dsh/lib.sh"; gate_root' _ "$repo"
+  env "$@" /bin/sh -c '. "$1/lib.sh"; gate_root' _ "$engine"
 }
 is "GATE_ROOT beats CLAUDE_PROJECT_DIR" "/a" "$(root GATE_ROOT=/a CLAUDE_PROJECT_DIR=/b)"
 is "CLAUDE_PROJECT_DIR without GATE_ROOT" "/b" "$(root -u GATE_ROOT CLAUDE_PROJECT_DIR=/b)"
-is "git toplevel without either variable" "$repo" "$(root -u GATE_ROOT -u CLAUDE_PROJECT_DIR)"
+is "git toplevel without either variable" "$(git rev-parse --show-toplevel)" "$(root -u GATE_ROOT -u CLAUDE_PROJECT_DIR)"
 is "PWD outside any repository" "/" "$(cd / && root -u GATE_ROOT -u CLAUDE_PROJECT_DIR)"
 
 # --- (c) with no JSON reader on PATH, gate.sh names the reason and stands down --------
@@ -98,8 +98,8 @@ no_reader=$(mktemp -d)
 ln -s "$(command -v sh)" "$no_reader/sh"
 ln -s "$(command -v dirname)" "$no_reader/dirname"
 ln -s "$(command -v cat)" "$no_reader/cat"
-out=$(env PATH="$no_reader" /bin/sh "$repo/.dsh/gate.sh" semantic-guard \
-      < "$repo/.dsh/tests/cases/dispatch-noop/payload.json" 2>&1)
+out=$(env PATH="$no_reader" /bin/sh "$engine/gate.sh" semantic-guard \
+      < "$engine/tests/cases/dispatch-noop/payload.json" 2>&1)
 code=$?
 is "gate.sh without a JSON reader exits 0" "0" "$code"
 case "$out" in
@@ -116,7 +116,7 @@ esac
 # borrowing a variable from a hook — including the marker it appends, which must therefore be its
 # own default. Bounds are in bytes, not characters and not lines: `cut -c` cuts per LINE, which is
 # what made the old bound unbounded on a report of many long lines.
-bound() { /bin/sh -c '. "$1/.dsh/lib.sh"; bound_bytes "$2" "$3"' _ "$repo" "$1" "$2"; }
+bound() { /bin/sh -c '. "$1/lib.sh"; bound_bytes "$2" "$3"' _ "$engine" "$1" "$2"; }
 bytes() { printf '%s' "$1" | wc -c | tr -d ' '; }
 
 short='hello, world'
@@ -145,27 +145,27 @@ is "bound_bytes does not cut by line" "$multiline" "$(bound "$multiline" 4000)"
 # the fix; a payload larger than the pipe buffer is what makes the write fail mid-stream.
 big=$(mktemp)
 awk 'BEGIN { for (j = 0; j < 8000; j++) printf "line %d yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\n", j }' > "$big"
-epipe=$(/bin/sh -c 'trap "" PIPE; . "$1/.dsh/lib.sh"; x=$(cat "$2"); bound_bytes "$x" 2000' \
-        _ "$repo" "$big" 2>&1 >/dev/null)
+epipe=$(/bin/sh -c 'trap "" PIPE; . "$1/lib.sh"; x=$(cat "$2"); bound_bytes "$x" 2000' \
+        _ "$engine" "$big" 2>&1 >/dev/null)
 is "bound_bytes writes no EPIPE noise while SIGPIPE is ignored" "" "$epipe"
 
 # --- (e) the shared line bound and the file-name predicate (F62) -------------------------------
 # Same shape as (d): a child that has sourced lib.sh only. F62 moved `bound_lines` and `names_file`
 # out of the two hooks because they were byte-identical copies — and because BOTH copies of the
 # `printf | head`/`printf | grep -q` pipeline had the EPIPE defect below.
-lines() { /bin/sh -c '. "$1/.dsh/lib.sh"; bound_lines "$2" "$3"' _ "$repo" "$1" "$2"; }
+lines() { /bin/sh -c '. "$1/lib.sh"; bound_lines "$2" "$3"' _ "$engine" "$1" "$2"; }
 three=$(printf 'one\ntwo\nthree')
 is "bound_lines keeps text under the bound" "$three" "$(lines "$three" 15)"
 is "bound_lines keeps text exactly at the bound" "$three" "$(lines "$three" 3)"
 five=$(printf 'one\ntwo\nthree\nfour\nfive')
 is "bound_lines cuts over-long text to the bound" "$(printf 'one\ntwo\n… 3 more lines')" "$(lines "$five" 2)"
 
-epipe_lines=$(/bin/sh -c 'trap "" PIPE; . "$1/.dsh/lib.sh"; x=$(cat "$2"); bound_lines "$x" 3' \
-              _ "$repo" "$big" 2>&1 >/dev/null)
+epipe_lines=$(/bin/sh -c 'trap "" PIPE; . "$1/lib.sh"; x=$(cat "$2"); bound_lines "$x" 3' \
+              _ "$engine" "$big" 2>&1 >/dev/null)
 is "bound_lines writes no EPIPE noise while SIGPIPE is ignored" "" "$epipe_lines"
 
-named() { /bin/sh -c '. "$1/.dsh/lib.sh"; if names_file "$2" "$3"; then printf yes; else printf no; fi' \
-          _ "$repo" "$1" "$2"; }
+named() { /bin/sh -c '. "$1/lib.sh"; if names_file "$2" "$3"; then printf yes; else printf no; fi' \
+          _ "$engine" "$1" "$2"; }
 is "names_file sees a scala diagnostic" "yes" "$(named 'error: A.scala:3:1: not found' 'scala|sc|java')"
 is "names_file sees a mill diagnostic when the vocabulary has it" "yes" \
    "$(named '[error] build.mill:700:30' 'scala|sc|java|mill')"
@@ -181,12 +181,12 @@ bigmatch=$(mktemp)
 { printf 'error: A.scala:1:1\n'
   awk 'BEGIN { for (j = 0; j < 8000; j++) printf "line %d yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\n", j }'
 } > "$bigmatch"
-epipe_names=$(/bin/sh -c 'trap "" PIPE; . "$1/.dsh/lib.sh"; x=$(cat "$2"); names_file "$x" "scala|sc|java"' \
-              _ "$repo" "$bigmatch" 2>&1 >/dev/null)
+epipe_names=$(/bin/sh -c 'trap "" PIPE; . "$1/lib.sh"; x=$(cat "$2"); names_file "$x" "scala|sc|java"' \
+              _ "$engine" "$bigmatch" 2>&1 >/dev/null)
 is "names_file writes no EPIPE noise while SIGPIPE is ignored" "" "$epipe_names"
 rm -f "$big" "$bigmatch"
 
-fl() { /bin/sh -c '. "$1/.dsh/lib.sh"; first_line "$2"' _ "$repo" "$1"; }
+fl() { /bin/sh -c '. "$1/lib.sh"; first_line "$2"' _ "$engine" "$1"; }
 is "first_line takes the first line without a pipe" "BLOCKED by the DSH gate: x" \
    "$(fl 'BLOCKED by the DSH gate: x
 second line
@@ -199,36 +199,36 @@ is "first_line of an empty text is empty" "" "$(fl '')"
 # version silently dropped every path git C-quotes. The six names below are exactly the ones that
 # used to disappear (measured: two of them survived), so this assertion is the regression guard for
 # that defect as well as a unit test of the helper.
-key() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_state_key "$2"' _ "$repo" "$1"; }
+key() { /bin/sh -c '. "$1/lib.sh"; dsh_state_key "$2"' _ "$engine" "$1"; }
 is "dsh_state_key keeps a plain id" "s1" "$(key s1)"
 # Dots are kept on purpose: the key is only ever a `baseline-<key>.tsv` NAME, so `..` cannot traverse
 # out of the state directory, while `.` and `-` are common in session ids. Separators and spaces are
 # not kept, which is what stops an id from steering the path at all.
 is "dsh_state_key never lets an id steer a path" "a_b_c..d" "$(key 'a/b c..d')"
-bfile=$(/bin/sh -c '. "$1/.dsh/lib.sh"; GATE_ROOT=/tmp/x dsh_baseline_file s1' _ "$repo")
+bfile=$(/bin/sh -c '. "$1/lib.sh"; GATE_ROOT=/tmp/x dsh_baseline_file s1' _ "$engine")
 is "dsh_baseline_file is one file per session" "/tmp/x/.dsh/.state/baseline-s1.tsv" "$bfile"
 
-hash_of() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_file_hash "$2"' _ "$repo" "$1"; }
+hash_of() { /bin/sh -c '. "$1/lib.sh"; dsh_file_hash "$2"' _ "$engine" "$1"; }
 hashed=$(mktemp); printf 'x\n' > "$hashed"
 is "dsh_file_hash is a sha256 for a readable file" "64" "$(printf '%s' "$(hash_of "$hashed")" | wc -c | tr -d ' ')"
 is "dsh_file_hash answers - for a missing file" "-" "$(hash_of "$hashed.nope")"
 
 # Without a hasher the comparison is meaningless (`-` = `-` reads as "unchanged"), so the helper that
 # says so has to be right: PATH holds nothing at all here, only shell builtins are used.
-noh=$(PATH=/nonexistent /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_has_hasher; printf "%s" "$?"' _ "$repo")
+noh=$(PATH=/nonexistent /bin/sh -c '. "$1/lib.sh"; dsh_has_hasher; printf "%s" "$?"' _ "$engine")
 is "dsh_has_hasher says no with no sha256 tool on PATH" "1" "$noh"
 is "dsh_file_hash falls back to - with no sha256 tool" "-" \
-   "$(PATH=/nonexistent /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_file_hash "$2"' _ "$repo" "$hashed")"
+   "$(PATH=/nonexistent /bin/sh -c '. "$1/lib.sh"; dsh_file_hash "$2"' _ "$engine" "$hashed")"
 
 basefile=$(mktemp)
 printf '# DSH session baseline s1 2026-01-01T00:00:00Z\n' > "$basefile"
 printf -- '-\tgone/Deleted.scala\nabc123\tA.scala\n' >> "$basefile"
-readable() { /bin/sh -c '. "$1/.dsh/lib.sh"; if dsh_baseline_readable "$2"; then printf yes; else printf no; fi' \
-             _ "$repo" "$1"; }
+readable() { /bin/sh -c '. "$1/lib.sh"; if dsh_baseline_readable "$2"; then printf yes; else printf no; fi' \
+             _ "$engine" "$1"; }
 is "dsh_baseline_readable accepts a real record" "yes" "$(readable "$basefile")"
-rows() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_baseline_rows "$2"' _ "$repo" "$1"; }
+rows() { /bin/sh -c '. "$1/lib.sh"; dsh_baseline_rows "$2"' _ "$engine" "$1"; }
 is "dsh_baseline_rows does not count the header" "2" "$(rows "$basefile")"
-bhash() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_baseline_hash "$2" "$3"' _ "$repo" "$1" "$2"; }
+bhash() { /bin/sh -c '. "$1/lib.sh"; dsh_baseline_hash "$2" "$3"' _ "$engine" "$1" "$2"; }
 is "dsh_baseline_hash reads a recorded hash" "abc123" "$(bhash "$basefile" A.scala)"
 is "dsh_baseline_hash answers empty for a path that was clean at SessionStart" "" "$(bhash "$basefile" B.scala)"
 garbage=$(mktemp); printf 'this file is not a baseline at all\n' > "$garbage"
@@ -254,8 +254,8 @@ rm -f "$touchrepo/Gone.scala" "$touchrepo/Build.mill"
 ( cd "$touchrepo" && git mv Move.mill Moved.mill )
 printf 'package x\n' > "$touchrepo/Newé.scala"
 touched_out="$touchrepo.touched"
-touch_code=$(/bin/sh -c '. "$1/.dsh/lib.sh"; dsh_touched_files "$2" "$3"; printf "%s" "$?"' \
-             _ "$repo" "$touchrepo" "$touched_out")
+touch_code=$(/bin/sh -c '. "$1/lib.sh"; dsh_touched_files "$2" "$3"; printf "%s" "$?"' \
+             _ "$engine" "$touchrepo" "$touched_out")
 is "dsh_touched_files exits 0 on a readable tree" "0" "$touch_code"
 has_line() { # has_line <name>
   if grep -qxF -- "$1" "$touched_out"; then ok "dsh_touched_files keeps $1"; else
@@ -282,17 +282,17 @@ hasnt_line 'Gone.scala'
 # A read of the working tree that FAILS must not look like a clean tree: corruption of the index is
 # the cheapest way to make `git status` error while the repository is still recognisable.
 printf 'not an index at all' > "$touchrepo/.git/index"
-fail_code=$(/bin/sh -c '. "$1/.dsh/lib.sh"; dsh_touched_files "$2" "$3"; printf "%s" "$?"' \
-            _ "$repo" "$touchrepo" "$touched_out")
+fail_code=$(/bin/sh -c '. "$1/lib.sh"; dsh_touched_files "$2" "$3"; printf "%s" "$?"' \
+            _ "$engine" "$touchrepo" "$touched_out")
 is "dsh_touched_files exits 2 when git cannot read the tree" "2" "$fail_code"
-fail_reason=$(/bin/sh -c '. "$1/.dsh/lib.sh"; dsh_touched_files "$2" "$3" >/dev/null 2>&1; printf "%s" "$dsh_touched_reason"' \
-              _ "$repo" "$touchrepo" "$touched_out")
+fail_reason=$(/bin/sh -c '. "$1/lib.sh"; dsh_touched_files "$2" "$3" >/dev/null 2>&1; printf "%s" "$dsh_touched_reason"' \
+              _ "$engine" "$touchrepo" "$touched_out")
 case "$fail_reason" in
   *'git status'*failed*) ok "dsh_touched_files names the failed read: [$fail_reason]" ;;
   *) bad "dsh_touched_files names the failed read: got [$fail_reason]" ;;
 esac
 is "dsh_touched_files exits 1 outside a work tree" "1" \
-   "$(GIT_CEILING_DIRECTORIES="$touchrepo" /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_touched_files "$2" "$3"; printf "%s" "$?"' _ "$repo" /nonexistent-dsh-root "$touched_out.none")"
+   "$(GIT_CEILING_DIRECTORIES="$touchrepo" /bin/sh -c '. "$1/lib.sh"; dsh_touched_files "$2" "$3"; printf "%s" "$?"' _ "$engine" /nonexistent-dsh-root "$touched_out.none")"
 rm -rf "$touchrepo" "$touched_out" "$touched_out.none" "$hashed" "$basefile" "$garbage"
 
 # --- (g) the EPIPE class, end to end through both long-message hooks (F62/F63) -----------------
@@ -341,8 +341,8 @@ hooks_log="$hooks_root/mill.log"
 run_hook_ignoring_pipe() { # <subcommand> <payload-file> <stderr-file>
   : > "$hooks_log"
   /bin/sh -c 'trap "" PIPE
-    GATE_ROOT="$1" PATH="$2/.dsh/tests/bin:$PATH" MILL_STUB_LOG="$3" sh "$2/.dsh/gate.sh" "$4" < "$5" 2>"$6" >/dev/null
-    exit $?' _ "$hooks_root" "$repo" "$hooks_log" "$1" "$2" "$3"
+    GATE_ROOT="$1" PATH="$2/tests/bin:$PATH" MILL_STUB_LOG="$3" sh "$2/gate.sh" "$4" < "$5" 2>"$6" >/dev/null
+    exit $?' _ "$hooks_root" "$engine" "$hooks_log" "$1" "$2" "$3"
 }
 
 for hook in post-edit turn-end; do
@@ -392,7 +392,7 @@ rm -rf "$hooks_root"
 # `case` test instead of the pipe); the report records the manual audit of every remaining
 # non-`printf` writer in the family.
 hazard=$(grep -nE 'printf [^|]*\| *(head|read|grep -[A-Za-z]*q|grep --?m|sed[^|]*q|awk[^|]*exit)' \
-           "$repo/.dsh/lib.sh" "$repo"/.dsh/hooks/*.sh 2>/dev/null \
+           "$engine/lib.sh" "$engine"/hooks/*.sh 2>/dev/null \
          | grep -v '2>/dev/null' | grep -v '^[^:]*:[0-9]*: *#' | head -5)
 if [ -z "$hazard" ]; then
   ok "no unsuppressed printf pipeline whose reader can exit early"
@@ -406,11 +406,11 @@ fi
 # lib.sh now, and they are asserted here for the reason the bounds above are: a shared helper no test
 # names is a helper that can be broken in both gates at once, silently.
 sect() { # sect <long body> <short body>: what the two gates' report/notes look like after two sections
-  /bin/sh -c '. "$1/.dsh/lib.sh"
+  /bin/sh -c '. "$1/lib.sh"
 report=""; notes=""; max_lines=2
 section blocking "One" "$2"
 section note "Two" "$3"
-printf "report=[%s]\nnotes=[%s]\n" "$report" "$notes"' _ "$repo" "$1" "$2"
+printf "report=[%s]\nnotes=[%s]\n" "$report" "$notes"' _ "$engine" "$1" "$2"
 }
 body=$(printf 'l1\nl2\nl3')
 sectout=$(sect "$body" 'a plain note')
@@ -430,8 +430,8 @@ has "section says so when a check printed nothing" "(the check printed nothing)"
     "$(sect "$body" '')"
 
 capq() { # capq <caps> <capability> -> yes|no
-  /bin/sh -c '. "$1/.dsh/lib.sh"; caps=$2; if has_cap "$3"; then printf yes; else printf no; fi' \
-    _ "$repo" "$1" "$2"
+  /bin/sh -c '. "$1/lib.sh"; caps=$2; if has_cap "$3"; then printf yes; else printf no; fi' \
+    _ "$engine" "$1" "$2"
 }
 is "has_cap finds the first token of a row" "yes" "$(capq 'fmt,scalafix,tests' fmt)"
 is "has_cap finds a middle token of a row" "yes" "$(capq 'fmt,scalafix,tests' scalafix)"
@@ -449,7 +449,7 @@ is "has_cap on a row whose only token is scalafix" "no" "$(capq 'scalafix' fmt)"
 mill_of() { # mill_of <root> <path> -> the resolved command, or NONE
   # The child's $1 is the repository (for lib.sh) and $2 is the root being resolved; the PATH
   # prefix is what the fallback searches, and in the "neither" case it holds no mill at all.
-  PATH="$2" /bin/sh -c '. "$1/.dsh/lib.sh"; resolve_mill "$2" || printf NONE' _ "$repo" "$1"
+  PATH="$2" /bin/sh -c '. "$1/lib.sh"; resolve_mill "$2" || printf NONE' _ "$engine" "$1"
 }
 mroot=$(mktemp -d)
 mkdir -p "$mroot/wrapped" "$mroot/bare" "$mroot/pathbin" "$mroot/emptybin"
@@ -489,9 +489,9 @@ covroot=$(mktemp -d)
 # cache path, so calling them in-process asserts exactly what the guard calls -- and it is how
 # check-harness.sh consumes them too (it sources lib.sh and hands them a scratch cache). The rest of
 # this file goes through child shells for PATH isolation, which nothing here needs.
-. "$repo/.dsh/lib.sh"
+. "$engine/lib.sh"
 coverage_count_child() { # coverage_count_child <cache>
-  /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_coverage_count "$2"' _ "$repo" "$1"
+  /bin/sh -c '. "$1/lib.sh"; dsh_coverage_count "$2"' _ "$engine" "$1"
 }
 covcache="$covroot/index-coverage"
 covidx="$covroot/out/core/semanticDbData.dest/classes/META-INF/semanticdb/core/src"
@@ -629,7 +629,7 @@ dsh_coverage_covers "$covroot" "$covcache" core/src/A.scala \
 # be found -- a spelling that is not found stands a covered read down, which is the permissive
 # direction this rule must never drift in.
 canon() { # canon <path> -> the canonical spelling
-  /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_canonical_path "$2"' _ "$repo" "$1"
+  /bin/sh -c '. "$1/lib.sh"; dsh_canonical_path "$2"' _ "$engine" "$1"
 }
 is "canonical: a leading ./ is dropped" "a/b" "$(canon './a/b')"
 is "canonical: // collapses" "a/b" "$(canon 'a//b')"
@@ -643,7 +643,7 @@ is "canonical: the root itself" "/" "$(canon '/')"
 is "canonical: ~ expands to HOME" "$HOME/x" "$(canon '~/x')"
 is "canonical: ~ alone is HOME" "$HOME" "$(canon '~')"
 is "canonical: ~ expands against the HOME of the calling shell" "/tmp/dsh-home/x" \
-  "$(/bin/sh -c 'HOME=/tmp/dsh-home; . "$1/.dsh/lib.sh"; dsh_canonical_path "~//x/./y/.."' _ "$repo")"
+  "$(/bin/sh -c 'HOME=/tmp/dsh-home; . "$1/lib.sh"; dsh_canonical_path "~//x/./y/.."' _ "$engine")"
 is "canonical: an unknown ~user is left alone (and then stands down)" '~user/x' "$(canon '~user/x')"
 # LEXICAL means the filesystem is not consulted, and that has to be measured in a directory where a
 # glob WOULD match: the split inside dsh_canonical_path is unquoted (IFS is `/`, so a segment may
@@ -662,15 +662,15 @@ is "canonical: ? and [ are left as written too" "x?/[a]/A.scala" \
 is "canonical: a segment with a space still survives the same split" "dir with space/A.scala" \
   "$(cd "$globdir" && canon 'dir with space/A.scala')"
 is "canonical: a caller whose globbing is already off keeps it off" "yes" \
-  "$(/bin/sh -c 'set -f; . "$1/.dsh/lib.sh"; dsh_canonical_path "x/*/y" >/dev/null; case $- in *f*) echo yes ;; *) echo no ;; esac' _ "$repo")"
+  "$(/bin/sh -c 'set -f; . "$1/lib.sh"; dsh_canonical_path "x/*/y" >/dev/null; case $- in *f*) echo yes ;; *) echo no ;; esac' _ "$engine")"
 is "canonical: a caller whose globbing is on gets it back" "no" \
-  "$(/bin/sh -c 'set +f; . "$1/.dsh/lib.sh"; dsh_canonical_path "x/*/y" >/dev/null; case $- in *f*) echo yes ;; *) echo no ;; esac' _ "$repo")"
+  "$(/bin/sh -c 'set +f; . "$1/lib.sh"; dsh_canonical_path "x/*/y" >/dev/null; case $- in *f*) echo yes ;; *) echo no ;; esac' _ "$engine")"
 rm -rf "$globdir"
 # And the guard's own composition of the two steps, through a child shell: a covered path is found
 # through a non-canonical spelling, and one that is not a path of the root is not found at all.
 relpath() { # relpath <root> <named path>
   /bin/sh -c '
-    . "$1/.dsh/lib.sh"
+    . "$1/lib.sh"
     root=$2; root_phys=$(CDPATH= cd -- "$root" && pwd -P)
     _rr=$(dsh_canonical_path "$3")
     case "$_rr" in
@@ -680,7 +680,7 @@ relpath() { # relpath <root> <named path>
       ..|../*) _rr="" ;;
       .) _rr="" ;;
     esac
-    printf "%s" "$_rr"' _ "$repo" "$1" "$2"
+    printf "%s" "$_rr"' _ "$engine" "$1" "$2"
 }
 is "coverage: a non-canonical spelling resolves to the indexed path" "core/src/A.scala" \
   "$(relpath "$covroot" "$covroot/./core//src/../src/A.scala")"
@@ -730,21 +730,21 @@ rm -rf "$covroot" "$covempty"
 #   * an ABSENT file is no freeze at all, and the parse still succeeds (exit 0, no output);
 #   * a MALFORMED entry -- no reason, a single-space separator, an absolute path outside the
 #     repository, a relative path walking out, a glob that is not a `/**` suffix -- is reported on
-#     stderr and makes the parse exit 1, which is the status `.dsh/check-harness.sh` fails on.
-fzlist() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_frozen_paths "$2"' _ "$repo" "$1"; }
-fzrc() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_frozen_paths "$2" >/dev/null 2>&1; printf "%s" "$?"' _ "$repo" "$1"; }
-fzerr() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_frozen_paths "$2" 2>&1 >/dev/null' _ "$repo" "$1"; }
+#     stderr and makes the parse exit 1, which is the status `.dsh/engine/check-harness.sh` fails on.
+fzlist() { /bin/sh -c '. "$1/lib.sh"; dsh_frozen_paths "$2"' _ "$engine" "$1"; }
+fzrc() { /bin/sh -c '. "$1/lib.sh"; dsh_frozen_paths "$2" >/dev/null 2>&1; printf "%s" "$?"' _ "$engine" "$1"; }
+fzerr() { /bin/sh -c '. "$1/lib.sh"; dsh_frozen_paths "$2" 2>&1 >/dev/null' _ "$engine" "$1"; }
 fzreason() { # fzreason <root> <path> -> the reason, or NO when the path is not frozen
-  /bin/sh -c '. "$1/.dsh/lib.sh"
-r=$(dsh_frozen_reason "$3" "$2") && printf "%s" "$r" || printf NO' _ "$repo" "$1" "$2"
+  /bin/sh -c '. "$1/lib.sh"
+r=$(dsh_frozen_reason "$3" "$2") && printf "%s" "$r" || printf NO' _ "$engine" "$1" "$2"
 }
 fzsealed() { # fzsealed <root> <path> -> the reason when SEALED, or NO
-  /bin/sh -c '. "$1/.dsh/lib.sh"
-r=$(dsh_sealed_reason "$3" "$2") && printf "%s" "$r" || printf NO' _ "$repo" "$1" "$2"
+  /bin/sh -c '. "$1/lib.sh"
+r=$(dsh_sealed_reason "$3" "$2") && printf "%s" "$r" || printf NO' _ "$engine" "$1" "$2"
 }
 fzaccess() { # fzaccess <root> <path> -> frozen | sealed | NO
-  /bin/sh -c '. "$1/.dsh/lib.sh"
-r=$(dsh_frozen_access "$3" "$2") && printf "%s" "$r" || printf NO' _ "$repo" "$1" "$2"
+  /bin/sh -c '. "$1/lib.sh"
+r=$(dsh_frozen_access "$3" "$2") && printf "%s" "$r" || printf NO' _ "$engine" "$1" "$2"
 }
 
 fzroot=$(mktemp -d)
@@ -934,11 +934,11 @@ export GATE_PAYLOAD
 has_field() { # has_field <dotted path> <want>
   if [ "$have_jq" = 1 ]; then
     is "jq      payload_has $1" "$2" \
-       "$(PATH="$jq_only" /bin/sh -c '. "$1/.dsh/lib.sh"; if payload_has "$2"; then printf yes; else printf no; fi' _ "$repo" "$1")"
+       "$(PATH="$jq_only" /bin/sh -c '. "$1/lib.sh"; if payload_has "$2"; then printf yes; else printf no; fi' _ "$engine" "$1")"
   fi
   if [ "$have_py" = 1 ]; then
     is "python3 payload_has $1" "$2" \
-       "$(PATH="$python_only" /bin/sh -c '. "$1/.dsh/lib.sh"; if payload_has "$2"; then printf yes; else printf no; fi' _ "$repo" "$1")"
+       "$(PATH="$python_only" /bin/sh -c '. "$1/lib.sh"; if payload_has "$2"; then printf yes; else printf no; fi' _ "$engine" "$1")"
   fi
   return 0
 }
@@ -954,8 +954,8 @@ has_field f yes
 rm -rf "$jq_only" "$python_only" "$no_reader"
 
 # --- (l) dsh_contract_get: read one key from .dsh/contract ------
-ctget() { /bin/sh -c '. "$1/.dsh/lib.sh"
-v=$(dsh_contract_get "$3" "$2") && printf "%s" "$v" || printf NO' _ "$repo" "$1" "$2"; }
+ctget() { /bin/sh -c '. "$1/lib.sh"
+v=$(dsh_contract_get "$3" "$2") && printf "%s" "$v" || printf NO' _ "$engine" "$1" "$2"; }
 ctroot=$(mktemp -d); mkdir -p "$ctroot/.dsh"
 printf '# The gate interface\npreCommit  = ./mill -j 1 preCommit\nholdout = ./mill -j 1 --ticker false holdout.test\n\nroots = .\n' > "$ctroot/.dsh/contract"
 is "contract: a key with padded = is read" "./mill -j 1 preCommit" "$(ctget "$ctroot" preCommit)"
@@ -966,14 +966,14 @@ is "contract: a missing file is NO" NO "$(ctget "$ctroot" holdout)"
 rm -rf "$ctroot"
 
 # --- (l2) dsh_contract_for_module: the contract value with <module> substituted ------
-cfm() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_contract_for_module "$3" "$4" "$2"' _ "$repo" "$1" "$2" "$3"; }
+cfm() { /bin/sh -c '. "$1/lib.sh"; dsh_contract_for_module "$3" "$4" "$2"' _ "$engine" "$1" "$2" "$3"; }
 cfroot=$(mktemp -d); mkdir -p "$cfroot/.dsh"
 printf 'fastTests = ./mill -j 1 --ticker false <module>.test.testOnly -- %s\n' "'*Props'" > "$cfroot/.dsh/contract"
 is "contract-for-module: substitution" "./mill -j 1 --ticker false engine.shape.test.testOnly -- '*Props'" "$(cfm "$cfroot" fastTests engine.shape)"
 is "contract-for-module: absent key" "" "$(cfm "$cfroot" turnEndTests engine.shape)"
 rm -rf "$cfroot"
 
-wf() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_weaver_failures' _ "$repo"; }
+wf() { /bin/sh -c '. "$1/lib.sh"; dsh_weaver_failures' _ "$engine"; }
 weaver_out='com.github.mercurievv.skreeep2.holdout.PlaybackHoldout
   + gain then seek keeps position 12ms
   - stop releases device 4ms
@@ -1020,15 +1020,15 @@ is "weaver: pre-suite +/- noise before any header is never counted" \
   "holdout: 1 passed, 0 failed" \
   "$(printf -- '- a compiler note that looks like a marker 1ms\n+ another stray line\nRunning Test Class x.Y\n+ real pass 3ms\n' | wf)"
 
-hc() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_holdout_checks "$2"; printf "rc=%s\n" "$?"' _ "$repo" "$1"; }
-hcroot=$(mktemp -d); mkdir -p "$hcroot/.dsh/.state" "$hcroot/.dsh/hooks"
+hc() { /bin/sh -c '. "$1/lib.sh"; dsh_holdout_checks "$2"; printf "rc=%s\n" "$?"' _ "$engine" "$1"; }
+hcroot=$(mktemp -d); mkdir -p "$hcroot/.dsh/.state" "$hcroot/.dsh/engine/hooks"
 printf 'engine\tengine\tfmt,scalafix,tests\nwiring\twiring\tfmt,tests\nholdout\tholdout\t\n' > "$hcroot/.dsh/.state/modules.tsv"
 printf 'holdout = ./mill -j 1 --ticker false holdout.test\n' > "$hcroot/.dsh/contract"
 {
   printf 'sealed\tholdout/**\tholdout suite\n'
   printf 'engine/test/**\ttests are the human'"'"'s spec\n'
   printf 'wiring/test/**\ttests are the human'"'"'s spec\n'
-  for p in .dsh/frozen-paths .dsh/contract .dsh/hooks.json .dsh/gate.sh .dsh/lib.sh '.dsh/hooks/**' .dsh/check-harness.sh \
+  for p in .dsh/frozen-paths .dsh/contract .dsh/hooks.json .dsh/engine/gate.sh .dsh/engine/lib.sh '.dsh/engine/hooks/**' .dsh/engine/check-harness.sh \
            .ignore .claude/settings.json .claude/settings.local.json .dsh/cc-settings.json \
            .dsh/.state/receipts .dsh/.state/modules.tsv; do
     printf '%s\tthe harness is the human'"'"'s\n' "$p"
@@ -1054,7 +1054,7 @@ sed -i.bak 's/^holdout\/\*\*/sealed\tholdout\/**/' "$hcroot/.dsh/frozen-paths"
 
 # rule 3: a self-freeze missing -- one of the original seven, and one of each later-added group
 # (the ripgrep ignore file, the live Claude Code wiring, the gate's own state files).
-for p in .dsh/gate.sh .ignore .claude/settings.local.json .dsh/.state/receipts .dsh/.state/modules.tsv; do
+for p in .dsh/engine/gate.sh .ignore .claude/settings.local.json .dsh/.state/receipts .dsh/.state/modules.tsv; do
   esc=$(printf '%s' "$p" | sed 's/[.\/*]/\\&/g')
   sed -i.bak "/^$esc\t/d" "$hcroot/.dsh/frozen-paths"
   case "$(hc "$hcroot")" in *"FAIL"*"$p"*) is "holdout-checks: rule 3 names the missing self-freeze $p" ok ok ;; *) is "holdout-checks: rule 3 names the missing self-freeze $p" ok "$(hc "$hcroot")" ;; esac
@@ -1096,8 +1096,8 @@ mv "$hcroot/.dsh/.state/modules.tsv.hidden" "$hcroot/.dsh/.state/modules.tsv"
 rm -rf "$hcroot"
 
 # --- feedback: dsh_feedback_parse ------------------------------------------------------------------
-fp() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_feedback_parse "${2:-auto}"' _ "$repo" "${1:-}"; }
-tr_dir="$repo/.dsh/tests/transcripts"
+fp() { /bin/sh -c '. "$1/lib.sh"; dsh_feedback_parse "${2:-auto}"' _ "$engine" "${1:-}"; }
+tr_dir="$engine/tests/transcripts"
 
 # weaver + weaver-scalacheck, real capture (ANSI present in the -color file)
 out=$(fp < "$tr_dir/weaver-scalacheck-fail-color.txt")
@@ -1239,7 +1239,7 @@ is "parse(unreadable): header still counts raw lines" "counts${tab}0${tab}0${tab
 
 
 # --- render -----------------------------------------------------------------------------------
-rf() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_render_feedback "$2" "$3"' _ "$repo" "$1" "$2"; }
+rf() { /bin/sh -c '. "$1/lib.sh"; dsh_render_feedback "$2" "$3"' _ "$engine" "$1" "$2"; }
 rec="counts${tab}12${tab}2${tab}84
 kind${tab}property
 suite${tab}com.x.PhraseProps
@@ -1277,12 +1277,13 @@ is "render: a multi-field message row is read whole, tabs kept as-is" "  FAILURE
 # --- feedback: the scalafix / scalac adapters (spec 2026-09-20 diagnostic→instruction §2) -------
 # Transcripts are real Mill 1.1.7 captures (fixStrict / fix --check with purrism 0.9.1; core.compile
 # with a not-found, a type mismatch and a wart). The kinds table is read from the [root] argument
-# when one is given, else gate_root -- here this repo's own .dsh/instructions/scalac-kinds.tsv; the
-# root block further down exercises the table mechanics against a fixture table regardless.
+# when one is given, else gate_root -- here a scratch root holding a kinds table (`groot`, below), so
+# the engine's tests carry no project's table; the root block further down exercises the table
+# mechanics against a fixture table regardless.
 # The absolute /Users/viktorskalinins/IdeaProjects/skreeep2 root below is deliberate, not a machine
 # leak to "fix": the two purrism transcripts were captured on that checkout and print that path in
 # every finding, and the assertions are exactly that the parser normalises it away against [root].
-fpr() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_feedback_parse "$2" "$3" "$4"' _ "$repo" "$1" "$2" "${3:-}"; }
+fpr() { /bin/sh -c '. "$1/lib.sh"; dsh_feedback_parse "$2" "$3" "$4"' _ "$engine" "$1" "$2" "${3:-}"; }
 out=$(fpr auto /Users/viktorskalinins/IdeaProjects/skreeep2 < "$tr_dir/fixstrict-purrism.txt")
 is "scalafix: fixStrict is auto-detected and yields one diagnostic" 1 "$(printf '%s\n' "$out" | grep -c "^kind${tab}diagnostic\$")"
 is "scalafix: the code is the full lint id" "code${tab}PreferEffectIdioms.manual-resource" "$(printf '%s\n' "$out" | grep "^code${tab}")"
@@ -1303,7 +1304,9 @@ is "scalafix: pending rewrite counts as one error, the lint as one warning" "1${
 # the captured diff body rewrites `IO.pure` to `IO.delay`; neither hunk line may leak into a record
 is "scalafix: diff body lines never become records or messages" 0 "$(printf '%s\n' "$out" | grep -c 'IO\.delay\|^@@\|^+++')"
 is "scalafix: source and caret lines never become records" 0 "$(printf '%s\n' "$out" | grep -c 'try IO.pure\|^[[:space:]]*\^$')"
-out=$(fpr auto "" < "$tr_dir/scalac-notfound.txt")
+groot=$(mktemp -d "${TMPDIR:-/tmp}/dsh-groot.XXXXXX"); mkdir -p "$groot/.dsh/instructions"
+printf '# kind\tregex\nnot-found\t^Not found: \ntype-mismatch\t^Found: \n' > "$groot/.dsh/instructions/scalac-kinds.tsv"
+out=$(GATE_ROOT="$groot"; export GATE_ROOT; fpr auto "" < "$tr_dir/scalac-notfound.txt")
 is "scalac: auto-detected, one diagnostic" 1 "$(printf '%s\n' "$out" | grep -c "^kind${tab}diagnostic\$")"
 is "scalac: source row" "source${tab}scalac" "$(printf '%s\n' "$out" | grep "^source${tab}")"
 is "scalac: not-found kind" "code${tab}scalac.not-found" "$(printf '%s\n' "$out" | grep "^code${tab}")"
@@ -1312,7 +1315,7 @@ is "scalac: the headline is the message" "message${tab}Not found: undefinedName"
 is "scalac: a one-line headline has no detail rows" 0 "$(printf '%s\n' "$out" | grep -c "^detail${tab}")"
 is "scalac: Compilation failed is not infra when a diagnostic was read" 0 "$(printf '%s\n' "$out" | grep -c "^kind${tab}infra\$")"
 is "scalac: counts 1 error 0 warnings" "1${tab}0" "$(printf '%s\n' "$out" | awk -F'\t' '$1=="counts"{print $5 "\t" $6}')"
-out=$(fpr scalac "" < "$tr_dir/scalac-mismatch.txt")
+out=$(GATE_ROOT="$groot"; export GATE_ROOT; fpr scalac "" < "$tr_dir/scalac-mismatch.txt")
 is "scalac: type-mismatch kind" "code${tab}scalac.type-mismatch" "$(printf '%s\n' "$out" | grep "^code${tab}")"
 is "scalac: Found line is the message" "message${tab}Found:    (42 : Int)" "$(printf '%s\n' "$out" | grep "^message${tab}")"
 is "scalac: Required line is a detail row" "detail${tab}Required: String" "$(printf '%s\n' "$out" | grep "^detail${tab}")"
@@ -1339,9 +1342,9 @@ out=$(fpr scalac "$kroot" < "$tr_dir/scalac-mismatch.txt")
 is "scalac: the table matches the Found/Required pair" "code${tab}scalac.type-mismatch" "$(printf '%s\n' "$out" | grep "^code${tab}")"
 out=$(fpr scalac "$kroot" < "$tr_dir/wart-var.txt")
 is "scalac: a wart never consults the kinds table" "code${tab}wartremover.Var" "$(printf '%s\n' "$out" | grep "^code${tab}")"
-out=$(GATE_ROOT="$kroot" /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_feedback_parse scalac ""' _ "$repo" < "$tr_dir/scalac-notfound.txt")
+out=$(GATE_ROOT="$kroot" /bin/sh -c '. "$1/lib.sh"; dsh_feedback_parse scalac ""' _ "$engine" < "$tr_dir/scalac-notfound.txt")
 is "scalac: without a [root] the kinds table comes from gate_root" "code${tab}scalac.not-found" "$(printf '%s\n' "$out" | grep "^code${tab}")"
-rm -r "$kroot"
+rm -r "$kroot" "$groot"
 # an unpositioned `-- Error:` headline is its OWN record, every time -- not a fallback for a run with
 # no other record: the reviewer's repro (a positioned warning + `-- Error: cyclic reference` + `one
 # error found`) used to render as 0 errors, 1 warning while the compile was red
@@ -1404,10 +1407,10 @@ is "scalac: back-to-back diagnostics without a blank are two records" 2 "$(print
 is "auto: a weaver transcript is still weaver (no errors/warnings fields)" "counts${tab}1${tab}2${tab}35" "$(fp auto < "$tr_dir/weaver-scalacheck-fail.txt" | head -1)"
 
 # --- feedback: dsh_feedback_checks -------------------------------------------------------------
-fc() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_feedback_checks "$2"; printf "rc=%s\n" "$?"' _ "$repo" "$1"; }
+fc() { /bin/sh -c '. "$1/lib.sh"; dsh_feedback_checks "$2"; printf "rc=%s\n" "$?"' _ "$engine" "$1"; }
 fcroot=$(mktemp -d)
-mkdir -p "$fcroot/.dsh/hooks" "$fcroot/.dsh/.state" "$fcroot/app/test/src"
-cp "$repo/.dsh/hooks/feedback.sh" "$fcroot/.dsh/hooks/feedback.sh"
+mkdir -p "$fcroot/.dsh/engine/hooks" "$fcroot/.dsh/.state" "$fcroot/app/test/src"
+cp "$engine/hooks/feedback.sh" "$fcroot/.dsh/engine/hooks/feedback.sh"
 printf 'app\tapp\tfmt,tests\n' > "$fcroot/.dsh/.state/modules.tsv"
 : > "$fcroot/app/test/src/APros.scala"
 printf 'fastTests    = ./mill -j 1 --ticker false <module>.test.testOnly -- '"'"'*Props'"'"'\nturnEndTests = ./mill -j 1 --ticker false <module>.test\n' > "$fcroot/.dsh/contract"
@@ -1436,10 +1439,10 @@ case "$out" in *FAIL*) is "feedback-checks: an absent map never FAILs rule 2" no
 mv "$fcroot/.dsh/.state/modules.tsv.hidden" "$fcroot/.dsh/.state/modules.tsv"
 
 # rule 1: the wrapper missing
-mv "$fcroot/.dsh/hooks/feedback.sh" "$fcroot/.dsh/hooks/feedback.sh.hidden"
+mv "$fcroot/.dsh/engine/hooks/feedback.sh" "$fcroot/.dsh/engine/hooks/feedback.sh.hidden"
 out=$(fc "$fcroot")
 case "$out" in *"FAIL"*"feedback.sh"*) is "feedback-checks: rule 1 fails when the wrapper is missing" ok ok ;; *) is "feedback-checks: rule 1 fails when the wrapper is missing" ok "$out" ;; esac
-mv "$fcroot/.dsh/hooks/feedback.sh.hidden" "$fcroot/.dsh/hooks/feedback.sh"
+mv "$fcroot/.dsh/engine/hooks/feedback.sh.hidden" "$fcroot/.dsh/engine/hooks/feedback.sh"
 
 # rule 3: no contract keys -> two notes, no FAIL
 : > "$fcroot/.dsh/contract"
@@ -1463,16 +1466,16 @@ out=$(fc "$fcroot")
 case "$out" in *"note"*"21 feedback logs"*) is "feedback-checks: rule 5 notes more than 20 logs" ok ok ;; *) is "feedback-checks: rule 5 notes more than 20 logs" ok "$out" ;; esac
 rm -rf "$fcroot/.dsh/.state/feedback"
 
-# rules 2 and 4 scan through dsh_find_pruned -- .dsh/tests/cases/*/root/** fixture trees are not
+# rules 2 and 4 scan through dsh_find_pruned -- .dsh/engine/tests/cases/*/root/** fixture trees are not
 # the project, and must never surface a permanent note/FAIL of their own.
-mkdir -p "$fcroot/.dsh/tests/cases/x/root/app/test-draft/src"
-: > "$fcroot/.dsh/tests/cases/x/root/app/test-draft/src/P.scala"
-mkdir -p "$fcroot/.dsh/tests/cases/x/root/app/test/src"
-printf 'object BadProps { def x = 1 }\n' > "$fcroot/.dsh/tests/cases/x/root/app/test/src/BadProps.scala"
+mkdir -p "$fcroot/.dsh/engine/tests/cases/x/root/app/test-draft/src"
+: > "$fcroot/.dsh/engine/tests/cases/x/root/app/test-draft/src/P.scala"
+mkdir -p "$fcroot/.dsh/engine/tests/cases/x/root/app/test/src"
+printf 'object BadProps { def x = 1 }\n' > "$fcroot/.dsh/engine/tests/cases/x/root/app/test/src/BadProps.scala"
 out=$(fc "$fcroot")
-is "feedback-checks: rule 4 ignores a draft under a .dsh/tests/cases fixture tree" 0 "$(printf '%s' "$out" | grep -c 'P.scala')"
-case "$out" in *FAIL*) is "feedback-checks: rule 2 ignores a bare Props under a .dsh/tests/cases fixture tree" none "$out" ;; *) is "feedback-checks: rule 2 ignores a bare Props under a .dsh/tests/cases fixture tree" ok ok ;; esac
-rm -rf "$fcroot/.dsh/tests/cases"
+is "feedback-checks: rule 4 ignores a draft under a .dsh/engine/tests/cases fixture tree" 0 "$(printf '%s' "$out" | grep -c 'P.scala')"
+case "$out" in *FAIL*) is "feedback-checks: rule 2 ignores a bare Props under a .dsh/engine/tests/cases fixture tree" none "$out" ;; *) is "feedback-checks: rule 2 ignores a bare Props under a .dsh/engine/tests/cases fixture tree" ok ok ;; esac
+rm -rf "$fcroot/.dsh/engine/tests/cases"
 
 # the identical files OUTSIDE .dsh/ still trigger both rules -- the pruning is scoped to the
 # harness's own trees, not to *Props.scala / test-draft/src in general.
@@ -1491,7 +1494,7 @@ is "feedback-checks: every row has a leading ok|FAIL|note|rc= tag" 0 "$(fc "$fcr
 rm -rf "$fcroot"
 
 # --- instructions: dsh_instruction_for ------------------------------------------------------------
-ifor() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_instruction_for "$2" "$3"' _ "$repo" "$1" "$2"; }
+ifor() { /bin/sh -c '. "$1/lib.sh"; dsh_instruction_for "$2" "$3"' _ "$engine" "$1" "$2"; }
 iroot=$(mktemp -d); mkdir -p "$iroot/.dsh/instructions"
 printf '# purrism 0.9.1\nPreferEffectIdioms.manual-resource\tPreferEffectIdioms\tT\tE\tWrap it in Resource.make\thttps://x/#effects\nPreferArrow.readability-budget\tPreferArrow\tT\tE\tKeep the arrow chain short\t\n' > "$iroot/.dsh/instructions/purrism.tsv"
 printf '# local\nscalac.not-found\tscalac\tT\tE\tCheck the spelling\t\nPreferArrow.readability-budget\tPreferArrow\tT\tE\tLOCAL OVERRIDE\t\n' > "$iroot/.dsh/instructions/local.tsv"
@@ -1511,7 +1514,7 @@ ifor PreferEffectIdioms.manual-resource "$iroot" >/dev/null; is "instruction: no
 rm -r "$iroot"
 
 # --- instructions: dsh_purrism_declared_version ----------------------------------------------------
-pver() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_purrism_declared_version "$2"' _ "$repo" "$1"; }
+pver() { /bin/sh -c '. "$1/lib.sh"; dsh_purrism_declared_version "$2"' _ "$engine" "$1"; }
 vroot=$(mktemp -d); mkdir -p "$vroot/buildKit"
 printf 'trait Layer {\n  def scalafixIvyDeps = Seq(\n    mvn"io.github.mercurievv:scala-purrism-scalafix_3:0.9.1",\n    mvn"io.github.mercurievv:scala-purrism-scalafix_3:9.9.9",\n  )\n}\n' > "$vroot/buildKit/Layer.mill"
 is "purrism-version: the first literal in buildKit/Layer.mill" "0.9.1" "$(pver "$vroot")"
@@ -1528,7 +1531,7 @@ rm -r "$vroot"
 wroot=$(mktemp -d); mkdir -p "$wroot/.dsh/.state" "$wroot/.dsh/instructions"
 printf '# local\n' > "$wroot/.dsh/instructions/local.tsv"; printf '# purrism 0.9.1\n' > "$wroot/.dsh/instructions/purrism.tsv"
 printf '#!/bin/sh\ncase "$*" in *red*) printf "[error] app.compile Compilation failed\\n"; exit 1 ;; *diag*) printf "[error] a/B.scala:1:2\\n  x\\n  ^\\nNot found: x\\n"; exit 1 ;; esac\nprintf "done compiling\\n"\n' > "$wroot/mill"; chmod +x "$wroot/mill"
-cw() { GATE_ROOT="$wroot" /bin/sh -c 'here="$1/.dsh"; . "$1/.dsh/lib.sh"; dsh_check_through_wrapper "$2" "$3" "$2"; printf "rc=%s\\n--shown--\\n%s\\n--raw--\\n%s\\n" "$DSH_CHECK_RC" "$DSH_CHECK_SHOWN" "$DSH_CHECK_RAW"' _ "$repo" "$1" "$wroot/mill"; }
+cw() { GATE_ROOT="$wroot" /bin/sh -c 'here="$1"; . "$1/lib.sh"; dsh_check_through_wrapper "$2" "$3" "$2"; printf "rc=%s\\n--shown--\\n%s\\n--raw--\\n%s\\n" "$DSH_CHECK_RC" "$DSH_CHECK_SHOWN" "$DSH_CHECK_RAW"' _ "$engine" "$1" "$wroot/mill"; }
 out=$(cw app.green)
 is "check-wrapper: a green check returns rc 0" 1 "$(printf '%s\n' "$out" | grep -c '^rc=0$')"
 out=$(cw app.red)
@@ -1545,12 +1548,12 @@ iroot=$(mktemp -d); mkdir -p "$iroot/.dsh/instructions"
 printf '# purrism 0.9.1\nPreferEffectIdioms.manual-resource\tPreferEffectIdioms\tT\tE\tWrap it in Resource.make\thttps://x/#effects\n' > "$iroot/.dsh/instructions/purrism.tsv"
 printf '# local\n' > "$iroot/.dsh/instructions/local.tsv"
 stream=$(printf 'counts\t0\t0\t9\t1\t1\nkind\tdiagnostic\nsource\tscalafix\ncode\tPreferEffectIdioms.manual-resource\nfile\tcore/src/A.scala:8:5\nmessage\tManual acquire/release\n\nkind\tdiagnostic\nsource\tscalac\ncode\tscalac.type-mismatch\nfile\tcore/src/B.scala:7:26\nmessage\tFound:    (42 : Int)\ndetail\tRequired: String\n\n')
-ann=$(printf '%s\n' "$stream" | /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_instructions_annotate "$2" "$3"' _ "$repo" "$iroot" "$iroot/missing")
+ann=$(printf '%s\n' "$stream" | /bin/sh -c '. "$1/lib.sh"; dsh_instructions_annotate "$2" "$3"' _ "$engine" "$iroot" "$iroot/missing")
 is "annotate: instruction row follows the code row" "code${tab}PreferEffectIdioms.manual-resource
 instruction${tab}Wrap it in Resource.make
 doc${tab}https://x/#effects" "$(printf '%s\n' "$ann" | grep -A2 "^code${tab}PreferEffect")"
 is "annotate: the unmatched code is recorded once" "scalac.type-mismatch" "$(cat "$iroot/missing")"
-printf '%s\n' "$stream" | /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_instructions_annotate "$2" "$3"' _ "$repo" "$iroot" "$iroot/missing" >/dev/null
+printf '%s\n' "$stream" | /bin/sh -c '. "$1/lib.sh"; dsh_instructions_annotate "$2" "$3"' _ "$engine" "$iroot" "$iroot/missing" >/dev/null
 is "annotate: missing file is deduped across runs" 1 "$(wc -l < "$iroot/missing" | tr -d ' ')"
 rend=$(printf '%s\n' "$ann" | rf "core.fixStrict" ".dsh/.state/feedback/x.log")
 is "render: diagnostics header" "FEEDBACK: 1 errors, 1 warnings (core.fixStrict)" "$(printf '%s\n' "$rend" | sed -n 1p)"
@@ -1565,14 +1568,14 @@ is "render: a green diagnostics run is one line" "FEEDBACK: 0 errors, 0 warnings
 rm -r "$iroot"
 
 # --- instructions: dsh_instruction_checks ----------------------------------------------------------
-ichk() { /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_instruction_checks "$2"' _ "$repo" "$1"; }
+ichk() { /bin/sh -c '. "$1/lib.sh"; dsh_instruction_checks "$2"' _ "$engine" "$1"; }
 iroot=$(mktemp -d); mkdir -p "$iroot/.dsh/instructions" "$iroot/.dsh/.state" "$iroot/buildKit"
 printf 'mvn"io.github.mercurievv:scala-purrism-scalafix_3:0.9.1",\n' > "$iroot/buildKit/Layer.mill"
 printf '# purrism 0.9.1\nA.b\tA\tT\tE\tI\t\n' > "$iroot/.dsh/instructions/purrism.tsv"
 printf '# local\nscalac.not-found\tscalac\tT\tE\tI\t\n' > "$iroot/.dsh/instructions/local.tsv"
 printf 'not-found\t^Not found: \n' > "$iroot/.dsh/instructions/scalac-kinds.tsv"
-: > "$iroot/.dsh/instructions-sync.sh"
-printf '.dsh/instructions/purrism.tsv\tx\n.dsh/instructions/local.tsv\tx\n.dsh/instructions/scalac-kinds.tsv\tx\n.dsh/instructions-sync.sh\tx\n' > "$iroot/.dsh/frozen-paths"
+mkdir -p "$iroot/.dsh/engine"; : > "$iroot/.dsh/engine/instructions-sync.sh"
+printf '.dsh/instructions/purrism.tsv\tx\n.dsh/instructions/local.tsv\tx\n.dsh/instructions/scalac-kinds.tsv\tx\n.dsh/engine/instructions-sync.sh\tx\n' > "$iroot/.dsh/frozen-paths"
 is "ichecks: a well-formed installation is all ok" 0 "$(ichk "$iroot" | grep -c "^FAIL")"
 printf '# purrism 0.9.1\nA.b\tA\tT\n' > "$iroot/.dsh/instructions/purrism.tsv"
 is "ichecks: rule 1 — a purrism row that is not six fields FAILs" 1 "$(ichk "$iroot" | grep -c "^FAIL${tab}.*purrism.tsv.*six")"
@@ -1782,8 +1785,16 @@ mkdir -p "$vk_tmp/.dsh/policy"
 vk_rows=$(dsh_verify_checks "$vk_tmp" 2>&1)
 has "dsh_verify_checks: a missing verify-diff.sh is a FAIL" "FAIL" "$vk_rows"
 has "dsh_verify_checks: it names the script" "verify-diff.sh" "$vk_rows"
-vk_self=$(dsh_verify_checks "$(pwd)" 2>&1)
-has "dsh_verify_checks: this repository's script is present" "ok	.dsh/verify-diff.sh is present and executable" "$vk_self"
+# A project in the vendored layout, built here so the engine's tests carry no project's state: the
+# engine at .dsh/engine/, a policy table and a memorisation table, all three frozen.
+self_root=$(mktemp -d)
+mkdir -p "$self_root/.dsh/engine" "$self_root/.dsh/policy"
+cp -p "$engine/verify-diff.sh" "$self_root/.dsh/engine/verify-diff.sh"
+printf 'engine/shape\tscala/\tthe standard library\n' > "$self_root/.dsh/policy/allowed-types.tsv"
+printf 'min_overlap\t8\n' > "$self_root/.dsh/policy/memorisation.tsv"
+printf '.dsh/engine/verify-diff.sh\tthe gate is the human'"'"'s\n.dsh/policy/allowed-types.tsv\tthe policy is the human'"'"'s\n.dsh/policy/memorisation.tsv\tthe thresholds are the human'"'"'s\n' > "$self_root/.dsh/frozen-paths"
+vk_self=$(dsh_verify_checks "$self_root" 2>&1)
+has "dsh_verify_checks: this repository's script is present" "ok	.dsh/engine/verify-diff.sh is present and executable" "$vk_self"
 has "dsh_verify_checks: this repository's policy table parses" ".dsh/policy/allowed-types.tsv" "$vk_self"
 has "dsh_verify_checks: it reports whether the script and the table are frozen" "frozen" "$vk_self"
 # An EMPTY policy table is the same state as no table at all -- no module has a policy, none is
@@ -2133,9 +2144,10 @@ vm_no "dsh_verify_checks: with no launcher, literal_tokens is never reported ok"
 rm -rf "$vm_tmp"
 
 # this repository's own table parses and is frozen
-vm_self=$(dsh_verify_checks "$(pwd)" 2>&1)
+vm_self=$(dsh_verify_checks "$self_root" 2>&1)
 has "dsh_verify_checks: this repository's memorisation.tsv parses" "ok	.dsh/policy/memorisation.tsv parses" "$vm_self"
 has "dsh_verify_checks: this repository's memorisation.tsv is frozen" "ok	.dsh/policy/memorisation.tsv is frozen" "$vm_self"
+rm -rf "$self_root"
 
 # --- dsh_is_test_path: a VISIBLE test source -- under its owning module's test/, not sealed -----
 itp_tmp=$(mktemp -d)
@@ -2185,7 +2197,7 @@ cat > "$mr_tmp/answer.json" <<'JSON'
 JSON
 printf 'this is not JSON\n' > "$mr_tmp/bad.json"
 mr_read() { # <reader PATH> <answer> <prefix> -> "rc=<n>"
-  PATH="$1" /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_memo_read "$2" "$3" "$4"; printf "rc=%s" "$?"' _ "$repo" "$2" "$mr_tmp/req" "$3"
+  PATH="$1" /bin/sh -c '. "$1/lib.sh"; dsh_memo_read "$2" "$3" "$4"; printf "rc=%s" "$?"' _ "$engine" "$2" "$mr_tmp/req" "$3"
 }
 for _mr in jq python3; do
   if [ "$_mr" = jq ]; then [ "$have_jq" = 1 ] || continue; _mrp="$mr_jq:$bare"; else [ "$have_py" = 1 ] || continue; _mrp="$mr_py:$bare"; fi
@@ -2205,11 +2217,11 @@ is "dsh_memo_read: no jq and no python3 is rc 2" rc=2 "$(mr_read "$bare" "$mr_tm
 # The same no-reader path end to end: verify-diff on memo-table-blocks' change must SAY the
 # memorisation check did not run, never pass in silence.
 mr_root=$(mktemp -d)
-cp -R "$repo/.dsh/tests/cases/memo-table-blocks/root/." "$mr_root/"
+cp -R "$engine/tests/cases/memo-table-blocks/root/." "$mr_root/"
 ( cd "$mr_root" && git init -q . && git add -A && git -c user.email=t@t -c user.name=t commit -qm base \
-  && /bin/sh "$repo/.dsh/tests/cases/memo-table-blocks/post_git" ) >/dev/null 2>&1
-mr_out=$(cd "$mr_root" && env PATH="$repo/.dsh/tests/bin:$bare" GATE_ROOT="$mr_root" \
-  SCALASEMANTIC_STUB_LITERALS_OUT="$mr_root/literals.json" /bin/sh "$repo/.dsh/verify-diff.sh" 2>&1)
+  && /bin/sh "$engine/tests/cases/memo-table-blocks/post_git" ) >/dev/null 2>&1
+mr_out=$(cd "$mr_root" && env PATH="$engine/tests/bin:$bare" GATE_ROOT="$mr_root" \
+  SCALASEMANTIC_STUB_LITERALS_OUT="$mr_root/literals.json" /bin/sh "$engine/verify-diff.sh" 2>&1)
 has "verify-diff with no JSON reader says the memorisation check did not run" \
   "no jq and no python3 to read literal_tokens' answer" "$mr_out"
 rm -rf "$bare" "$mr_jq" "$mr_py" "$mr_tmp" "$mr_root"
@@ -2232,17 +2244,17 @@ for _pd in $PATH; do
 done
 IFS=$_old_ifs
 nh_root=$(mktemp -d)
-cp -R "$repo/.dsh/tests/cases/memo-table-blocks/root/." "$nh_root/"
+cp -R "$engine/tests/cases/memo-table-blocks/root/." "$nh_root/"
 ( cd "$nh_root" && git init -q . && git add -A && git -c user.email=t@t -c user.name=t commit -qm base \
-  && /bin/sh "$repo/.dsh/tests/cases/memo-table-blocks/post_git" ) >/dev/null 2>&1
+  && /bin/sh "$engine/tests/cases/memo-table-blocks/post_git" ) >/dev/null 2>&1
 sed 's/"value": "k\([0-9]*\)", "enclosing": null/"value": "t\1", "enclosing": null/g' \
   "$nh_root/literals.json" > "$nh_root/literals-disjoint.json"
 nh_run() { # <literals answer> -> the verify-diff output, then "rc=<n>"
-  (cd "$nh_root" && env PATH="$repo/.dsh/tests/bin:$nohash" GATE_ROOT="$nh_root" \
-    SCALASEMANTIC_STUB_LITERALS_OUT="$1" /bin/sh "$repo/.dsh/verify-diff.sh" 2>&1; printf 'rc=%s' "$?")
+  (cd "$nh_root" && env PATH="$engine/tests/bin:$nohash" GATE_ROOT="$nh_root" \
+    SCALASEMANTIC_STUB_LITERALS_OUT="$1" /bin/sh "$engine/verify-diff.sh" 2>&1; printf 'rc=%s' "$?")
 }
 is "no hasher: the stripped PATH really has none" "" \
-  "$(PATH="$nohash" /bin/sh -c '. "$1/.dsh/lib.sh"; dsh_has_hasher && echo has' _ "$repo")"
+  "$(PATH="$nohash" /bin/sh -c '. "$1/lib.sh"; dsh_has_hasher && echo has' _ "$engine")"
 nh_out=$(nh_run "$nh_root/literals-disjoint.json")
 has "no hasher: tests disjoint from the table pass" "rc=0" "$nh_out"
 printf '  val more = 1\n' >> "$nh_root/core/test/TSpec.scala"

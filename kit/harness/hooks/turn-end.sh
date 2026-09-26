@@ -7,7 +7,7 @@
 # working tree. `git status --porcelain -uall` (untracked files included, and `-uall` so a file in a
 # brand-new directory is named rather than its directory) plus `git diff --name-only HEAD`, filtered
 # to `.scala`/`.sc` and `.mill` — the same derivation `dsh_touched_files` hands to
-# `.dsh/hooks/baseline.sh`, which snapshots it at SessionStart. A path that was already dirty in that
+# `.dsh/engine/hooks/baseline.sh`, which snapshots it at SessionStart. A path that was already dirty in that
 # snapshot is checked only when its content changed since (hash comparison), a path that is new since
 # it is always checked, and a path that was clean then and is dirty now is absent from the record and
 # is therefore checked too (F61). Without a baseline for the session — the hook is not wired, or the
@@ -32,7 +32,7 @@
 #     misformatted file in a module, so blocking there would punish an agent for drift it did not
 #     cause and cannot fix from what it changed — F53's whole point.
 #
-# `fix --check`, `fixStrict`, `compile` and `test.compile` run through `.dsh/hooks/feedback.sh`
+# `fix --check`, `fixStrict`, `compile` and `test.compile` run through `.dsh/engine/hooks/feedback.sh`
 # (spec 2026-09-20 diagnostic→instruction): the agent is shown DIAGNOSTIC/INSTRUCTION lines rendered
 # from the run, the raw log is kept under `.dsh/.state/feedback/`, and the rule above reads that RAW
 # log, never the rendered block — attribution has to see every path Mill printed, and the renderer
@@ -60,7 +60,7 @@
 # of a task's output with `<n>] `) and `--color false` (FORCE_COLOR is common in agent environments).
 #
 # Mill is `./mill` from the root when the wrapper is there, falling back to `mill` on PATH — the same
-# resolution `.dsh/hooks/post-edit.sh` and `.dsh/module-map.sh` use, and what lets a fixture scratch
+# resolution `.dsh/engine/hooks/post-edit.sh` and `.dsh/engine/module-map.sh` use, and what lets a fixture scratch
 # root be checked by a stub.
 #
 # Never runs tests, and mutates exactly one thing: the purrism rewrite stage (`fixRanges`) applies the
@@ -72,7 +72,7 @@
 # green turn-end must never be read as "the tests passed". A turn with nothing to check prints nothing
 # at all: it has no verdict to misread.
 #
-# Fail closed. A non-zero exit from `.dsh/module-map.sh` means the gate cannot name the module that
+# Fail closed. A non-zero exit from `.dsh/engine/module-map.sh` means the gate cannot name the module that
 # owns a touched file, so it blocks with the lookup's own reason rather than reading it as "ungated".
 # The same for a map row this gate cannot read, for a root with no Mill to run at all, and for a git
 # that is present but whose read of the working tree failed: each of those is "cannot know what to
@@ -200,7 +200,7 @@ baseline_note() {
     unreadable)
       printf 'The SessionStart baseline at %s is not a baseline record this gate can read, so it was ignored: the gate read the whole working tree rather than assume the session started clean.\n' "$baseline" ;;
     tree)
-      printf 'No SessionStart baseline for this session, so the gate read the whole working tree: files that were already dirty before this session were checked too. Wire .dsh/hooks/baseline.sh (gate.sh baseline) to SessionStart to scope the gate to this session.\n' ;;
+      printf 'No SessionStart baseline for this session, so the gate read the whole working tree: files that were already dirty before this session were checked too. Wire .dsh/engine/hooks/baseline.sh (gate.sh baseline) to SessionStart to scope the gate to this session.\n' ;;
   esac
   return 0
 }

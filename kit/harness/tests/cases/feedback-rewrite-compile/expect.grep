@@ -1,2 +1,2 @@
 "updatedInput"
-sh .dsh/hooks/feedback.sh -- ./mill app.compile
+sh .dsh/engine/hooks/feedback.sh -- ./mill app.compile

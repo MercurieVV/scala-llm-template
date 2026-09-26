@@ -1,5 +1,5 @@
 #!/bin/sh
-# Direct tests for .dsh/module-map.sh — which Mill module owns a changed source path, which checks
+# Direct tests for .dsh/engine/module-map.sh — which Mill module owns a changed source path, which checks
 # that module has, and when the lookup is allowed to answer at all. `module-map.sh` is a lookup, not a
 # gate: it takes a path argument and prints `<module id>` TAB `<capabilities>`, or `-`, so it does not
 # fit the payload fixture runner (`tests/run.sh` drives `gate.sh` through a subcommand plus a JSON
@@ -18,7 +18,7 @@
 # every row, so an empty capability string means "compile only" and nothing more.
 #
 # The lookup is run with the interpreter that is running this test, never with a hardcoded `sh`, so
-# `dash .dsh/tests/module-map-test.sh` exercises the script under dash and `sh …` under /bin/sh. The
+# `dash .dsh/engine/tests/module-map-test.sh` exercises the script under dash and `sh …` under /bin/sh. The
 # script's executable bit is not relied on (it stays 755 for humans); the interpreter is explicit, and
 # the choice is printed below and asserted against the running shell.
 #
@@ -28,10 +28,10 @@
 # whether the stub was called. mtimes are set with `touch -t` because `module-map.sh` compares them
 # with `-nt`, which has one-second resolution.
 #
-# Run: sh .dsh/tests/module-map-test.sh   (and: dash .dsh/tests/module-map-test.sh)
+# Run: sh .dsh/engine/tests/module-map-test.sh   (and: dash .dsh/engine/tests/module-map-test.sh)
 set -u
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-dsh="$repo/.dsh/module-map.sh"
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+dsh="$engine/module-map.sh"
 tab=$(printf '\t')
 passed=0
 failed=0

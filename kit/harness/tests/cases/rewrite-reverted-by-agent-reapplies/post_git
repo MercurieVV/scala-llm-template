@@ -2,6 +2,6 @@
 # After the base commit: the turn's own edit, a new line in core/src/T.scala that purrism would rewrite.
 # The session starts on a clean tree (the SessionStart baseline has no rows): the rewrite stage runs
 # only under a session baseline, and every edit below is the session's own.
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
-GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
 printf '  def f(o: Option[Int]): Int = o.get\n' >> core/src/T.scala

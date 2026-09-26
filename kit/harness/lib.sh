@@ -254,7 +254,7 @@ resolve_mill() {
 dsh_check_through_wrapper() {
   _cw_label=$1; _cw_mill=$2; shift 2
   _cw_logout=$(mktemp "${TMPDIR:-/tmp}/dsh-logpath.XXXXXX") || _cw_logout=''
-  DSH_CHECK_SHOWN=$(DSH_FEEDBACK_LOG_OUT="$_cw_logout" sh "${here:-$(gate_root)/.dsh}/hooks/feedback.sh" --selector "$_cw_label" -- "$_cw_mill" --ticker false --color false "$@" 2>&1)
+  DSH_CHECK_SHOWN=$(DSH_FEEDBACK_LOG_OUT="$_cw_logout" sh "${here:-$(gate_root)/.dsh/engine}/hooks/feedback.sh" --selector "$_cw_label" -- "$_cw_mill" --ticker false --color false "$@" 2>&1)
   DSH_CHECK_RC=$?
   DSH_CHECK_RAW=''
   _cw_logp=''
@@ -272,7 +272,7 @@ INFRA:"*) DSH_CHECK_SHOWN=$DSH_CHECK_RAW ;;
 # --- the session baseline (F61) --------------------------------------------------------------
 # The turn-end gate has to answer for what THIS SESSION changed, not for what the working tree
 # happens to contain: uncommitted work that predates the session is not the agent's to answer for.
-# `.dsh/hooks/baseline.sh` records, once per session at SessionStart, the dirty `.scala`/`.sc`/`.mill`
+# `.dsh/engine/hooks/baseline.sh` records, once per session at SessionStart, the dirty `.scala`/`.sc`/`.mill`
 # paths and a content hash for each; the gate then checks a path that was already dirty only when its
 # content changed since, and always checks a path that is new since the baseline.
 #
@@ -1044,7 +1044,7 @@ dsh_coverage_sentence() {
 # same discipline C-9 states: a path built at run time (`f=...; cp /tmp/x "$f"`), an interpreter
 # that opens the file itself (`python3 -c "open(p,'w')"`), a patch whose target lives only inside
 # the patch text (`git apply /tmp/p.diff`, `patch < p.diff`), and a SYMLINKED spelling of the path
-# (nothing here follows a link). The denial message and `.dsh/README.md` list the same four.
+# (nothing here follows a link). The denial message and `.dsh/engine/README.md` list the same four.
 #
 # TWO FILES, UNIONED, so a freeze can be either project state or a machine-local decision:
 #   * <root>/.dsh/frozen-paths        -- committed: a freeze is project state worth reviewing;
@@ -1065,7 +1065,7 @@ dsh_coverage_sentence() {
 # The reason is required because a freeze an agent cannot explain to its own user is a freeze the
 # agent cannot honour deliberately; every denial quotes it.
 #
-# A MALFORMED entry is a failure of the INSTALLATION CHECK (`.dsh/check-harness.sh`), never a
+# A MALFORMED entry is a failure of the INSTALLATION CHECK (`.dsh/engine/check-harness.sh`), never a
 # silent skip: no reason; a single-space separator; an absolute path outside the repository; a
 # relative path walking out of it; a path naming the repository root; a glob that is not a `/**`
 # suffix. A per-call hook cannot enforce what it cannot parse, so it enforces the entries that DID
@@ -1737,7 +1737,7 @@ dsh_render_feedback() {
 
 # dsh_instruction_for <code> [root]: the instruction and doc for a finding code, from the two frozen
 # tables under .dsh/instructions/ -- local.tsv (project-owned: scalac kinds, warts, project rules)
-# first, then purrism.tsv (vendored by .dsh/instructions-sync.sh). An exact code match wins; failing
+# first, then purrism.tsv (vendored by .dsh/engine/instructions-sync.sh). An exact code match wins; failing
 # that, a row whose KIND (the text after the last `.`) equals the code's kind answers, because a
 # purrism finding prints under the name of the rule that emitted it (`TypelevelPurrism.<kind>`, a
 # deprecated alias such as `PreferHKTTypeclasses.<kind>`) while the catalog lists it under its home
@@ -2068,7 +2068,7 @@ EOF
   # paths out of Grep, the hook wiring Claude Code actually reads, and the two state files the gate
   # writes and the agent must not (the receipts record, the coverage map cache).
   _hc_missing=''
-  for _hc_p in .dsh/frozen-paths .dsh/contract .dsh/hooks.json .dsh/gate.sh .dsh/lib.sh .dsh/hooks/.probe .dsh/check-harness.sh \
+  for _hc_p in .dsh/frozen-paths .dsh/contract .dsh/hooks.json .dsh/engine/gate.sh .dsh/engine/lib.sh .dsh/engine/hooks/.probe .dsh/engine/check-harness.sh \
                .ignore .claude/settings.json .claude/settings.local.json .dsh/cc-settings.json \
                .dsh/.state/receipts .dsh/.state/modules.tsv; do
     dsh_frozen_reason "$_hc_p" "$_hc_root" >/dev/null || _hc_missing="$_hc_missing ${_hc_p%/.probe}"
@@ -2076,7 +2076,7 @@ EOF
   if [ -n "$_hc_missing" ]; then
     printf 'FAIL\tharness files not frozen — an agent could edit the freeze list itself:%s\n' "$_hc_missing"; _hc_bad=1
   else
-    printf 'ok\tthe harness self-freeze is complete (frozen-paths, contract, hooks.json, gate.sh, lib.sh, hooks/**, check-harness.sh, .ignore, .claude/settings.json, .claude/settings.local.json, cc-settings.json, .state/receipts, .state/modules.tsv)\n'
+    printf 'ok\tthe harness self-freeze is complete (frozen-paths, contract, hooks.json, engine/gate.sh, engine/lib.sh, engine/hooks/**, engine/check-harness.sh, .ignore, .claude/settings.json, .claude/settings.local.json, cc-settings.json, .state/receipts, .state/modules.tsv)\n'
   fi
 
   # rule 6: the holdout module is not in preCommit's aggregates
@@ -2092,25 +2092,27 @@ EOF
 }
 
 # --- feedback: the installation rules ------------------------------------------------------------
-# dsh_feedback_checks [root]: one `ok|FAIL|note` TAB <message> row per rule (spec 2026-09-20-property-
+# dsh_feedback_checks [root] [engine]: one `ok|FAIL|note` TAB <message> row per rule (spec 2026-09-20-property-
 # feedback-loop-design §3); exit 1 iff any FAIL. check-harness.sh maps the rows onto ok/bad/note;
 # lib-test.sh drives the function directly. Rows stay ONE physical line each.
 dsh_feedback_checks() {
   _fc_root=${1:-$(gate_root)}
+  # [engine] is the engine whose wrapper is judged; the default is the project's vendored one.
+  _fc_engine=${2:-$_fc_root/.dsh/engine}
   _fc_tab=$(printf '\t')
   _fc_bad=0
 
   # rule 1: the wrapper exists and parses -- prefer dash (the harness's real interpreter), fall
   # back to sh when dash is not installed.
-  _fc_wrapper="$_fc_root/.dsh/hooks/feedback.sh"
+  _fc_wrapper="$_fc_engine/hooks/feedback.sh"
   if [ ! -f "$_fc_wrapper" ]; then
-    printf 'FAIL\tthe feedback wrapper is missing: .dsh/hooks/feedback.sh\n'; _fc_bad=1
+    printf 'FAIL\tthe feedback wrapper is missing: .dsh/engine/hooks/feedback.sh\n'; _fc_bad=1
   else
     if command -v dash >/dev/null 2>&1; then _fc_sh=dash; else _fc_sh=sh; fi
     if "$_fc_sh" -n "$_fc_wrapper" 2>/dev/null; then
-      printf 'ok\tthe feedback wrapper .dsh/hooks/feedback.sh exists and parses under `%s -n`\n' "$_fc_sh"
+      printf 'ok\tthe feedback wrapper .dsh/engine/hooks/feedback.sh exists and parses under `%s -n`\n' "$_fc_sh"
     else
-      printf 'FAIL\tthe feedback wrapper .dsh/hooks/feedback.sh does not parse under `%s -n`\n' "$_fc_sh"; _fc_bad=1
+      printf 'FAIL\tthe feedback wrapper .dsh/engine/hooks/feedback.sh does not parse under `%s -n`\n' "$_fc_sh"; _fc_bad=1
     fi
   fi
 
@@ -2193,7 +2195,7 @@ dsh_instruction_checks() {
   # rule 1: the vendored purrism table
   _ic_p="$_ic_dir/purrism.tsv"; _ic_pv=''
   if [ ! -f "$_ic_p" ]; then
-    printf 'FAIL\t.dsh/instructions/purrism.tsv is missing — run `sh .dsh/instructions-sync.sh`\n'; _ic_bad=1
+    printf 'FAIL\t.dsh/instructions/purrism.tsv is missing — run `sh .dsh/engine/instructions-sync.sh`\n'; _ic_bad=1
   else
     _ic_pv=$(sed -n '1s/^# purrism \(.*\)$/\1/p' "$_ic_p")
     _ic_nf=$(awk -F'\t' 'NR > 1 && NF && NF != 6 { n++ } END { print n + 0 }' "$_ic_p")
@@ -2215,7 +2217,7 @@ dsh_instruction_checks() {
     if [ "$_ic_pv" = "$_ic_bv" ]; then
       printf 'ok\tpurrism.tsv (%s) matches the version buildKit/Layer.mill declares\n' "$_ic_pv"
     else
-      printf 'FAIL\tpurrism.tsv is for purrism %s but buildKit/Layer.mill declares %s — run `sh .dsh/instructions-sync.sh`\n' "$_ic_pv" "$_ic_bv"; _ic_bad=1
+      printf 'FAIL\tpurrism.tsv is for purrism %s but buildKit/Layer.mill declares %s — run `sh .dsh/engine/instructions-sync.sh`\n' "$_ic_pv" "$_ic_bv"; _ic_bad=1
     fi
   elif [ -z "$_ic_bv" ]; then
     printf 'note\tbuildKit/Layer.mill declares no scala-purrism-scalafix_3 version — the table version cannot be checked\n'
@@ -2256,7 +2258,7 @@ dsh_instruction_checks() {
 
   # rule 5: the tables and their one writer are the human's
   _ic_unfrozen=''
-  for _ic_f in .dsh/instructions/purrism.tsv .dsh/instructions/local.tsv .dsh/instructions/scalac-kinds.tsv .dsh/instructions-sync.sh; do
+  for _ic_f in .dsh/instructions/purrism.tsv .dsh/instructions/local.tsv .dsh/instructions/scalac-kinds.tsv .dsh/engine/instructions-sync.sh; do
     [ -n "$(dsh_frozen_reason "$_ic_f" "$_ic_root" 2>/dev/null)" ] || _ic_unfrozen="$_ic_unfrozen $_ic_f"
   done
   if [ -n "$_ic_unfrozen" ]; then
@@ -2295,21 +2297,23 @@ dsh_bounded_probe() {
 }
 
 # --- diff-scoped verification: the installation rules (spec 2026-09-24 §3) ----------------------
-# dsh_verify_checks [root]: one `ok|FAIL|note` TAB <message> row per rule; exit 1 when any FAIL.
+# dsh_verify_checks [root] [engine]: one `ok|FAIL|note` TAB <message> row per rule; exit 1 when any FAIL.
 # check-harness.sh maps the rows onto its ok/bad/note; lib-test.sh drives the function directly —
 # the same shape as dsh_holdout_checks, dsh_feedback_checks and dsh_instruction_checks.
 dsh_verify_checks() {
   _vk_root=${1:-$(gate_root)}
+  # [engine] is the engine whose verify-diff.sh is judged; the default is the project's vendored one.
+  _vk_engine=${2:-$_vk_root/.dsh/engine}
   _vk_tab=$(printf '\t')
   _vk_bad=0
 
   # rule 1: the gate itself
-  if [ ! -f "$_vk_root/.dsh/verify-diff.sh" ]; then
-    printf 'FAIL\t.dsh/verify-diff.sh is missing — the turn-end gate calls it and would note instead of checking\n'; _vk_bad=1
-  elif [ ! -x "$_vk_root/.dsh/verify-diff.sh" ]; then
-    printf 'FAIL\t.dsh/verify-diff.sh is not executable\n'; _vk_bad=1
+  if [ ! -f "$_vk_engine/verify-diff.sh" ]; then
+    printf 'FAIL\t.dsh/engine/verify-diff.sh is missing — the turn-end gate calls it and would note instead of checking\n'; _vk_bad=1
+  elif [ ! -x "$_vk_engine/verify-diff.sh" ]; then
+    printf 'FAIL\t.dsh/engine/verify-diff.sh is not executable\n'; _vk_bad=1
   else
-    printf 'ok\t.dsh/verify-diff.sh is present and executable\n'
+    printf 'ok\t.dsh/engine/verify-diff.sh is present and executable\n'
   fi
 
   # rule 2: the policy table parses, when there is one
@@ -2334,7 +2338,7 @@ dsh_verify_checks() {
 
   # rule 3: the gate and the policy are the human's
   _vk_unfrozen=''
-  for _vk_f in .dsh/verify-diff.sh .dsh/policy/allowed-types.tsv; do
+  for _vk_f in .dsh/engine/verify-diff.sh .dsh/policy/allowed-types.tsv; do
     [ -e "$_vk_root/$_vk_f" ] || continue
     [ -n "$(dsh_frozen_reason "$_vk_f" "$_vk_root" 2>/dev/null)" ] || _vk_unfrozen="$_vk_unfrozen $_vk_f"
   done

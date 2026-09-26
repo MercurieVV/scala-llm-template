@@ -12,9 +12,9 @@ mkdir -p "$idx"
 : > "$idx/TopologyBackend.scala.semanticdb"
 sleep 1
 touch "$idx/TopologyBackend.scala.semanticdb"
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 printf '{"tool_name":"read","tool_input":{"file_path":"%s/%s"}}\n' "$root" "$rel" > "$root/second.json"
-out=$(GATE_ROOT="$root" PATH="$repo/.dsh/tests/bin:$PATH" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" semantic-guard < "$root/second.json" 2>&1)
+out=$(GATE_ROOT="$root" PATH="$engine/tests/bin:$PATH" "${GATE_SH:-sh}" "$engine/gate.sh" semantic-guard < "$root/second.json" 2>&1)
 code=$?
 printf 'second run: exit %s\n' "$code"
 printf '%s\n' "$out" | sed -n '1p'

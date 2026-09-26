@@ -7,11 +7,11 @@
 # fixture is about, so the fixture means the same thing against any version of the harness (measured:
 # against the pre-fix guard this case fails on the VERDICT, not on its own setup).
 set -u
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 root=$(pwd)
 idx=out/mod/semanticDbDataDetailed.dest/classes/META-INF/semanticdb/engine/shape/src/A.scala.semanticdb
 printf '{"tool_name":"read","tool_input":{"file_path":"engine/shape/src/A.scala"}}' > .dsh/pre-gate-payload.json
-GATE_ROOT="$root" PATH="$repo/.dsh/tests/bin:$PATH" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" semantic-guard \
+GATE_ROOT="$root" PATH="$engine/tests/bin:$PATH" "${GATE_SH:-sh}" "$engine/gate.sh" semantic-guard \
   < .dsh/pre-gate-payload.json >/dev/null 2>&1
 [ -s .dsh/.state/index-coverage ] || { echo "pre_gate: the gate did not write a coverage cache"; exit 1; }
 rm -f "$root/$idx"

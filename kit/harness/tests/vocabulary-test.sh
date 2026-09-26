@@ -28,10 +28,10 @@
 # Like tests/lib-test.sh, tests/health-test.sh and tests/wiring-test.sh, this file is deliberately NOT
 # wired into tests/run.sh: it is a direct test, not a fixture case.
 #
-# Run: .dsh/tests/vocabulary-test.sh
+# Run: .dsh/engine/tests/vocabulary-test.sh
 set -u
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-cd "$repo" || exit 1
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$engine" || exit 1
 passed=0
 failed=0
 
@@ -69,10 +69,10 @@ mkdir -p "$root/out/src/semanticDbData.dest/classes/META-INF/semanticdb/src"
 [ -f "$root/out/src/semanticDbData.dest/classes/META-INF/semanticdb/src/A.scala.semanticdb" ] \
   || bad "the fixture root's index could not be built under $scratch"
 
-mkdir -p "$copy/.dsh"
-cp .dsh/gate.sh .dsh/lib.sh "$copy/.dsh/" 2>/dev/null
-cp -R .dsh/hooks "$copy/.dsh/hooks" 2>/dev/null
-[ -f "$copy/.dsh/gate.sh" ] && [ -f "$copy/.dsh/hooks/tool-policy.sh" ] \
+mkdir -p "$copy/.dsh/engine"
+cp gate.sh lib.sh "$copy/.dsh/engine/" 2>/dev/null
+cp -R hooks "$copy/.dsh/engine/hooks" 2>/dev/null
+[ -f "$copy/.dsh/engine/gate.sh" ] && [ -f "$copy/.dsh/engine/hooks/tool-policy.sh" ] \
   || bad "the harness copy could not be built under $copy"
 
 # --- running one hook ------------------------------------------------------------------------
@@ -80,8 +80,8 @@ cp -R .dsh/hooks "$copy/.dsh/hooks" 2>/dev/null
 # run_hook <harness dir> <subcommand> <payload>: leaves the merged output in hook_out and the exit
 # code in hook_rc. The harness dir is the repository (the shipped hooks) or the copy (the revert).
 run_hook() {
-  hook_out=$(printf '%s' "$3" | CLAUDE_PROJECT_DIR="$root" PATH="$repo/.dsh/tests/bin:$PATH" \
-             sh "$1/.dsh/gate.sh" "$2" 2>&1)
+  hook_out=$(printf '%s' "$3" | CLAUDE_PROJECT_DIR="$root" PATH="$engine/tests/bin:$PATH" \
+             sh "$1/gate.sh" "$2" 2>&1)
   hook_rc=$?
 }
 
@@ -165,7 +165,7 @@ run_parity() { # run_parity <harness dir>
 
 # --- the shipped hooks --------------------------------------------------------------------------
 
-run_parity "$repo"
+run_parity "$engine"
 is "the shipped hooks decide alike in both vocabularies" "0" "$?"
 
 # --- non-vacuity: revert the Bash acceptance in the copy, and the parity rows must fail ----------
@@ -173,13 +173,13 @@ is "the shipped hooks decide alike in both vocabularies" "0" "$?"
 # still pass and the CC rows must fail. That is the F64 defect reproduced on demand, and it is what
 # makes the parity assertion above worth trusting.
 
-reverted="$copy/.dsh/hooks/tool-policy.sh"
+reverted="$copy/.dsh/engine/hooks/tool-policy.sh"
 # Structural, not line-shaped: drop the `Bash` alternative wherever it is spelled, and let the guard
 # below catch a rewrite that no longer spells it that way (a stale revert must not look like a pass).
-sed 's/bash|Bash/bash/' "$repo/.dsh/hooks/tool-policy.sh" > "$reverted.new" 2>/dev/null
-if [ -s "$reverted.new" ] && ! cmp -s "$repo/.dsh/hooks/tool-policy.sh" "$reverted.new"; then
+sed 's/bash|Bash/bash/' "$engine/hooks/tool-policy.sh" > "$reverted.new" 2>/dev/null
+if [ -s "$reverted.new" ] && ! cmp -s "$engine/hooks/tool-policy.sh" "$reverted.new"; then
   mv "$reverted.new" "$reverted"
-  out=$(run_parity "$copy" 2>&1); rc=$?
+  out=$(run_parity "$copy/.dsh/engine" 2>&1); rc=$?
   is "reverted copy: the parity run fails" "1" "$rc"
   has "reverted copy: the Bash row is what fails" \
       "tool-policy: sbt is denied: Bash reaches the same verdict" "$out"

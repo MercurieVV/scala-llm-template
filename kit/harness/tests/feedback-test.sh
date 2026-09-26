@@ -1,21 +1,21 @@
 #!/bin/sh
-# Direct tests for the feedback wrapper .dsh/hooks/feedback.sh: run a command, keep the whole
+# Direct tests for the feedback wrapper .dsh/engine/hooks/feedback.sh: run a command, keep the whole
 # output in .dsh/.state/feedback/<utc>.log (newest 20 kept), print dsh_render_feedback's block
 # (or the raw text with --raw), and exit with the command's own status.
 #
 # The stub transcript below mirrors the REAL weaver-scalacheck failure shape captured in
-# .dsh/tests/transcripts/weaver-scalacheck-fail.txt: one line ending "(...Checkers.scala:195)"
+# .dsh/engine/tests/transcripts/weaver-scalacheck-fail.txt: one line ending "(...Checkers.scala:195)"
 # giving the seed/try/input, then a separate "assertion failed (...)" line -- not a single
 # combined line. dsh_feedback_parse joins them into one FAILURE message.
 #
-# Run: sh .dsh/tests/feedback-test.sh
+# Run: sh .dsh/engine/tests/feedback-test.sh
 set -u
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 passed=0; failed=0
 is() { if [ "$2" = "$3" ]; then passed=$((passed + 1)); else failed=$((failed + 1)); printf 'FAIL %s\n  want: %s\n  got:  %s\n' "$1" "$2" "$3"; fi; }
 tab=$(printf '\t')
 scratch=$(mktemp -d); mkdir -p "$scratch/.dsh/.state" "$scratch/app/test-draft/src/x"
-cp "$repo/.dsh/lib.sh" "$scratch/.dsh/lib.sh"; mkdir -p "$scratch/.dsh/hooks"; cp "$repo/.dsh/hooks/feedback.sh" "$scratch/.dsh/hooks/feedback.sh"
+mkdir -p "$scratch/.dsh/engine/hooks"; cp "$engine/lib.sh" "$scratch/.dsh/engine/lib.sh"; cp "$engine/hooks/feedback.sh" "$scratch/.dsh/engine/hooks/feedback.sh"
 cat > "$scratch/stub.sh" <<'EOF'
 #!/bin/sh
 cat <<'T'
@@ -34,7 +34,7 @@ com.x.PhraseProps
 T
 exit 1
 EOF
-run() { (cd "$scratch" && GATE_ROOT="$scratch" sh .dsh/hooks/feedback.sh "$@"); }
+run() { (cd "$scratch" && GATE_ROOT="$scratch" sh .dsh/engine/hooks/feedback.sh "$@"); }
 out=$(run -- sh stub.sh ./mill app.test); rc=$?
 is "wrapper: exit status propagated" 1 "$rc"
 is "wrapper: first line" "FEEDBACK: 1 passed, 1 failed (app.test)" "$(printf '%s\n' "$out" | head -1)"
@@ -50,10 +50,10 @@ out=$(run --raw -- sh stub.sh ./mill app.test); is "wrapper: --raw prints everyt
 : > "$scratch/app/test-draft/src/x/PhraseProps.scala"
 out=$(run -- sh stub.sh ./mill app.test); is "wrapper: draft suite is tagged" "DRAFT PROPERTY: PhraseProps.strikes are strictly increasing" "$(printf '%s\n' "$out" | sed -n 2p)"
 rm "$scratch/app/test-draft/src/x/PhraseProps.scala"
-# a fixture tree's draft (.dsh/tests/cases/*/root/**) and a compiled copy under out/ are NOT the project's
+# a fixture tree's draft (.dsh/engine/tests/cases/*/root/**) and a compiled copy under out/ are NOT the project's
 # drafts: a real PhraseProps failure must stay blocking (PROPERTY:, not DRAFT PROPERTY:)
-mkdir -p "$scratch/.dsh/tests/cases/x/root/app/test-draft/src/x" "$scratch/out/app/test-draft/src/x"
-: > "$scratch/.dsh/tests/cases/x/root/app/test-draft/src/x/PhraseProps.scala"
+mkdir -p "$scratch/.dsh/engine/tests/cases/x/root/app/test-draft/src/x" "$scratch/out/app/test-draft/src/x"
+: > "$scratch/.dsh/engine/tests/cases/x/root/app/test-draft/src/x/PhraseProps.scala"
 : > "$scratch/out/app/test-draft/src/x/PhraseProps.scala"
 out=$(run -- sh stub.sh ./mill app.test); is "wrapper: a fixture tree's or out/ draft does not tag the real suite" "PROPERTY: PhraseProps.strikes are strictly increasing" "$(printf '%s\n' "$out" | sed -n 2p)"
 : > "$scratch/app/test-draft/src/x/PhraseProps.scala"

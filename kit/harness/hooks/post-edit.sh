@@ -3,7 +3,7 @@
 # grants, in the same breath as the edit, so an agent cannot walk away from a violation it just
 # introduced. It is the enforcement the rest of the harness exists for.
 #
-# It runs what `.dsh/module-map.sh` grants for the file's module, and nothing else:
+# It runs what `.dsh/engine/module-map.sh` grants for the file's module, and nothing else:
 #
 #   fmt       <module>.checkFormat
 #   scalafix  <module>.fix --check
@@ -32,7 +32,7 @@
 #     it edited — F53's whole point. The same reading is applied to `fixStrict` and `compile`, whose
 #     diagnostics are attributable too.
 #
-# `fix --check`, `fixStrict`, `compile` and `test.compile` run through `.dsh/hooks/feedback.sh`
+# `fix --check`, `fixStrict`, `compile` and `test.compile` run through `.dsh/engine/hooks/feedback.sh`
 # (spec 2026-09-20 diagnostic→instruction): the agent is shown DIAGNOSTIC/INSTRUCTION lines rendered
 # from the run, the raw log is kept under `.dsh/.state/feedback/`, and the blocking rule above reads
 # that RAW log, never the rendered block — attribution has to see every path Mill printed, and the
@@ -55,10 +55,10 @@
 # `tool_input.file_path`, so this hook reads an empty path and exits 0 before it looks anything up.
 # That is the correct verdict, not a gap — a notebook cannot be a `.scala`/`.sc` source, and this gate
 # decides about nothing else. The matcher entry exists for vocabulary consistency with that guard; the
-# no-op is asserted in `.dsh/tests/vocabulary-test.sh`, so it stays a decision rather than an accident.
+# no-op is asserted in `.dsh/engine/tests/vocabulary-test.sh`, so it stays a decision rather than an accident.
 #
 # Mill is invoked as `./mill` from the root — the repository's own wrapper, pinned to the build's
-# Mill version, and the same thing `.dsh/module-map.sh` runs — falling back to `mill` on PATH when
+# Mill version, and the same thing `.dsh/engine/module-map.sh` runs — falling back to `mill` on PATH when
 # there is no wrapper. The fallback is what makes the fixture cases hermetic: a scratch root has no
 # `./mill`, so the `mill` stub first on PATH is the one that runs, and the wrapper branch is what a
 # case exercises when it ships its own `./mill`.

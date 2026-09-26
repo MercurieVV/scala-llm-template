@@ -1,5 +1,5 @@
 #!/bin/sh
-# Direct tests for .dsh/hooks/health.sh. Unlike tests/run.sh, which drives gate.sh through fixture
+# Direct tests for .dsh/engine/hooks/health.sh. Unlike tests/run.sh, which drives gate.sh through fixture
 # case directories and can compare only an exit code and one grep of the hook's output, these run
 # the hook and then read the file it writes, so the cached verdict's four-line shape and the
 # invariants between its fields can be pinned on their own. The brief's `health-writes-verdict`
@@ -13,10 +13,10 @@
 # a test that can fail while the hook is correct, so the bound is computed per root and the notes
 # field is asserted directly instead.
 #
-# Run: .dsh/tests/health-test.sh
+# Run: .dsh/engine/tests/health-test.sh
 set -u
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-cd "$repo" || exit 1
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$engine" || exit 1
 passed=0
 failed=0
 
@@ -81,12 +81,12 @@ with_index() { # with_index <root>
 }
 index_of() { printf '%s\n' "$1/out/mod/semanticDbData.dest/classes/META-INF/semanticdb/mod/src/A.scala.semanticdb"; }
 coverage_sentence() { printf '%s\n' 'index covers 1 of 2 Scala sources (50%)'; }
-stub_launcher="$repo/.dsh/tests/bin/scalasemantic-mcp"
+stub_launcher="$engine/tests/bin/scalasemantic-mcp"
 run_health() { # run_health <root> [KEY=VALUE ...] -- fills out/code and the parsed file fields
   run_root=$1
   shift
-  out=$(env "$@" GATE_ROOT="$run_root" PATH="$repo/.dsh/tests/bin:$PATH" \
-        sh "$repo/.dsh/hooks/health.sh" 2>&1)
+  out=$(env "$@" GATE_ROOT="$run_root" PATH="$engine/tests/bin:$PATH" \
+        sh "$engine/hooks/health.sh" 2>&1)
   code=$?
   file="$run_root/.dsh/.state/health"
   line1=$(sed -n '1p' "$file" 2>/dev/null)
@@ -219,8 +219,8 @@ has "doctor exit 1: the exit code is recorded in notes" "exited 1, not counted" 
 # Each pruned tree gets its own root so each prune is asserted on its own: were either prune
 # missing, that root would report healthy=1 citing its fixture as "an index".
 f=$(scratch)
-mkdir -p "$f/.dsh/tests/cases/health-healthy/root/out/mod/semanticDbData.dest/classes/META-INF/semanticdb"
-: > "$f/.dsh/tests/cases/health-healthy/root/out/mod/semanticDbData.dest/classes/META-INF/semanticdb/Foo.scala.semanticdb"
+mkdir -p "$f/.dsh/engine/tests/cases/health-healthy/root/out/mod/semanticDbData.dest/classes/META-INF/semanticdb"
+: > "$f/.dsh/engine/tests/cases/health-healthy/root/out/mod/semanticDbData.dest/classes/META-INF/semanticdb/Foo.scala.semanticdb"
 run_health "$f"
 hook_exits_zero "F46 .dsh"
 shape "F46 .dsh"

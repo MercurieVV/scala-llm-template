@@ -3,7 +3,7 @@
 # whole output in .dsh/.state/feedback/<utc>.log, and print only what the agent can act on -- the
 # FEEDBACK/PROPERTY/TEST/INFRA block from lib.sh's dsh_feedback_parse + dsh_render_feedback. The
 # command's own exit status is returned, so a red run stays red. Usage:
-#   sh .dsh/hooks/feedback.sh [--raw] [--adapter auto|weaver|scalacheck|munit|scalafix|scalac] [--selector S] -- <cmd...>
+#   sh .dsh/engine/hooks/feedback.sh [--raw] [--adapter auto|weaver|scalacheck|munit|scalafix|scalac] [--selector S] -- <cmd...>
 #
 # Diagnostics (spec 2026-09-20 diagnostic→instruction §2-3): the scalafix and scalac adapters turn a
 # `./mill core.fixStrict` / `core.compile` run into DIAGNOSTIC records; dsh_instructions_annotate
@@ -42,7 +42,7 @@ if [ "$raw" = 1 ]; then cat "$log"; printf 'Raw output kept: %s lines — %s\n' 
 # files are listed ONCE, in the shell, and the awk program reads the list from the environment
 # (never a shell string built from a suite name -- `Foo$Bar` is a legal simple name): a suite is a
 # draft when `/<Simple>.scala` ends one of the listed paths. The list is bounded to the project's
-# own trees -- the harness's fixture roots (.dsh/tests/cases/*/root/**) hold a `test-draft/src/`
+# own trees -- the harness's fixture roots (.dsh/engine/tests/cases/*/root/**) hold a `test-draft/src/`
 # copy of a real suite's name, and `out/` may hold a compiled copy; a bare `find "$root"` saw both
 # and rendered a REAL failure as DRAFT, i.e. non-blocking. With the coverage map present, only
 # `<module dir>/test-draft/src` of the modules it lists is searched.

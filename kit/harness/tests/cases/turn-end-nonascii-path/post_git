@@ -3,6 +3,6 @@
 # default, `git status` prints it as "\303\211\303\251.scala", and a reader that unquotes naively
 # drops it — the gate would answer nothing about a file this session created. With `-z` there is
 # nothing to unquote, so the file is checked and the block names it.
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
-GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
 printf 'package x\nobject Éé { val  a=1 }\n' > "engine/details/src/Éé.scala"

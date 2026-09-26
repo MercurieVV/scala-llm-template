@@ -1,5 +1,5 @@
 #!/bin/sh
-# .dsh/check-harness.sh -- is this harness actually INSTALLED, and are its guards actually capable
+# .dsh/engine/check-harness.sh -- is this harness actually INSTALLED, and are its guards actually capable
 # of running? One line per check, exit 0 when every check passed.
 #
 # Why this file exists: the defect that motivated the whole .dsh/ harness was a hook config whose
@@ -25,14 +25,14 @@
 #   D. test integrity -- every fixture file is tracked by git (F27/F44), no fixture depends on a
 #      directory a clone would not have (C1: emptied directories are invisible to git and to the
 #      membership test above), every discovered `*-test.sh` suite passes (F49), and the behavioural
-#      suite .dsh/tests/run.sh -- the fixture cases that drive gate.sh end to end -- passes with them.
+#      suite .dsh/engine/tests/run.sh -- the fixture cases that drive gate.sh end to end -- passes with them.
 #      `committed-tree-test.sh` is the one suite the DEFAULT path skips (a note says so); `--full`
 #      runs it
 #   E. cwd binding -- this checkout is the git root process.cwd() resolves from at boot
 #   F. the guidance layer -- every skill under .dsh/skills/ carries a name the provider can load
 #      (I2: a name outside dsh-skill's grammar makes the provider skip the skill, silently)
 #
-# What it deliberately does NOT do. The wiring suite (.dsh/tests/wiring-test.sh) owns the matcher
+# What it deliberately does NOT do. The wiring suite (the project's own wiring-test.sh, beside it under <project>/.dsh/) owns the matcher
 # vocabulary, the seam of every hook and the parity of the two dialects; this file only cross-checks
 # that the config and gate.sh agree at all. It never runs Mill -- no check here needs a compile, and
 # the index it looks for is a file on disk. It never writes inside the repository: the only writes
@@ -52,29 +52,42 @@
 # `set -u`, no `set -e`: a check reports every failure it finds instead of stopping at the first.
 set -u
 
-# The one flag: `--full` puts the opt-in clone suite back on the path (see group D). Anything else is
-# refused loudly rather than ignored -- a typo'd `--ful` that silently ran the cheaper check would be
-# exactly the "green about less than it looks" failure this file's own notes warn about.
+# The flags: `--full` puts the opt-in clone suite back on the path (see group D); `--project <dir>`
+# names the project whose installation is checked (default: gate_root). Anything else is refused
+# loudly rather than ignored -- a typo'd `--ful` that silently ran the cheaper check would be exactly
+# the "green about less than it looks" failure this file's own notes warn about.
 full=0
+project=''
 opt_in_suite=committed-tree-test.sh
-case "${1:-}" in
-  '') ;;
-  --full) full=1 ;;
-  *) printf 'usage: sh .dsh/check-harness.sh [--full]\n  --full  also run %s (clones this commit and runs run.sh + this check there, ~2.5 min)\n' "$opt_in_suite" >&2
-     exit 2 ;;
-esac
-[ "$#" -le 1 ] || { printf 'usage: sh .dsh/check-harness.sh [--full]\n' >&2; exit 2; }
+usage() {
+  printf 'usage: sh .dsh/engine/check-harness.sh [--full] [--project <dir>]\n  --full           also run %s (clones this commit and runs run.sh + this check there, ~2.5 min)\n  --project <dir>  the project to check (default: gate_root)\n' "$opt_in_suite" >&2
+  exit 2
+}
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --full) full=1 ;;
+    --project) [ "$#" -ge 2 ] && [ -n "$2" ] || usage; project=$2; shift ;;
+    *) usage ;;
+  esac
+  shift
+done
 
-# `cd -P`: the git root this file is compared against in E is a physical path, and `pwd` without -P
+# The engine finds itself from its own file; the project is `--project` or gate_root.
+# `cd -P`: the git root the project is compared against in E is a physical path, and `pwd` without -P
 # reports a logical one -- a checkout reached through a symlink (macOS reaches /tmp through
 # /private/tmp) would then fail the comparison with the harness behaving correctly. Like for like.
-repo=$(CDPATH= cd -P -- "$(dirname -- "$0")/.." && pwd)
-cd "$repo" || exit 1
+engine=$(CDPATH= cd -P -- "$(dirname -- "$0")" && pwd)
 # The shared coverage helpers, the same ones the health probe and the read gate use, so the fraction
 # reported below is the fraction the guard acts on. Sourcing lib.sh here is safe -- it defines
 # functions and one marker variable and runs nothing -- and every call below is handed the SCRATCH
 # cache path, which is what keeps this check's promise never to write inside the repository.
-. "$repo/.dsh/lib.sh"
+. "$engine/lib.sh"
+[ -n "$project" ] || project=$(gate_root)
+repo=$(CDPATH= cd -P -- "$project" 2>/dev/null && pwd) || {
+  printf 'FAIL the project directory %s does not exist\n' "$project"
+  exit 1
+}
+cd "$repo" || exit 1
 profile="${DSH_HOME:-$HOME/.dsh}/profiles/scala-arhitect"
 # The installed launcher, not the repo-root `scalasemantic-mcp.sh` shim the `scala` profile names.
 # health.sh resolves the same path (after its own test seam and PATH), so the two agree on what
@@ -99,6 +112,7 @@ trap 'rm -rf "$work"' 0
 trap 'exit 1' 1 2 3 15
 
 printf '# harness check: %s\n' "$repo"
+printf '# engine:        %s\n' "$engine"
 printf '# profile:       %s\n' "$profile"
 
 # ══ A. the profile is installed and composed ═══════════════════════════════════════════════════
@@ -257,7 +271,7 @@ fi
 # dialects. What is cheap and worth a second, independent look is that the config parses, that every
 # command in it can actually start, and that gate.sh answers to what it is asked for.
 hooks_json="$repo/.dsh/hooks.json"
-gate="$repo/.dsh/gate.sh"
+gate="$repo/.dsh/engine/gate.sh"
 
 json_reader=''
 if command -v jq >/dev/null 2>&1; then
@@ -299,7 +313,7 @@ else
     python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$hooks_json" >/dev/null 2>&1 && hook_parse=0
   fi
   if [ "$hook_parse" != 0 ]; then
-    bad "$hooks_json is not valid JSON -- the bridge cannot read it and no hook runs; fix the syntax (see .dsh/tests/wiring-test.sh)"
+    bad "$hooks_json is not valid JSON -- the bridge cannot read it and no hook runs; fix the syntax (see the project's wiring-test.sh)"
   else
     hook_rows >"$hook_rows_file"
     ok "$hooks_json parses ($(wc -l <"$hook_rows_file" | tr -d ' ') runnable hooks), read with $json_reader"
@@ -311,7 +325,7 @@ gate_ok=0
 if [ "$gate_ok" = 1 ]; then
   ok "$gate exists and is executable"
 else
-  bad "$gate is missing or not executable -- every command in hooks.json starts there (chmod +x .dsh/gate.sh)"
+  bad "$gate is missing or not executable -- every command in hooks.json starts there (chmod +x .dsh/engine/gate.sh)"
 fi
 
 # Every command must resolve the gate from the session's project directory (the bridge exports
@@ -326,7 +340,7 @@ if [ "$hook_parse" = 0 ]; then
   IFS=$(printf '\t')
   while read -r h_event h_timeout h_command; do
     case "$h_command" in
-      *'${CLAUDE_PROJECT_DIR}/.dsh/gate.sh'*|*'$CLAUDE_PROJECT_DIR/.dsh/gate.sh'*) ;;
+      *'${CLAUDE_PROJECT_DIR}/.dsh/engine/gate.sh'*|*'$CLAUDE_PROJECT_DIR/.dsh/engine/gate.sh'*) ;;
       *) bad_cmd="$bad_cmd $h_event->[$h_command]" ;;
     esac
     case "$h_timeout" in
@@ -344,14 +358,14 @@ wired=$(wc -l <"$subs" | tr -d ' ')
 if [ "$hook_parse" != 0 ]; then
   bad "every hook command runs this repository's gate.sh with a numeric timeout: $hooks_json did not parse, so no command could be inspected"
 elif [ "$wired" -eq 0 ]; then
-  bad "hooks.json names no runnable command at all -- a config with no hook in it enforces nothing (see .dsh/tests/wiring-test.sh)"
+  bad "hooks.json names no runnable command at all -- a config with no hook in it enforces nothing (see the project's wiring-test.sh)"
 elif [ -n "$bad_cmd" ] || [ -n "$bad_timeout" ]; then
   # Both defects are named in the one line, so a config with a wrong path AND a missing timeout
   # does not hide the second one behind the first.
   why=''
   [ -n "$bad_cmd" ] && why="commands that do not resolve gate.sh from the session's project dir:$bad_cmd."
   [ -n "$bad_timeout" ] && why="$why hooks with no numeric timeout:$bad_timeout."
-  bad "$why Write every hook as: sh \"\${CLAUDE_PROJECT_DIR}/.dsh/gate.sh\" <subcommand> with an explicit numeric timeout"
+  bad "$why Write every hook as: sh \"\${CLAUDE_PROJECT_DIR}/.dsh/engine/gate.sh\" <subcommand> with an explicit numeric timeout"
 else
   ok "every hook command resolves gate.sh from the session's project dir, with a numeric timeout ($wired hooks)"
 fi
@@ -366,13 +380,13 @@ else
     grep -q "^[[:space:]]*$sub)" "$gate" 2>/dev/null || undispatch="$undispatch $sub"
   done <"$subs"
   if [ -n "$undispatch" ]; then
-    bad "gate.sh does not dispatch:$undispatch -- that hook exits 1 and the bridge treats it as a non-blocking error, so the gate is silently off; add the subcommand to .dsh/gate.sh"
+    bad "gate.sh does not dispatch:$undispatch -- that hook exits 1 and the bridge treats it as a non-blocking error, so the gate is silently off; add the subcommand to .dsh/engine/gate.sh"
   else
     ok "gate.sh dispatches every subcommand hooks.json names ($wired)"
   fi
 fi
 
-# Every hook FILE, and not only the subcommands: `.dsh/hooks/*.sh` are committed executables, and two
+# Every hook FILE, and not only the subcommands: `.dsh/engine/hooks/*.sh` are committed executables, and two
 # ways for one to stop being runnable are invisible everywhere else in this check. The exec bit is
 # not decoration -- a bit lost in an edit (mode 100755 -> 100644, which is how this check came to
 # exist) leaves a file only `sh <file>` can start, and every direct invocation of it fails. A syntax
@@ -383,21 +397,21 @@ fi
 # syntax one: it is a library, not an executable, and its mode is not a promise anyone can break.
 hook_bad=''
 hook_n=0
-for hook_file in "$repo"/.dsh/hooks/*.sh "$repo/.dsh/gate.sh"; do
+for hook_file in "$engine"/hooks/*.sh "$engine/gate.sh"; do
   [ -f "$hook_file" ] || continue
   hook_n=$((hook_n + 1))
   [ -x "$hook_file" ] || hook_bad="$hook_bad
-     ${hook_file#"$repo"/}: not executable -- chmod +x it; the gate runs it through sh, but nothing else can start it"
+     ${hook_file#"$engine"/}: not executable -- chmod +x it; the gate runs it through sh, but nothing else can start it"
 done
-for hook_file in "$repo"/.dsh/hooks/*.sh "$repo/.dsh/gate.sh" "$repo/.dsh/lib.sh"; do
+for hook_file in "$engine"/hooks/*.sh "$engine/gate.sh" "$engine/lib.sh"; do
   [ -f "$hook_file" ] || continue
   if ! sh -n "$hook_file" 2>"$work/hook-syntax.err"; then
     hook_bad="$hook_bad
-     ${hook_file#"$repo"/}: not sh -n clean -- $(trim "$(head -n 1 "$work/hook-syntax.err" 2>/dev/null)")"
+     ${hook_file#"$engine"/}: not sh -n clean -- $(trim "$(head -n 1 "$work/hook-syntax.err" 2>/dev/null)")"
   fi
 done
 if [ "$hook_n" -eq 0 ]; then
-  bad "no hook file found under $repo/.dsh/hooks/ -- this check would pass over an empty list, and the gate would have nothing to run"
+  bad "no hook file found under $engine/hooks/ -- this check would pass over an empty list, and the gate would have nothing to run"
 elif [ -n "$hook_bad" ]; then
   bad "hook file(s) the gate cannot run:$hook_bad"
 else
@@ -424,7 +438,7 @@ fi
 # An ABSENT index is a STATE, not an installation defect, and this is the same distinction the cached
 # verdict below already draws and that wiring-test draws for an absent .claude/settings.json (I1).
 # `out/` is gitignored and produced by a compile this check never runs, so no fresh clone can have an
-# index: failing here made `sh .dsh/check-harness.sh` exit 1 in a clean `git clone` of this branch,
+# index: failing here made `sh .dsh/engine/check-harness.sh` exit 1 in a clean `git clone` of this branch,
 # and bootstrap.sh hands off to it under `set -e`, so a clean machine could not be installed at all --
 # for a condition the guard already answers correctly. With no index, health reports healthy=0 and
 # every Scala gate stands down LOUDLY, with a reason, instead of denying (fail-open by design, F42/F2),
@@ -486,7 +500,7 @@ if [ "$launcher_ok" = 1 ]; then
   # F42, measured on this machine: doctor EXITS 0 WHILE PRINTING THREE FAILS, and two of them --
   # "guard hook installed", "guard hook registered" -- describe Claude Code's own configuration
   # (.claude/hooks/, .claude/settings.json), while in DSH the semantic MCP comes from the profile's
-  # cordis.patch.yml row and the guard is .dsh/hooks/semantic-guard.sh. Keyed on the exit code, or
+  # cordis.patch.yml row and the guard is .dsh/engine/hooks/semantic-guard.sh. Keyed on the exit code, or
   # on those FAILs, this check would declare the harness broken in exactly the configuration where
   # it works. So: the exit code and every non-index FAIL line are reported as CONTENT and decide
   # nothing; the index line is the one signal that matters, and it is compared against the file
@@ -494,7 +508,7 @@ if [ "$launcher_ok" = 1 ]; then
   #
   # MEASURED, and the reason doctor's index line must NEVER be promoted to an oracle: on a copy of
   # this tree with its one real `out/…/*.semanticdb` removed, doctor printed
-  #   ok    SemanticDB index — .dsh/tests/cases/health-doctor-notes-truncated/root/out/mod/
+  #   ok    SemanticDB index — .dsh/engine/tests/cases/health-doctor-notes-truncated/root/out/mod/
   #         semanticDbData.dest/classes/META-INF/semanticdb/Foo.scala.semanticdb
   # -- a test FIXTURE -- as its index, because doctor does not prune the harness's own tree. So on a
   # fresh clone with no build output doctor says `ok` while the guards have nothing behind them: F46
@@ -596,7 +610,7 @@ EOF
 
 # The property-feedback installation rules (spec 2026-09-20-property-feedback-loop-design §3): same
 # shape as the holdout rows above -- one lib.sh function, unit-tested in lib-test.sh, mapped here.
-fc_rows=$(dsh_feedback_checks "$repo" 2>&1) || :
+fc_rows=$(dsh_feedback_checks "$repo" "$engine" 2>&1) || :
 while IFS="$tab" read -r fc_kind fc_msg; do
   [ -n "$fc_kind" ] || continue
   case "$fc_kind" in
@@ -626,7 +640,7 @@ EOF
 
 # The diff-scoped verification installation rules (spec 2026-09-24 §3): same shape again -- one
 # lib.sh function, unit-tested in lib-test.sh, mapped here.
-vk_rows=$(dsh_verify_checks "$repo" 2>&1) || :
+vk_rows=$(dsh_verify_checks "$repo" "$engine" 2>&1) || :
 while IFS="$tab" read -r vk_kind vk_msg; do
   [ -n "$vk_kind" ] || continue
   case "$vk_kind" in
@@ -640,7 +654,7 @@ $vk_rows
 EOF
 
 # ══ D. the repository's test integrity ═════════════════════════════════════════════════════════
-# F27/F44. The fixtures under .dsh/tests/cases/*/root/ are inputs to the gate, and they have been
+# F27/F44. The fixtures under .dsh/engine/tests/cases/*/root/ are inputs to the gate, and they have been
 # silently dropped from commits three separate times by ignore patterns that match a directory name
 # at ANY depth (`.claude/` on .gitignore:116, `out/` on :52). The negations added each time cover
 # only the paths known then, so this is a membership test against git rather than a pattern test: a
@@ -649,20 +663,20 @@ EOF
 fixture_list="$work/fixtures"
 : >"$fixture_list"
 # Newline-delimited: paths with spaces survive, and fixture names never contain a newline.
-find "$repo/.dsh/tests/cases" -path '*/root/*' \( -type f -o -type l \) -print 2>/dev/null | sort >"$fixture_list"
+find "$engine/tests/cases" -path '*/root/*' \( -type f -o -type l \) -print 2>/dev/null | sort >"$fixture_list"
 fixture_count=$(wc -l <"$fixture_list" | tr -d ' ')
 if [ "$fixture_count" -eq 0 ]; then
-  bad "no fixture files at all under .dsh/tests/cases/*/root/ -- this check would pass vacuously; the fixture trees are missing from this checkout"
-elif ! git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
-  bad "$repo is not a git repository (git rev-parse --git-dir failed) -- nothing here can be verified as tracked, and an untracked fixture is exactly the defect this check exists for; run the check inside a checkout"
+  bad "no fixture files at all under .dsh/engine/tests/cases/*/root/ -- this check would pass vacuously; the fixture trees are missing from this checkout"
+elif ! git -C "$engine" rev-parse --git-dir >/dev/null 2>&1; then
+  bad "$engine is not in a git repository (git rev-parse --git-dir failed) -- nothing here can be verified as tracked, and an untracked fixture is exactly the defect this check exists for; run the check inside a checkout"
 else
   untracked=''
   n_untracked=0
   while IFS= read -r fixture; do
-    rel=${fixture#"$repo"/}
-    if ! git -C "$repo" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then
+    rel=${fixture#"$engine"/}
+    if ! git -C "$engine" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then
       n_untracked=$((n_untracked + 1))
-      why=$(git -C "$repo" check-ignore -v -- "$rel" 2>/dev/null)
+      why=$(git -C "$engine" check-ignore -v -- "$rel" 2>/dev/null)
       if [ -n "$why" ]; then
         untracked="$untracked
      $rel
@@ -675,9 +689,9 @@ else
     fi
   done <"$fixture_list"
   if [ "$n_untracked" -eq 0 ]; then
-    ok "every fixture file under .dsh/tests/cases/*/root/ is tracked by git ($fixture_count files)"
+    ok "every fixture file under .dsh/engine/tests/cases/*/root/ is tracked by git ($fixture_count files)"
   else
-    bad "$n_untracked of $fixture_count fixture files under .dsh/tests/cases/*/root/ are NOT tracked by git -- they vanish from a fresh clone and the case they belong to stops testing anything; git add -f them, or rename them out of the ignored path:$untracked"
+    bad "$n_untracked of $fixture_count fixture files under .dsh/engine/tests/cases/*/root/ are NOT tracked by git -- they vanish from a fresh clone and the case they belong to stops testing anything; git add -f them, or rename them out of the ignored path:$untracked"
   fi
 fi
 
@@ -685,7 +699,7 @@ fi
 # thing: an EMPTY fixture directory is present in the checkout that wrote it and simply absent in a
 # clone. Three turn-end cases shipped one (`root/engine/shape/test/src`, the redirect target of each
 # case's post_git), and the committed tree therefore could not reproduce its own evidence --
-# measured, `sh .dsh/tests/run.sh` in a `git clone --depth 1` of this branch was **108 passed, 3
+# measured, `sh .dsh/engine/tests/run.sh` in a `git clone --depth 1` of this branch was **108 passed, 3
 # failed** ("post_git could not turn the base repository dirty") against 111/0 in the checkout that
 # had the directories, which also made `bootstrap.sh` (which hands off to this file under `set -e`)
 # fail on a clean machine. Two SHAPE assertions for that class, because membership cannot express
@@ -697,9 +711,9 @@ fi
 #     the script makes it, the runner makes it (`.` the scratch root, `.git` from git_init,
 #     `.dsh/.state` from run.sh), or git does, because the case's root/ tree holds at least one
 #     TRACKED file under it. A destination that is none of those is exactly C1 again.
-empty_fixture_dirs=$(find "$repo/.dsh/tests/cases" -path '*/root/*' -type d -empty -print 2>/dev/null | sort)
+empty_fixture_dirs=$(find "$engine/tests/cases" -path '*/root/*' -type d -empty -print 2>/dev/null | sort)
 if [ -z "$empty_fixture_dirs" ]; then
-  ok "no empty directory under any .dsh/tests/cases/*/root/ tree (git cannot store one, so a clone would not have it)"
+  ok "no empty directory under any .dsh/engine/tests/cases/*/root/ tree (git cannot store one, so a clone would not have it)"
 else
   bad "empty director(ies) under a fixture root/ tree -- git stores no empty directory, so each is present here and GONE in a fresh clone, where every case that writes into it fails:
 $(printf '%s\n' "$empty_fixture_dirs" | sed 's/^/       /')
@@ -713,7 +727,7 @@ fi
 shape_bad=''
 shape_writers=0
 shape_dirs=0
-for shape_script in "$repo"/.dsh/tests/cases/*/post_git "$repo"/.dsh/tests/cases/*/mutate_between; do
+for shape_script in "$engine"/tests/cases/*/post_git "$engine"/tests/cases/*/mutate_between; do
   [ -f "$shape_script" ] || continue
   shape_writers=$((shape_writers + 1))
   shape_case_dir=${shape_script%/*}
@@ -753,7 +767,7 @@ for shape_script in "$repo"/.dsh/tests/cases/*/post_git "$repo"/.dsh/tests/cases
       esac
     fi
     if [ "$shape_ok" = 0 ] \
-      && [ -n "$(git -C "$repo" ls-files -- ".dsh/tests/cases/$shape_case/root/$shape_dir" 2>/dev/null | head -n 1)" ]; then
+      && [ -n "$(git -C "$engine" ls-files -- "tests/cases/$shape_case/root/$shape_dir" 2>/dev/null | head -n 1)" ]; then
       shape_ok=1
     fi
     if [ "$shape_ok" = 0 ]; then
@@ -773,7 +787,7 @@ fi
 # F49. Every suite discovers itself: hard-coding the list was how a seventh suite would be
 # forgotten. A non-executable suite still runs here (it is invoked through `sh`, like every other
 # suite and like gate.sh invokes its hooks), but it is still an installation defect worth naming:
-# `.dsh/tests/<suite>` fails to start. The empty list is the loud case -- a discovery loop over
+# `.dsh/engine/tests/<suite>` fails to start. The empty list is the loud case -- a discovery loop over
 # nothing must not read as "all suites passed".
 #
 # THE ONE OPT-IN SUITE (the `--full` flag). `committed-tree-test.sh` clones this commit and runs
@@ -785,32 +799,41 @@ fi
 # not a price the default path should carry. It is therefore SKIPPED unless `--full` is given, and
 # the skip is a NOTE naming the suite, what it costs and the flag that runs it: never silence,
 # because a green check must not imply coverage it did not run. `.dsh/bootstrap.sh` keeps using the
-# default; `sh .dsh/check-harness.sh --full` is the command that still asserts the clone.
+# default; `sh .dsh/engine/check-harness.sh --full` is the command that still asserts the clone.
 suites="$work/suites"
 : >"$suites"
-for suite in "$repo"/.dsh/tests/*-test.sh; do
+# The engine's own suites first, then the project's (`<project>/.dsh/tests`, where the suites that
+# read the project's own wiring live -- the opt-in clone suite among them), when that directory exists.
+for suite in "$engine"/tests/*-test.sh; do
   [ -f "$suite" ] || continue
   printf '%s\n' "$suite" >>"$suites"
 done
+project_tests="$repo/.dsh/tests"
+if [ -d "$project_tests" ]; then
+  for suite in "$project_tests"/*-test.sh; do
+    [ -f "$suite" ] || continue
+    printf '%s\n' "$suite" >>"$suites"
+  done
+fi
 suite_count=$(wc -l <"$suites" | tr -d ' ')
 
 if [ "$suite_count" -eq 0 ]; then
-  bad "no .dsh/tests/*-test.sh suites were found -- the discovery branch would pass over an empty list; the suites are missing from this checkout"
+  bad "no .dsh/engine/tests/*-test.sh suites were found -- the discovery branch would pass over an empty list; the suites are missing from this checkout"
 else
   not_exec=''
   while IFS= read -r suite; do
     [ -x "$suite" ] || not_exec="$not_exec ${suite##*/}"
   done <"$suites"
   if [ -n "$not_exec" ]; then
-    bad "suite(s) not executable:$not_exec -- chmod +x them; this check and gate.sh run them through sh, but ./.dsh/tests/<suite> would not start"
+    bad "suite(s) not executable:$not_exec -- chmod +x them; this check and gate.sh run them through sh, but ./.dsh/engine/tests/<suite> would not start"
   else
     ok "every discovered suite is executable ($suite_count suites)"
   fi
 
   while IFS= read -r suite; do
     name=${suite##*/}
-    if [ "$full" != 1 ] && [ "$name" = "$opt_in_suite" ]; then
-      note "suite $name: SKIPPED on the default path (it clones this commit and runs run.sh plus this whole check inside the clone, ~2.5 min). The C1 class it guards -- a fixture relying on an empty directory git cannot store -- is asserted here by group D's shape checks; 'sh .dsh/check-harness.sh --full' runs it"
+    if [ "$full" != 1 ] && [ "$suite" = "$project_tests/$opt_in_suite" ]; then
+      note "suite $name: SKIPPED on the default path (it clones this commit and runs run.sh plus this whole check inside the clone, ~2.5 min). The C1 class it guards -- a fixture relying on an empty directory git cannot store -- is asserted here by group D's shape checks; 'sh .dsh/engine/check-harness.sh --full' runs it"
       continue
     fi
     log="$work/suite-$name.log"
@@ -820,13 +843,13 @@ else
     if [ "$code" = 0 ]; then
       ok "suite $name: $summary"
     else
-      bad "suite $name failed (exit $code): $summary -- run sh .dsh/tests/$name for the full output"
+      bad "suite $name failed (exit $code): $summary -- run sh $suite for the full output"
       grep '^FAIL' "$log" 2>/dev/null | head -n 5 | sed 's/^/       /'
     fi
   done <"$suites"
 fi
 
-# The behavioural suite. F49's discovery pattern is `*-test.sh`, which leaves `.dsh/tests/run.sh`
+# The behavioural suite. F49's discovery pattern is `*-test.sh`, which leaves `.dsh/engine/tests/run.sh`
 # out -- and run.sh is the fixture runner: 111 cases today that drive gate.sh and every hook end to
 # end through payloads, exit codes and git state. It is the largest single piece of evidence that
 # the installation under test actually works, so an installation check that skips it is weaker than
@@ -835,23 +858,23 @@ fi
 # Measured cost on this machine: ~16 s, which puts a whole check at ~23 s -- paid once per
 # materialization by bootstrap, and worth it. If that ever becomes unacceptable, put this block
 # behind a `--full` flag AND print a skip line, so a green check never implies coverage it skipped.
-behaviour="$repo/.dsh/tests/run.sh"
+behaviour="$engine/tests/run.sh"
 if [ ! -f "$behaviour" ]; then
-  bad ".dsh/tests/run.sh is missing -- the fixture cases that drive the gate end to end are gone with it; restore the file (every case under .dsh/tests/cases is only as good as the runner that plays it)"
+  bad ".dsh/engine/tests/run.sh is missing -- the fixture cases that drive the gate end to end are gone with it; restore the file (every case under .dsh/engine/tests/cases is only as good as the runner that plays it)"
 else
   if [ -x "$behaviour" ]; then
-    ok "the behavioural suite .dsh/tests/run.sh is executable"
+    ok "the behavioural suite .dsh/engine/tests/run.sh is executable"
   else
-    bad ".dsh/tests/run.sh is not executable -- chmod +x .dsh/tests/run.sh; this check runs it through sh, but ./.dsh/tests/run.sh would not start"
+    bad ".dsh/engine/tests/run.sh is not executable -- chmod +x .dsh/engine/tests/run.sh; this check runs it through sh, but ./.dsh/engine/tests/run.sh would not start"
   fi
   behaviour_log="$work/suite-run.log"
   sh "$behaviour" >"$behaviour_log" 2>&1
   behaviour_code=$?
   behaviour_summary=$(trim "$(tail -n 1 "$behaviour_log" 2>/dev/null)")
   if [ "$behaviour_code" = 0 ]; then
-    ok "behavioural suite .dsh/tests/run.sh: $behaviour_summary"
+    ok "behavioural suite .dsh/engine/tests/run.sh: $behaviour_summary"
   else
-    bad "behavioural suite .dsh/tests/run.sh failed (exit $behaviour_code): $behaviour_summary -- run sh .dsh/tests/run.sh for the full output"
+    bad "behavioural suite .dsh/engine/tests/run.sh failed (exit $behaviour_code): $behaviour_summary -- run sh .dsh/engine/tests/run.sh for the full output"
     grep '^FAIL' "$behaviour_log" 2>/dev/null | head -n 5 | sed 's/^/       /'
   fi
 fi

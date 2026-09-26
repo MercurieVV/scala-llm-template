@@ -127,7 +127,7 @@ MSG
 # A family, never a spelling: DSH registers the lowercase tool names and Claude Code the
 # capitalized ones, and one gate.sh serves both, so `bash` and `Bash` must decide alike (F64).
 # Until this was a case, `Bash` -- every command a Claude Code session runs -- exited 0 here and
-# the sbt denial below never fired there; `.dsh/tests/vocabulary-test.sh` now sends both spellings
+# the sbt denial below never fired there; `.dsh/engine/tests/vocabulary-test.sh` now sends both spellings
 # of the same call and requires the same verdict, so the gap cannot reopen.
 case "$(payload_get tool_name)" in
   bash|Bash) ;;
@@ -513,12 +513,12 @@ Fetch to a file, inspect it, then run it deliberately." ;;
     if [ "$_word" = mill ] && [ -z "$_fb_rewrite" ]; then
       _fb_cmd=${cmd%"$_nl"}
       case "$_fb_cmd" in
-        *'|'*|*'>'*|*'&&'*|*';'*|*"$_nl"*|'sh .dsh/hooks/feedback.sh'*) ;;
+        *'|'*|*'>'*|*'&&'*|*';'*|*"$_nl"*|'sh .dsh/engine/hooks/feedback.sh'*) ;;
         *)
           for _arg in "$@"; do
             case "$_arg" in
               *.test|*.test.*|*testOnly*|*testForked*|*testCached*|*.compile|*.fix|*.fixStrict)
-                _fb_rewrite="sh .dsh/hooks/feedback.sh -- $_fb_cmd" ;;
+                _fb_rewrite="sh .dsh/engine/hooks/feedback.sh -- $_fb_cmd" ;;
             esac
           done ;;
       esac
@@ -685,6 +685,6 @@ case "$_dash" in *f*) ;; *) set +f ;; esac
 # updatedInput verdict is the LAST word, never a shortcut past a deny rule that had not yet run.
 if [ -n "$_fb_rewrite" ]; then
   dsh_allow_updated_command "$_fb_rewrite" \
-    "DSH feedback: test and diagnostic output is shaped by .dsh/hooks/feedback.sh (DIAGNOSTIC/INSTRUCTION lines); the raw log is under .dsh/.state/feedback/"
+    "DSH feedback: test and diagnostic output is shaped by .dsh/engine/hooks/feedback.sh (DIAGNOSTIC/INSTRUCTION lines); the raw log is under .dsh/.state/feedback/"
 fi
 exit 0

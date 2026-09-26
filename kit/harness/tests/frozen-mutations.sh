@@ -15,22 +15,28 @@
 #     repository, an empty list) still PASSES under the mutation -- so the rule is not load-bearing
 #     for them, which is what "no over-block" means as a test.
 #
-# The wiring rows run `.dsh/tests/wiring-test.sh`, and the installation-check rows run
-# `.dsh/check-harness.sh`, because neither claim is reachable from `run.sh`: the fixtures drive
+# The wiring rows run `.dsh/engine/tests/wiring-test.sh`, and the installation-check rows run
+# `.dsh/engine/check-harness.sh`, because neither claim is reachable from `run.sh`: the fixtures drive
 # gate.sh directly, so nothing there can see a matcher that stopped selecting the tool, or prove that
 # check-harness's own FAIL branch fires on a malformed entry.
 #
-# Why this file is NOT `*-test.sh`: check-harness.sh discovers and runs every `.dsh/tests/*-test.sh`,
+# Why this file is NOT `*-test.sh`: check-harness.sh discovers and runs every `.dsh/engine/tests/*-test.sh`,
 # and this one copies the harness once per rule and runs check-harness twice more -- evidence a human
 # asks for, not a cost every installation check should pay. Run it by hand:
 #
-#   sh .dsh/tests/frozen-mutations.sh
+#   sh .dsh/engine/tests/frozen-mutations.sh
 #
 # Cost, measured on this machine: ~50 s (sixteen scratch copies of `.dsh/` and the runs under them),
 # against ~16 s for the whole behavioural suite.
 set -u
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-cd "$repo" || exit 1
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$engine" || exit 1
+# The project's own `.dsh/` when this engine is a vendored one (`<project>/.dsh/engine`), else empty:
+# the template's engine has no project state beside it. The project's own suites (the wiring suite,
+# the opt-in clone suite) live in it, under proj_tests_rel.
+proj_dsh=''
+case "$engine" in */.dsh/engine) proj_dsh=${engine%/engine} ;; esac
+proj_tests_rel=.dsh/tests
 
 passed=0
 failed=0
@@ -41,19 +47,25 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/dsh-frozen-mutations.XXXXXX") || exit 1
 trap 'rm -rf "$work"' 0
 tree="$work/tree"
 
-# build_tree <dest> <case...>: a scratch harness -- the gate, the hooks, lib.sh, the suites and the
-# runner -- plus exactly the fixture cases a row needs. The copied `.dsh/.state` is dropped: a
-# per-machine cache must not decide a copied run.
+# build_tree <dest> <case...>: a scratch project in the vendored layout -- the project's `.dsh/`
+# state when there is one, and the engine (the gate, the hooks, lib.sh, the suites and the runner)
+# at `.dsh/engine/` -- plus exactly the fixture cases a row needs. The copied `.dsh/.state` is
+# dropped: a per-machine cache must not decide a copied run.
 build_tree() {
   _bt_dest=$1
   shift
   rm -rf "$_bt_dest"
-  mkdir -p "$_bt_dest/.dsh/tests/cases"
-  cp -R "$repo/.dsh/." "$_bt_dest/.dsh/" 2>/dev/null
-  rm -rf "$_bt_dest/.dsh/.state" "$_bt_dest/.dsh/tests/cases"
-  mkdir -p "$_bt_dest/.dsh/tests/cases"
+  mkdir -p "$_bt_dest/.dsh"
+  if [ -n "$proj_dsh" ]; then
+    cp -R "$proj_dsh/." "$_bt_dest/.dsh/" 2>/dev/null
+    rm -rf "$_bt_dest/.dsh/engine"
+  fi
+  mkdir -p "$_bt_dest/.dsh/engine"
+  cp -R "$engine/." "$_bt_dest/.dsh/engine/" 2>/dev/null
+  rm -rf "$_bt_dest/.dsh/.state" "$_bt_dest/.dsh/engine/tests/cases"
+  mkdir -p "$_bt_dest/.dsh/engine/tests/cases"
   for _bt_case in "$@"; do
-    cp -R "$repo/.dsh/tests/cases/$_bt_case" "$_bt_dest/.dsh/tests/cases/$_bt_case" || return 1
+    cp -R "$engine/tests/cases/$_bt_case" "$_bt_dest/.dsh/engine/tests/cases/$_bt_case" || return 1
   done
   return 0
 }
@@ -75,7 +87,7 @@ case_failed() { grep -q "^FAIL $2" "$1" 2>/dev/null; }
 # entry, denying reads too), so its fixtures share this one base.
 frozen_cases=''
 frozen_n=0
-for frozen_dir in "$repo"/.dsh/tests/cases/frozen-*/ "$repo"/.dsh/tests/cases/sealed-*/; do
+for frozen_dir in "$engine"/tests/cases/frozen-*/ "$engine"/tests/cases/sealed-*/; do
   [ -d "$frozen_dir" ] || continue
   frozen_cases="$frozen_cases $(basename "$frozen_dir")"
   frozen_n=$((frozen_n + 1))
@@ -94,7 +106,7 @@ base_log="$work/base.log"
 if ! build_tree "$base" $frozen_cases; then
   bad "could not build the base scratch tree"
 else
-  sh "$base/.dsh/tests/run.sh" >"$base_log" 2>&1
+  sh "$base/.dsh/engine/tests/run.sh" >"$base_log" 2>&1
   base_code=$?
   if [ "$base_code" = 0 ]; then
     ok "the unmutated copy runs all $frozen_n frozen fixtures green ($(tail -n 1 "$base_log" | sed 's/^[[:space:]]*//'))"
@@ -128,12 +140,12 @@ expect_mutation() {
     bad "$_em_name: could not build the scratch tree"
     return 1
   fi
-  if ! mutate "$tree/.dsh/$_em_file" "$_em_sed"; then
+  if ! mutate "$tree/.dsh/engine/$_em_file" "$_em_sed"; then
     bad "$_em_name: the mutation changed nothing in $_em_file -- the rule is not spelled the way this script removes it, so the row proves nothing"
     return 1
   fi
   _em_log="$work/mutation-$_em_name.log"
-  sh "$tree/.dsh/tests/run.sh" >"$_em_log" 2>&1
+  sh "$tree/.dsh/engine/tests/run.sh" >"$_em_log" 2>&1
   _em_red_list=''
   for _em_case in $_em_reds; do
     if case_failed "$_em_log" "$_em_case"; then
@@ -175,7 +187,7 @@ expect_wiring_mutation() { # <name> <file in the copy> <jq program> <needle> <de
   fi
   cp "$work/wiring.after.json" "$tree/$_wm_file"
   _wm_log="$work/mutation-$_wm_name.log"
-  sh "$tree/.dsh/tests/wiring-test.sh" >"$_wm_log" 2>&1
+  sh "$tree/$proj_tests_rel/wiring-test.sh" >"$_wm_log" 2>&1
   _wm_code=$?
   if [ "$_wm_code" = 0 ]; then
     bad "$_wm_name: $_wm_what leaves the wiring suite green -- the wiring is not load-bearing"
@@ -195,12 +207,12 @@ expect_wiring_mutation() { # <name> <file in the copy> <jq program> <needle> <de
 # FAILs (no git repository, no cases) are not what these rows assert.
 harness_tree() {
   build_tree "$tree" || return 1
-  rm -f "$tree"/.dsh/tests/run.sh "$tree"/.dsh/tests/*-test.sh
+  rm -f "$tree"/.dsh/engine/tests/run.sh "$tree"/.dsh/engine/tests/*-test.sh "$tree/$proj_tests_rel"/*-test.sh
   mkdir -p "$tree/.dsh/.state"
   return 0
 }
 harness_run() { # <log>
-  sh "$tree/.dsh/check-harness.sh" >"$1" 2>&1
+  sh "$tree/.dsh/engine/check-harness.sh" --project "$tree" >"$1" 2>&1
 }
 harness_malformed='engine/details/** a single space is not a separator'
 
@@ -211,8 +223,8 @@ harness_malformed='engine/details/** a single space is not a separator'
 opt_in_suite=committed-tree-test.sh
 harness_tree_optin() {
   build_tree "$tree" || return 1
-  rm -f "$tree/.dsh/tests/run.sh"
-  for _ht_suite in "$tree"/.dsh/tests/*-test.sh; do
+  rm -f "$tree/.dsh/engine/tests/run.sh" "$tree"/.dsh/engine/tests/*-test.sh
+  for _ht_suite in "$tree/$proj_tests_rel"/*-test.sh; do
     [ -f "$_ht_suite" ] || continue
     case "${_ht_suite##*/}" in
       "$opt_in_suite") ;;
@@ -416,7 +428,7 @@ else
     ok "check-harness-malformed-entry: without that entry the same copy prints no frozen-path FAIL (so the FAIL is caused by it)"
   fi
   printf '# a machine-local freeze\n%s\n' "$harness_malformed" >"$tree/.dsh/.state/frozen-paths"
-  if mutate "$tree/.dsh/check-harness.sh" \
+  if mutate "$tree/.dsh/engine/check-harness.sh" \
      's/^  if \[ "$frozen_code" != 0 \]; then$/  if false; then/'; then
     harness_run "$work/harness-mutated.log"
     if grep -q '^FAIL.*frozen-path entry.*is malformed' "$work/harness-mutated.log" 2>/dev/null; then
@@ -435,7 +447,7 @@ fi
 if ! harness_tree; then
   bad "check-harness-hook-files: could not build the scratch tree"
 else
-  chmod -x "$tree/.dsh/hooks/tool-policy.sh"
+  chmod -x "$tree/.dsh/engine/hooks/tool-policy.sh"
   harness_run "$work/harness-hookmode.log"
   h_code=$?
   if grep -q '^FAIL.*the gate cannot run' "$work/harness-hookmode.log" 2>/dev/null; then
@@ -444,7 +456,7 @@ else
     bad "check-harness-hook-files: check-harness (exit $h_code) did not FAIL on a non-executable hook"
     grep '^FAIL' "$work/harness-hookmode.log" 2>/dev/null | head -n 3 | sed 's/^/       /'
   fi
-  chmod +x "$tree/.dsh/hooks/tool-policy.sh"
+  chmod +x "$tree/.dsh/engine/hooks/tool-policy.sh"
   harness_run "$work/harness-hookmode-clean.log"
   if grep -q '^FAIL.*the gate cannot run' "$work/harness-hookmode-clean.log" 2>/dev/null; then
     bad "check-harness-hook-files: the control (mode restored) still FAILs on an exec bit -- the FAIL is not caused by it"
@@ -453,7 +465,7 @@ else
   fi
   # A syntax error is the other half: the hook would exit 1, which the bridge reads as a non-blocking
   # error, so the rule it implements would be off without a word.
-  printf 'if this is not sh\n' >>"$tree/.dsh/lib.sh"
+  printf 'if this is not sh\n' >>"$tree/.dsh/engine/lib.sh"
   harness_run "$work/harness-hooksyntax.log"
   if grep -q '^FAIL.*the gate cannot run' "$work/harness-hooksyntax.log" 2>/dev/null; then
     ok "check-harness-hook-files: a lib.sh that does not parse FAILs the installation check (every hook sources it)"
@@ -462,9 +474,9 @@ else
   fi
   # The syntax mutation is undone before the exec-bit row: the two defects would otherwise both
   # print a `the gate cannot run` FAIL, and the row would prove nothing about the bit.
-  cp "$repo/.dsh/lib.sh" "$tree/.dsh/lib.sh"
-  chmod -x "$tree/.dsh/hooks/tool-policy.sh"
-  if mutate "$tree/.dsh/check-harness.sh" \
+  cp "$engine/lib.sh" "$tree/.dsh/engine/lib.sh"
+  chmod -x "$tree/.dsh/engine/hooks/tool-policy.sh"
+  if mutate "$tree/.dsh/engine/check-harness.sh" \
      's/\[ -x "\$hook_file" \] || hook_bad=/[ -n "$hook_file" ] || hook_bad=/'; then
     harness_run "$work/harness-hookmode-mutated.log"
     if grep -q '^FAIL.*the gate cannot run' "$work/harness-hookmode-mutated.log" 2>/dev/null; then
@@ -485,7 +497,7 @@ fi
 if ! harness_tree_optin; then
   bad "check-harness-full-flag: could not build the scratch tree"
 else
-  sh "$tree/.dsh/check-harness.sh" >"$work/harness-default.log" 2>&1
+  sh "$tree/.dsh/engine/check-harness.sh" --project "$tree" >"$work/harness-default.log" 2>&1
   if grep -q "^note suite $opt_in_suite: SKIPPED" "$work/harness-default.log" 2>/dev/null; then
     ok "check-harness-full-flag: the default run prints a note naming the skipped suite and the flag ($(grep -m1 "^note suite $opt_in_suite" "$work/harness-default.log" | cut -c1-90)…)"
   else
@@ -496,22 +508,22 @@ else
   else
     ok "check-harness-full-flag: the default run does not run it"
   fi
-  sh "$tree/.dsh/check-harness.sh" --full >"$work/harness-full.log" 2>&1
+  sh "$tree/.dsh/engine/check-harness.sh" --project "$tree" --full >"$work/harness-full.log" 2>&1
   if grep -q "^note suite $opt_in_suite: SKIPPED" "$work/harness-full.log" 2>/dev/null; then
     bad "check-harness-full-flag: --full still skips it"
   else
     ok "check-harness-full-flag: --full runs it (the copy is not a git tree, so the suite is attempted and reported failed rather than skipped)"
   fi
-  sh "$tree/.dsh/check-harness.sh" --ful >"$work/harness-typo.log" 2>&1
+  sh "$tree/.dsh/engine/check-harness.sh" --project "$tree" --ful >"$work/harness-typo.log" 2>&1
   h_typo=$?
-  if [ "$h_typo" = 2 ] && grep -q 'usage: sh .dsh/check-harness.sh' "$work/harness-typo.log" 2>/dev/null; then
+  if [ "$h_typo" = 2 ] && grep -q 'usage: sh .dsh/engine/check-harness.sh' "$work/harness-typo.log" 2>/dev/null; then
     ok "check-harness-full-flag: an unknown flag is refused with the usage line, so a typo cannot run the cheaper check by accident"
   else
     bad "check-harness-full-flag: an unknown flag was accepted (exit $h_typo) -- the default path could be run by mistake"
   fi
-  if mutate "$tree/.dsh/check-harness.sh" \
+  if mutate "$tree/.dsh/engine/check-harness.sh" \
      's@^      note "suite \$name: SKIPPED on the default path@      : "suite $name: SKIPPED on the default path@'; then
-    sh "$tree/.dsh/check-harness.sh" >"$work/harness-silent.log" 2>&1
+    sh "$tree/.dsh/engine/check-harness.sh" --project "$tree" >"$work/harness-silent.log" 2>&1
     if grep -q "^note suite $opt_in_suite: SKIPPED" "$work/harness-silent.log" 2>/dev/null; then
       bad "check-harness-full-flag: the note survives the skip being made silent -- the row proves nothing"
     else

@@ -27,7 +27,7 @@
 # PER FILE, NOT PER SESSION -- the guarantee, stated exactly, in three clauses:
 #
 #   1. A text read is denied only for a file the index COVERS. A read that names ONLY unindexed files
-#      stands down: exit 0, one line on stdout naming the file, its Mill module (`sh .dsh/module-map.sh
+#      stands down: exit 0, one line on stdout naming the file, its Mill module (`sh .dsh/engine/module-map.sh
 #      <path>`) and the compile that would index it (`./mill --ticker false --color false
 #      <module>.compile`), because a rule that blocks what its own tool cannot answer for is a dead
 #      end, not enforcement. Measured in this checkout while this was written: the index covers 66 of
@@ -90,7 +90,7 @@
 #     `node -e "fs.readFileSync('A.scala')"` all exit 0 (measured), while `cat A.scala` is denied.
 #     Catching them means knowing each language's file APIs -- executing or parsing the command --
 #     which is the semantics this layer does not have. Pinned as a PASS by
-#     .dsh/tests/cases/semantic-guard-bash-interpreter-read-allowed, so the limit is a decision
+#     .dsh/engine/tests/cases/semantic-guard-bash-interpreter-read-allowed, so the limit is a decision
 #     with a fixture behind it rather than an assumption.
 #   * A copy whose destination is not a literal `.scala` path on the same line is missed:
 #     `f=A.scala; cp /tmp/x "$f"` writes a source and exits 0 (measured), because no text rule here
@@ -112,7 +112,7 @@
 #     split the way the SHELL itself would split it -- `dir`, `with`, `space/S`, `p.scala` -- and the
 #     last of those is what this layer decides about. That is text-matching being honest about being
 #     text-matching; pinned as a PASS by
-#     .dsh/tests/cases/semantic-guard-bash-unquoted-space-path-limit.
+#     .dsh/engine/tests/cases/semantic-guard-bash-unquoted-space-path-limit.
 #   * The two undecided verdicts (clauses 4 and 5 above) are text-matching too, and their false
 #     positives lean the same way as everything else here -- denied rather than read: a `cd` inside a
 #     quoted string or a trailing comment still marks the line as changing directory, and a file whose
@@ -720,7 +720,7 @@ case "$tool" in
     # and not `tool_input.file_path`, so this branch would read an empty path, match neither
     # `.scala` nor `.sc`, and exit 0. That is the correct verdict rather than a hole -- a notebook
     # cannot be a `.scala`/`.sc` source, and this hook decides about nothing else -- and it is
-    # asserted in .dsh/tests/vocabulary-test.sh, so the no-op stays a decision.
+    # asserted in .dsh/engine/tests/vocabulary-test.sh, so the no-op stays a decision.
     file_path=$(payload_get tool_input.file_path)
     # A FROZEN path is denied first -- above the annotated-buffer route below (the buffer is a
     # write path too, so the sanctioned route is not a way round a freeze) and above the health

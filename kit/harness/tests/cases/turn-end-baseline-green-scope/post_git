@@ -2,6 +2,6 @@
 # Dirty at SessionStart, then edited again by the session — and every check passes. The scope note
 # has to appear on this ALLOW path too, not only on the ones that block.
 printf '\n// pre-existing work\n' >> engine/details/src/A.scala
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
-GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
 printf '\n// this session\x27s own edit\n' >> engine/details/src/A.scala
