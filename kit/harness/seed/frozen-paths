@@ -1,0 +1,29 @@
+# .dsh/frozen-paths — paths the HUMAN is working on: no agent may WRITE them.
+#
+# One entry per line: `[sealed<TAB>]path<TAB>reason` — an optional access word, a path, a TAB or two
+# or more spaces, then the reason (required — every denial quotes it). A single space is NOT a
+# separator, so a path containing a space is written with the wider one (`dir with space/A B.scala  the
+# file`). Three shapes: `path`, `dir/`, `prefix/**`. Blank lines and `#`-led lines are ignored.
+# Two access kinds. A plain entry is FROZEN: no write, reads stay allowed (annotated_source, the read
+# tools, bash readers). An entry led by `sealed` denies READS too — the holdout suite and its log:
+# the gate runs it, the agent gets pass/fail counts and the failing test names, never the text.
+#
+# This committed file is project state, reviewed like any other change. A machine-local freeze
+# (this session, this experiment) goes in .dsh/.state/frozen-paths instead — gitignored, same
+# format; the two files are unioned, so it ADDS freezes and cannot lift a committed one.
+# A malformed entry (no reason, a single-space separator, an absolute path outside the repository)
+# fails `sh .dsh/engine/check-harness.sh` rather than being skipped silently.
+#
+.dsh/engine/**	the engine is vendored from scala-llm-template/kit/harness; edit it there and re-run install.sh
+.dsh/frozen-paths	the freeze list is the human's; ask in chat to unfreeze
+.dsh/contract	the gate interface is the human's
+.dsh/hooks.json	the hook wiring is the human's
+.dsh/cc-settings.json	the hook wiring Claude Code actually reads; the human's
+.claude/settings.json	the hook wiring Claude Code actually reads; the human's
+.claude/settings.local.json	the hook wiring Claude Code actually reads; the human's
+.dsh/.state/receipts	receipts are the gate's record; the human's
+.dsh/.state/modules.tsv	the coverage map is the build's answer; edit build.mill, not this cache
+.dsh/instructions/local.tsv	the project's instruction table; the agent proposes rows in chat, the human writes them
+.dsh/instructions/scalac-kinds.tsv	the scalac headline→kind table; the human's
+.dsh/policy/allowed-types.tsv	the module policy is the human's: an agent that may widen its own allowlist has none
+.dsh/policy/memorisation.tsv	the memorisation thresholds and exemptions are the human's: an agent may not exempt its own reward hacking

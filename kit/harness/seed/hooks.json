@@ -1,0 +1,17 @@
+{
+  "SessionStart": [
+    { "hooks": [ { "type": "command", "command": "sh \"${CLAUDE_PROJECT_DIR}/.dsh/engine/gate.sh\" health", "timeout": 120 } ] },
+    { "hooks": [ { "type": "command", "command": "sh \"${CLAUDE_PROJECT_DIR}/.dsh/engine/gate.sh\" baseline", "timeout": 60 } ] }
+  ],
+  "PreToolUse": [
+    { "matcher": "bash", "hooks": [ { "type": "command", "command": "sh \"${CLAUDE_PROJECT_DIR}/.dsh/engine/gate.sh\" tool-policy", "timeout": 30 } ] },
+    { "matcher": "read|grep|glob|bash|write|edit", "hooks": [ { "type": "command", "command": "sh \"${CLAUDE_PROJECT_DIR}/.dsh/engine/gate.sh\" semantic-guard", "timeout": 60 } ] },
+    { "matcher": "mcp__[A-Za-z0-9_-]+__(annotated_source|source_around_position|source_ranges|document_outline|structure)", "hooks": [ { "type": "command", "command": "sh \"${CLAUDE_PROJECT_DIR}/.dsh/engine/gate.sh\" semantic-guard", "timeout": 60 } ] }
+  ],
+  "PostToolUse": [
+    { "matcher": "write|edit", "hooks": [ { "type": "command", "command": "sh \"${CLAUDE_PROJECT_DIR}/.dsh/engine/gate.sh\" post-edit", "timeout": 600 } ] }
+  ],
+  "Stop": [
+    { "hooks": [ { "type": "command", "command": "sh \"${CLAUDE_PROJECT_DIR}/.dsh/engine/gate.sh\" turn-end", "timeout": 600 } ] }
+  ]
+}

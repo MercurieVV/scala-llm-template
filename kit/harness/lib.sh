@@ -335,6 +335,50 @@ dsh_file_hash() {
   printf '%s\n' '-'
 }
 
+# sha256 of stdin, hex only. Callers check dsh_has_hasher first.
+dsh_sha256_stdin() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}'; else sha256sum | awk '{print $1}'; fi
+}
+
+# The engine's tree hash (spec 2026-09-26 §2): sha256 over the sorted relative file list and each file's
+# bytes, the top-level STAMP and every .DS_Store excluded. `-` when there is no hasher.
+dsh_engine_tree_hash() {
+  dsh_has_hasher || { printf '%s\n' '-'; return 0; }
+  ( cd "$1" 2>/dev/null || exit 1
+    find . -type f ! -path ./STAMP ! -name .DS_Store | LC_ALL=C sort | while IFS= read -r _f; do
+      printf '%s\n' "$_f"; cat "$_f"
+    done ) | dsh_sha256_stdin
+}
+
+# One field of <engine>/STAMP, or nothing.
+dsh_engine_stamp_field() {
+  [ -f "$1/STAMP" ] || return 0
+  sed -n "s/^$2=//p" "$1/STAMP" | head -1
+}
+
+# ok | missing | mismatch | nohasher
+dsh_engine_stamp_verdict() {
+  [ -f "$1/STAMP" ] || { printf 'missing\n'; return 0; }
+  dsh_has_hasher || { printf 'nohasher\n'; return 0; }
+  if [ "$(dsh_engine_stamp_field "$1" tree)" = "$(dsh_engine_tree_hash "$1")" ]; then printf 'ok\n'; else printf 'mismatch\n'; fi
+}
+
+# Is <engine> the vendored copy of <root>, i.e. physically <root>/.dsh/engine? The template's own runs are not.
+dsh_is_vendored_engine() {
+  _ve=$(CDPATH= cd -P -- "$1" 2>/dev/null && pwd) || return 1
+  _vr=$(CDPATH= cd -P -- "$2/.dsh/engine" 2>/dev/null && pwd) || return 1
+  [ "$_ve" = "$_vr" ]
+}
+
+# Positive evidence of a non-Mill build (plan ruling): build.sbt or project.scala at the root, and neither
+# build.mill nor an executable ./mill. Prints which file; exit 1 when the project is (or may be) Mill.
+dsh_non_mill_build() {
+  { [ -e "$1/build.mill" ] || [ -x "$1/mill" ]; } && return 1
+  [ -e "$1/build.sbt" ] && { printf 'build.sbt\n'; return 0; }
+  [ -e "$1/project.scala" ] && { printf 'project.scala\n'; return 0; }
+  return 1
+}
+
 # What a baseline recorded for a path: its hash (possibly `-`), or the empty string when the path was
 # not dirty when the session started — which is what tells the caller "check this one".
 dsh_baseline_hash() { # <baseline-file> <path>

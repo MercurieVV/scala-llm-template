@@ -1,0 +1,16 @@
+# .dsh/policy/allowed-types.tsv — which symbols a module MAY name (spec 2026-09-24 §2).
+#
+# One row per allowed prefix: `<module dir> TAB <allowed symbol prefix> TAB <reason>`.
+# <module dir> is the root-relative directory of the module, spelled as .dsh/.state/modules.tsv
+# spells it. The prefix is matched against the SemanticDB symbol `resolve_references` resolved,
+# so `skreeep2/engine/api/` covers every type under that package.
+#
+# A module with NO row here has no policy and nothing is refused for it. `scala/` and `java/`
+# symbols are always allowed and never need a row — the gate decides that from the tool's
+# `origin: stdlib` before it consults this table.
+#
+# This table is the HUMAN's. It duplicates what the AllowedShape scalafix rule enforces from
+# build.mill, deliberately: the gate must work in a project that does not run that rule, and the
+# harness never parses a build file for policy.
+#
+# Blank lines and #-led lines are ignored. Fields are separated by a TAB.

@@ -1,0 +1,8 @@
+# kind	ERE matched against the diagnostic headline (first match wins; BSD awk ERE)
+not-found	^Not found: 
+type-mismatch	^Found: 
+missing-member	is not a member of 
+missing-given	^No given instance of type |^[Nn]o implicit argument of type |^Cannot find an implicit value
+match-not-exhaustive	^match may not be exhaustive
+strict-equality	^Values of types .* cannot be compared with == or !=
+unused-import	^unused import
