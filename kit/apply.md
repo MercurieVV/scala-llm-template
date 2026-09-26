@@ -7,10 +7,10 @@ as they are — the installer (`Setup.scala`'s `kit` feature), the recipes in `k
 `kit/skills/`, and the rule's own README — and says where each step's output and stop condition go.
 
 Not in this document: the `R-1 … R-14` rule text (the `scala-coding-guidelines` wiki,
-`wiki/reengineering/reengineering-contract.md`, which the digest points at) and the harness (L4 — the gate runner,
-`gate.sh`, hooks, the semantic guard, frozen paths; Plan C). This document uses the gate's **contract** — the three
-task names `preCommit`, `prePush`, `checkFormat`, a coverage map and the source roots — without assuming that harness
-is installed.
+`wiki/reengineering/reengineering-contract.md`, which the digest points at). The harness (L4 — the gate runner,
+`gate.sh`, hooks, the semantic guard, frozen paths) is installed at step 2b and documented in `kit/harness/README.md`.
+This document uses the gate's **contract** — the three task names `preCommit`, `prePush`, `checkFormat`, a coverage
+map and the source roots — and holds for a project without that harness too (sbt, scala-cli).
 
 ## Before step 1
 
@@ -77,11 +77,12 @@ skills byte-for-byte under `.dsh/skills/<name>/SKILL.md`, and the digest planted
 `<!-- reengineering-kit:begin -->` and `<!-- reengineering-kit:end -->` in `AGENTS.md` (created when the project has
 none) and, where they exist, `.agents/AGENTS.md` and `scala-rules.md`.
 
-Two things the design's step 2 names that this installer does **not** write, because they belong to the harness (L4,
-Plan C): the **harness pointer** (`hooks.json` at the profile's gate) and **frozen paths** (`.dsh/frozen-paths`).
-Where your project already runs that harness, add the pointer in this commit and leave frozen paths empty — empty
-unless the human is mid-flight, which is the only thing that file is for. Where it does not, the tasks you wire in
-step 4 are the gate's contract, and step 3's baseline is what they print.
+Two things the design's step 2 names belong to the harness (L4), not to the kit files above: the **harness
+pointer** (`.dsh/hooks.json` / `.dsh/cc-settings.json`, every command `sh "$CLAUDE_PROJECT_DIR/.dsh/engine/gate.sh"
+<sub>`) and **frozen paths** (`.dsh/frozen-paths`). For a Mill project the same run's `install-harness` step seeds
+both — see step 2b. Beyond the seeded entries (`.dsh/engine/**` and the harness's own state files), add no
+source path unless the human is mid-flight, which is the only thing a source freeze is for. For sbt and scala-cli the harness is not installed (the step
+is skipped by name): the tasks you wire in step 4 are the gate's contract, and step 3's baseline is what they print.
 
 **Output: one commit for the install; no behaviour change.** The installer stages what it wrote (its last step is
 `git add .`). On a project already committed and clean, the staged set is the kit's files and you commit exactly
@@ -99,6 +100,37 @@ failed: read the JSON's per-step `status`. Re-running is safe — the install is
 (the marked blocks are replaced, never appended). One caveat, because the kit is vendored: a file the kit wrote is
 yours to tune, and a re-install that finds it changed does **not** overwrite it — it writes the kit's own version
 beside it as `<file>.kit-new` and says so on stderr, leaving the merge to you.
+
+## 2b. Install the harness (Mill projects)
+
+The harness engine is vendored into the project as `.dsh/engine/` by `kit/harness/install.sh`; its README,
+`kit/harness/README.md` (vendored as `.dsh/engine/README.md`), is the full reference — layout, `STAMP`, drift, the
+contract keys, the Mill interface, every note the gate prints, its blind spots. Step 2's run already calls it as
+its `install-harness` step when `build-tool` is `mill` (any other build tool is skipped by name: the engine's checks
+are Mill tasks). Run it by hand, from the scala-llm-template checkout, to install on its own or to update the
+engine later:
+
+```bash
+sh kit/harness/install.sh <target-dir>
+```
+
+- **The target must already be a git repository.** Setup's own `git init` is its last step, after
+  `install-harness`, so on a brand-new target directory that step reports
+  `failed: install.sh exited 2: … not a git repository`. Remedy: `git init <target-dir>` and re-run.
+- It replaces `.dsh/engine/` wholesale, writes `.dsh/engine/STAMP`, and seeds `.dsh/contract`, `frozen-paths`,
+  `hooks.json`, `cc-settings.json`, `policy/*.tsv` and `instructions/{local,scalac-kinds}.tsv` **only where
+  absent** — one `seeded` / `kept` / `replaced` line per file. Exit codes are in the README.
+- **The Claude Code wiring is the human's step.** `.claude/settings.json` is copied from `.dsh/cc-settings.json`
+  by the human (merging anything already there); no installer and no agent writes it.
+- **Add recipe §7's root tasks.** Copy `kit/recipes/mill/Gate.mill` to `buildKit/Gate.mill`, mix `GateLayer`
+  into every module scalafix checks, and add the root tasks from `kit/recipes/mill.md` §7 (`preCommit`,
+  `prePush`, `moduleMap`, `scalaSemanticWriteClasspath`) over the project's own module lists. The engine calls
+  those task names; without them its checks fail by name.
+
+**Stop condition:** `sh .dsh/engine/check-harness.sh --project .` reports
+`ok   vendored engine matches its STAMP`, every other FAIL it prints is written into step 3's baseline with its
+reason (a machine prerequisite such as a missing ScalaSemantic launcher is a FAIL there, not a pass), and the
+vendored engine is committed on its own as `dsh: vendor engine <sha7>`.
 
 ## 3. Baseline the gate
 
@@ -263,6 +295,7 @@ copy (R-12).
 | the rule, its registration, and the named blind spot | `kit/arhitecture-shape/` in the checkout; `.kit/arhitecture-shape/README.md` in an installed project |
 | the build-tool wiring | `kit/recipes/mill.md`, `kit/recipes/sbt.md`, `kit/recipes/scala-cli.md`, and `kit/recipes/mill/ArchitectureShapeModule.mill` |
 | the process skills | `kit/skills/*/SKILL.md`, installed to `.dsh/skills/` |
+| the harness engine (L4) and its README | `kit/harness/` in the checkout (`kit/harness/README.md`); `.dsh/engine/` in an installed project, with `.dsh/engine/STAMP`; its Mill tasks in `kit/recipes/mill/Gate.mill` and `kit/recipes/mill.md` §7 |
 | the agent-facing digest | `kit/digest.md`, planted into the project's `AGENTS.md` between the kit's markers |
 | the `R-1 … R-14` rule list | the `scala-coding-guidelines` wiki, `wiki/reengineering/reengineering-contract.md`, pointed at by the digest planted in `AGENTS.md` |
 | this procedure | `kit/apply.md` |

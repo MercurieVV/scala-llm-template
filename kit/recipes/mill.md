@@ -363,6 +363,12 @@ scalafix config must name at least one rule: with §4's `rules = []` alone, `<mo
 `No rules requested to run`, and so do `preCommit` and turn-end. `moduleMap` prints a row for every compilable
 module, so §1's `scalafixRules` appears with no capabilities beside `core`'s `fmt,scalafix`.
 
+`build.mill` imports `build.buildKit.{Gate, GateLayer}` as above. Inside a **sibling** `buildKit/*.mill` file (a
+project's own layer trait, e.g. skreeep2's `buildKit/Layer.mill`), a plain `GateLayer` import can hit a Scala 3
+cyclic reference through Mill's sibling-file wrappers. skreeep2 imports it as `import build_.buildKit.Gate_.GateLayer`
+— Mill's generated wrapper name, which is brittle across Mill upgrades, but fails loudly (a compile error in the
+build) if Mill renames it, never silently.
+
 ## What this does not decide (R-11)
 
 A green `fix --check` says the modules name allowlisted types and use no denylisted construct. It does not say the
