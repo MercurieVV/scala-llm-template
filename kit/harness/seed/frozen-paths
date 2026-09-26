@@ -19,10 +19,12 @@
 .dsh/contract	the gate interface is the human's
 .dsh/hooks.json	the hook wiring is the human's
 .dsh/cc-settings.json	the hook wiring Claude Code actually reads; the human's
+.ignore	the ripgrep ignore file keeps sealed paths out of Grep; the human's
 .claude/settings.json	the hook wiring Claude Code actually reads; the human's
 .claude/settings.local.json	the hook wiring Claude Code actually reads; the human's
 .dsh/.state/receipts	receipts are the gate's record; the human's
 .dsh/.state/modules.tsv	the coverage map is the build's answer; edit build.mill, not this cache
+.dsh/instructions/purrism.tsv	purrism's findings table, vendored by .dsh/engine/instructions-sync.sh; the human's
 .dsh/instructions/local.tsv	the project's instruction table; the agent proposes rows in chat, the human writes them
 .dsh/instructions/scalac-kinds.tsv	the scalac headline→kind table; the human's
 .dsh/policy/allowed-types.tsv	the module policy is the human's: an agent that may widen its own allowlist has none

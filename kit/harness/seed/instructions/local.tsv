@@ -1,1 +1,8 @@
 # local
+scalac.not-found	scalac	Name not found	The compiler cannot resolve this name in scope.	Check the spelling against the definition; add the missing import or the missing parameter; if the name is a new definition, write it before using it. Re-run <module>.compile.	
+scalac.type-mismatch	scalac	Type mismatch	The expression's type is not the one the position requires.	Read Found/Required literally: change the expression or the expected type, never insert a cast. If the Required type is an effect (IO, F[_]), lift with pure/delay; if it is an opaque type, use its constructor. Re-run <module>.compile.	
+scalac.missing-member	scalac	Missing member	The value has no member of that name.	Check the receiver's actual type at that position (type_at_position); the member may live on a typeclass syntax import (cats.syntax.all.*) or on a different type. Re-run <module>.compile.	
+scalac.missing-given	scalac	No given instance	No given/implicit of the required type is in scope.	Import the instance (cats.implicits / the companion) or add a `using` parameter to the enclosing def instead of summoning locally. Re-run <module>.compile.	
+scalac.match-not-exhaustive	scalac	Match not exhaustive	The pattern match misses a case of a sealed type.	Add the missing case(s) explicitly; never add a wildcard to silence it. Re-run <module>.compile.	
+scalac.strict-equality	scalac	Strict equality	`==`/`!=` on types without a CanEqual instance.	Derive CanEqual on the type (`derives CanEqual`) or compare through Eq (cats) with `===`; never cast. Re-run <module>.compile.	
+scalac.unused-import	scalac	Unused import	An import is never used (-Wunused:imports under -Werror).	Delete the import, or run <module>.fix (OrganizeImports removes it). Re-run <module>.compile.	

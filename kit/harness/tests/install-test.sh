@@ -44,6 +44,12 @@ git -C "$c" add -A && git -C "$c" -c user.name=t -c user.email=t@example.invalid
 cl=$(mktemp -d); git clone -q "$c" "$cl/clone"
 is "committed_clone_keeps_stamp: clone verdict" ok "$(dsh_engine_stamp_verdict "$cl/clone/.dsh/engine")"
 
+# fresh_seeds_pass_the_installation_checks: the engine's own rule functions (the rows check-harness.sh maps)
+# find nothing wrong with the seeds. The one FAIL that may remain names a file a fresh project genuinely lacks,
+# with its remedy: purrism.tsv, written by `sh .dsh/engine/instructions-sync.sh` once the build declares purrism.
+fails=$(cd "$p" && for fn in dsh_holdout_checks dsh_feedback_checks dsh_instruction_checks dsh_verify_checks; do "$fn" "$p" 2>/dev/null; done | grep '^FAIL' | grep -v 'purrism\.tsv is missing — run `sh \.dsh/engine/instructions-sync\.sh`')
+is "fresh_seeds_pass_the_installation_checks: no FAIL from the seeds" "" "$fails"
+
 # vendored_engine_is_runtime_only: the template-only files (seed/, install.sh, its test, the second-project
 # smoke) never land in a project -- a vendored install-test.sh would call a vendored install.sh, which refuses
 # (exit 5), and the smoke needs the template's install.sh and kit/recipes/mill.md.

@@ -48,8 +48,11 @@ sh kit/harness/install.sh <project>      # run from a scala-llm-template checkou
   copy that fails part-way leaves the previous `.dsh/engine/` untouched and complete.
 - **Project state is seeded only where absent, never overwritten.** The seeds (`seed/`): `contract`,
   `frozen-paths` (containing `.dsh/engine/**`), `hooks.json`, `cc-settings.json`, `policy/allowed-types.tsv`,
-  `policy/memorisation.tsv`, `instructions/local.tsv`, `instructions/scalac-kinds.tsv`. One line per file:
-  `seeded`, `kept`, or `replaced` (the engine only).
+  `policy/memorisation.tsv`, `instructions/local.tsv` (with a `scalac.<kind>` row for each of the seven kinds in
+  `instructions/scalac-kinds.tsv`), `instructions/scalac-kinds.tsv`. The seeded `frozen-paths` covers every path the
+  installation checks require frozen (the self-freeze, `.ignore`, the instruction tables and `purrism.tsv`), so a
+  fresh install's only installation FAIL is the absent `purrism.tsv` — `sh .dsh/engine/instructions-sync.sh` writes
+  it once the build declares purrism. One line per file: `seeded`, `kept`, or `replaced` (the engine only).
 - **A gitignored engine file is named, never dropped silently.** After the swap, any vendored engine file the
   project's `.gitignore` matches is listed as `ignored  .dsh/engine/<path>`, followed by one remedy line on stderr
   naming the matching rule(s) — anchor it (an unanchored `out/` also matches the fixture trees under
