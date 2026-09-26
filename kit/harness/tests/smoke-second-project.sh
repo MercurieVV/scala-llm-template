@@ -19,6 +19,9 @@ yn() { if "$@"; then echo yes; else echo no; fi; }
 say() { printf '# %s\n' "$*"; }
 has() { printf '%s\n' "$1" | grep -Eq "$2"; }
 hasF() { printf '%s\n' "$1" | grep -qF "$2"; }
+# turn-end turns any status other than 0/2 into exit 0 with this line, so exit 0 alone cannot tell a gate that
+# checked from one that crashed.
+crashed='the gate itself failed'
 
 real_mill=$(command -v mill 2>/dev/null) || { printf 'smoke: no global mill on PATH -- the recipe wrapper execs one\n' >&2; exit 1; }
 command -v scala-cli >/dev/null 2>&1 || { printf 'smoke: scala-cli not on PATH\n' >&2; exit 1; }
@@ -132,8 +135,10 @@ is "semantic-guard (unhealthy): stands down" yes "$(yn has "$out" 'stands down|s
 printf '%s' "$start" | gate baseline >/dev/null 2>&1
 printf 'package a\nobject A { val x: Int = 1; val y: Int = 2 }\n' > "$w/core/src/A.scala"
 say "turn-end over core/src/A.scala (real Mill checks)"
+: > "$log"
 out=$(printf '%s' "$stop" | gate turn-end 2>&1); code=$?
 is "turn-end (mapped edit): exit" 0 "$code"
+is "turn-end (mapped edit): the gate did not crash" no "$(yn hasF "$out" "$crashed")"
 [ "$code" = 0 ] || printf '%s\n' "$out" | tail -25
 is "turn-end (mapped edit): no test claim" no "$(yn has "$out" '[Tt][Ee][Ss][Tt][Ss]? ([Pp][Aa][Ss][Ss]|[Rr][Aa][Nn]|[Rr][Uu][Nn])')"
 is "turn-end (mapped edit): ran core's checks" yes "$(yn grep -q 'core\.' "$log")"
@@ -145,6 +150,7 @@ printf 'object Tool { val z = 3 }\n' > "$w/scripts/Tool.scala"
 : > "$log"
 out=$(printf '%s' '{"session_id":"s2","hook_event_name":"Stop"}' | gate turn-end 2>&1); code=$?
 is "turn-end (unmapped only): exit" 0 "$code"
+is "turn-end (unmapped only): the gate did not crash" no "$(yn hasF "$out" "$crashed")"
 [ "$code" = 0 ] || printf '%s\n' "$out" | tail -15
 is "turn-end (unmapped only): no Mill task beyond moduleMap" "" "$(grep -v ' moduleMap *$' "$log")"
 git_q checkout -q -- scripts/Tool.scala
@@ -172,6 +178,7 @@ printf '%s' "$start" | CLAUDE_PROJECT_DIR="$s" GATE_ROOT="$s" sh "$s/.dsh/engine
 printf 'object A { val x = 1 }\n' > "$s/src/A.scala"
 out=$(printf '%s' "$stop" | CLAUDE_PROJECT_DIR="$s" GATE_ROOT="$s" sh "$s/.dsh/engine/gate.sh" turn-end 2>&1); code=$?
 is "sbt: dirty Stop exit" 0 "$code"
+is "sbt: dirty Stop: the gate did not crash" no "$(yn hasF "$out" "$crashed")"
 is "sbt: dirty Stop names the stand-down" yes "$(yn hasF "$out" "$note")"
 
 # --- 12. Setup.scala end to end ----------------------------------------------------------------------------------
