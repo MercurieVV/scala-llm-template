@@ -26,12 +26,14 @@ command -v scala-cli >/dev/null 2>&1 || { printf 'smoke: scala-cli not on PATH\n
 scratches=""
 cleanup() {
   for d in $scratches; do
-    [ -x "$d/mill" ] && (cd "$d" && ./mill shutdown >/dev/null 2>&1)
+    [ -x "$d/mill" ] && [ -d "$d/out" ] && (cd "$d" && ./mill shutdown >/dev/null 2>&1)
     if [ "${SMOKE_KEEP:-0}" = 1 ]; then printf '# kept %s\n' "$d"; else rm -rf "$d"; fi
   done
 }
 trap cleanup EXIT
-newdir() { _d=$(mktemp -d); _d=$(CDPATH= cd -P -- "$_d" && pwd); scratches="$scratches $_d"; printf '%s\n' "$_d"; }
+# Called as `x=$(newdir)`, a subshell, so the caller records the directory: `track "$x"`.
+newdir() { _d=$(mktemp -d) && CDPATH= cd -P -- "$_d" && pwd; }
+track() { scratches="$scratches $1"; }
 
 # The body of the first ```scala fence under the `## <n>.` heading.
 fence() { awk -v h="## $1." '
@@ -44,7 +46,7 @@ fence() { awk -v h="## $1." '
 git_q() { git -C "$w" -c user.name=smoke -c user.email=smoke@example.invalid "$@"; }
 
 # --- 1-2. assemble the scratch Mill project from the recipe's text ----------------------------------------
-w=$(newdir)
+w=$(newdir); track "$w"
 say "scratch Mill project: $w"
 git -C "$w" init -q
 { fence 1; printf '\n'; fence 7; printf '\nobject core extends Formattable with GateLayer { def scalaVersion = "3.8.4" }\n'; } > "$w/build.mill"
@@ -76,7 +78,7 @@ is "install: STAMP" yes "$(yn test -f "$w/.dsh/engine/STAMP")"
 git_q add -A && git_q commit -q -m "harness installed"
 
 # PATH-first logger: ./mill execs `mill`, which this shim records before exec'ing the real one.
-bin=$(newdir); log="$bin/mill-calls.log"; : > "$log"
+bin=$(newdir); track "$bin"; log="$bin/mill-calls.log"; : > "$log"
 printf '#!/bin/sh\nprintf "mill %%s\\n" "$*" >> "%s"\nexec "%s" "$@"\n' "$log" "$real_mill" > "$bin/mill"
 chmod +x "$bin/mill"
 PATH="$bin:$PATH"; export PATH
@@ -154,7 +156,7 @@ is "preCommit: exit" 0 "$code"
 [ "$code" = 0 ] || tail -25 "$bin/preCommit.out"
 
 # --- 11. an sbt project stands down by name -----------------------------------------------------------------------
-s=$(newdir)
+s=$(newdir); track "$s"
 git -C "$s" init -q
 mkdir -p "$s/src"
 printf 'scalaVersion := "3.8.4"\n' > "$s/build.sbt"
@@ -178,7 +180,7 @@ is "sbt: dirty Stop names the stand-down" yes "$(yn hasF "$out" "$note")"
 if [ "${SMOKE_SKIP_SETUP:-0}" = 1 ]; then
   skip "setup: install-harness completed (SMOKE_SKIP_SETUP=1)"
 else
-  f=$(newdir)
+  f=$(newdir); track "$f"
   git -C "$f" init -q
   say "scala-cli run Setup.scala into $f (many minutes)"
   # Agent mode answers `need-input` (exit 2) until every question has an answer, so the rest are given their
