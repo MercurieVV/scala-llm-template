@@ -1,0 +1,7 @@
+#!/bin/sh
+# A Mill that cannot parse the build: the F56 probe (`moduleMap`) is the only thing that runs for a
+# .mill-only turn, and its failure must block the turn naming the probe itself.
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+printf '[error] parseBuildFiles\n'
+printf '[error] %s/ScalafixExtra.mill:2:13 end of statement expected but end of file found\n' "$(pwd)"
+exit 1

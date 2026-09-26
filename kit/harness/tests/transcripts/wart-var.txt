@@ -1,0 +1,8 @@
+compiling 1 Scala source to out/core/compile.dest/classes ...
+[error] core/src/com/github/mercurievv/skreeep2/DshScratch.scala:6:7
+  var counter: Int = 0
+      ^^^^^^^^^^^^^^^^
+[wartremover:Var] var is disabled
+
+[error] one error found
+[error] core.compile Compilation failed

@@ -1,0 +1,4 @@
+#!/bin/sh
+cat >> build.mill <<'EOF'
+    mvn"no.such::thing:9.9.9",
+EOF

@@ -1,0 +1,3 @@
+`git checkout -- .` and
+`git restore .` discard every modified file
+the HUMAN removes the entry

@@ -1,0 +1,2 @@
+this line CHANGES DIRECTORY and names a .scala/.sc source
+A `# semantic-fallback: <reason>` marker releases this line too

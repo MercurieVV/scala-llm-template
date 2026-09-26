@@ -1,0 +1,9 @@
+#!/bin/sh
+# post_gate: the stand-down is not an override, so the fallback log stays empty.
+set -u
+log=.dsh/.state/semantic-fallback.log
+if [ -s "$log" ]; then
+  printf 'fallback log: %s entries\n' "$(wc -l < "$log" | tr -d ' ')"
+else
+  printf 'fallback log: none\n'
+fi

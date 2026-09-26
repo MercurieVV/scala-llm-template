@@ -1,0 +1,4 @@
+#!/bin/sh
+grep -Fqx '  def f(o: Option[Int]): Int = o.get' core/src/T.scala || { echo "a rewrite was left on disk at the cap"; exit 1; }
+if grep -q 'fixRanges' mill.log; then echo "fixRanges ran at the attempt cap"; exit 1; fi
+echo "nothing rewritten at the cap"

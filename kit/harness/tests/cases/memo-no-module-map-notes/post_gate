@@ -1,0 +1,5 @@
+#!/bin/sh
+# The scenario is real only if the map did not exist when verify-diff ran and the same turn then built
+# it: modules.tsv must exist now, and the finding must not appear (no test source was identified).
+[ -s .dsh/.state/modules.tsv ] || { echo "the module map was never built, so this case did not reproduce a fresh clone"; exit 1; }
+! grep -Fq "whose literals are largely" "$GATE_OUT_FILE"

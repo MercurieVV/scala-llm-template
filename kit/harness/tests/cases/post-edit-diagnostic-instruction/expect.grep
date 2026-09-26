@@ -1,0 +1,3 @@
+app.fixStrict (failed; names the edited file)
+DIAGNOSTIC: app/src/A.scala:8:5 [PreferEffectIdioms.manual-resource]
+INSTRUCTION: Wrap the acquire in Resource.make

@@ -1,0 +1,4 @@
+holdout: 1 passed, 2 failed
+  - PlaybackHoldout.stop releases device
+  - PlaybackHoldout.a second failure
+post_gate: no raw runner text on the gate's output

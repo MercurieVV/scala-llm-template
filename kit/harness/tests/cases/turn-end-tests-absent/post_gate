@@ -1,0 +1,8 @@
+#!/bin/sh
+grep -q 'Expected true but got false' .dsh/.state/holdout.log || { echo "FAIL: full output not in holdout.log"; exit 1; }
+grep -q '^holdout	1	2	' .dsh/.state/receipts || { echo "FAIL: receipt missing"; cat .dsh/.state/receipts; exit 1; }
+# The raw runner text must NOT reach the agent: the gate's captured output (GATE_OUT_FILE, the
+# runner's seam) carries the names-only report and none of the assertion text.
+[ -n "${GATE_OUT_FILE:-}" ] && [ -f "$GATE_OUT_FILE" ] || { echo "FAIL: GATE_OUT_FILE not provided by run.sh"; exit 1; }
+if grep -q 'Expected true but got false' "$GATE_OUT_FILE"; then echo "FAIL: assertion text leaked to the agent"; exit 1; fi
+echo "post_gate: no raw runner text on the gate's output"

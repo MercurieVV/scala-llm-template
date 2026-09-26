@@ -1,0 +1,4 @@
+#!/bin/sh
+# The row gains `scalafix` between the two runs while the edited file keeps its bytes and its hash: a
+# cached verdict that did not record the granted task set would skip the newly granted checks.
+printf 'engine/details\tengine.details\tfmt,scalafix\n' > "$SCRATCH_ROOT/.dsh/.state/modules.tsv"

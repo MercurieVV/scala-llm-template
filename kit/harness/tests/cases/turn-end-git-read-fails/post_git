@@ -1,0 +1,6 @@
+#!/bin/sh
+# A repository whose index is corrupt: `git rev-parse` still says "yes, a work tree", and every read
+# of the working tree fails. An empty touched set here would read as "nothing changed" and stand the
+# gate down in silence — the caller has to fail closed on the failed read instead.
+printf '\n// touched by this turn\n' >> engine/details/src/A.scala
+printf 'not an index at all' > .git/index

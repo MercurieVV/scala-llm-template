@@ -1,0 +1,3 @@
+#!/bin/sh
+[ ! -e .dsh/.state/holdout.log ] || { echo "FAIL: holdout ran without a contract line"; exit 1; }
+! grep -q '^holdout' .dsh/.state/receipts 2>/dev/null || { echo "FAIL: receipt written without a contract line"; exit 1; }

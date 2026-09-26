@@ -1,0 +1,20 @@
+#!/bin/sh
+# pre_gate: let the GATE write a legitimate cache, then cut it down to its header. The header still
+# declares the rows it had and (in the v2 format) still carries the index fingerprint, so only the
+# SHAPE check -- declared rows against the rows actually present -- can tell that the covered row is
+# gone; without it the read of a covered file would be stood down. The setup drives the gate, not the
+# lib.sh helpers, so this fixture means the same thing against any version of the harness.
+set -u
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
+root=$(pwd)
+cache=.dsh/.state/index-coverage
+printf '{"tool_name":"read","tool_input":{"file_path":"engine/shape/src/A.scala"}}' > .dsh/pre-gate-payload.json
+GATE_ROOT="$root" PATH="$repo/.dsh/tests/bin:$PATH" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" semantic-guard \
+  < .dsh/pre-gate-payload.json >/dev/null 2>&1
+[ -s "$cache" ] || { echo "pre_gate: the gate did not write a coverage cache"; exit 1; }
+rows=$(wc -l < "$cache" | tr -d ' ')
+[ "$rows" -gt 1 ] || { echo "pre_gate: the cache has no rows to truncate"; exit 1; }
+head -n 1 "$cache" > "$cache.truncated"
+mv -f "$cache.truncated" "$cache"
+[ "$(wc -l < "$cache" | tr -d ' ')" = 1 ] || { echo "pre_gate: the cache still has rows"; exit 1; }
+printf 'pre_gate: cache truncated to its header (%s rows -> 1)\n' "$rows"

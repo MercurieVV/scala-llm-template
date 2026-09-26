@@ -1,0 +1,5 @@
+#!/bin/sh
+# `test/src` is empty in the fixture tree and therefore absent in a clone: the case makes the
+# directory it writes into (see the sibling case `turn-end-test-path`).
+mkdir -p engine/shape/test/src
+printf 'package x\nobject HostSpec { val a = 1 }\n' > engine/shape/test/src/HostSpec.scala

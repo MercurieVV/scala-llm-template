@@ -1,0 +1,12 @@
+#!/bin/sh
+# The claim is an ABSENCE — a file the tool ANSWERED must never be reported as unchecked — and
+# expect.grep can only require presence, so it is asserted here against the gate's own output.
+if grep -q 'names in Scala files (not checked)' "$GATE_OUT_FILE"; then
+  printf 'the gate reported a file the tool answered as not checked\n'
+  exit 1
+fi
+if grep -q 'did not resolve' "$GATE_OUT_FILE"; then
+  printf 'the gate reported an unresolved name where every name resolved\n'
+  exit 1
+fi
+printf 'ANSWERED-AND-SILENT ok\n'

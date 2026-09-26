@@ -1,0 +1,2 @@
+text tools are not allowed on .scala sources
+pre_gate: index file restored with an mtime older than the cache

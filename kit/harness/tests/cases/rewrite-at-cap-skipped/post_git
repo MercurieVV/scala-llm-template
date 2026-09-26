@@ -1,0 +1,6 @@
+#!/bin/sh
+# Two blocked attempts already (the agent reverted the rewrite twice): a rewrite now would be applied
+# on the attempt the cap releases, and end the turn with nobody reviewing it. The stage must not run.
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+printf '  def f(o: Option[Int]): Int = o.get\n' >> core/src/T.scala

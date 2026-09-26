@@ -1,0 +1,2 @@
+#!/bin/sh
+printf '\n// touched by this turn\n' >> engine/details/src/A.scala

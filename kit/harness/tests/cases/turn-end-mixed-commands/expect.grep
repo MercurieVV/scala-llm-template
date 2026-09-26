@@ -1,0 +1,1 @@
+Ran, in this order: engine.details.checkFormat, engine.details.fix --check, engine.details.fixStrict, engine.details.compile, engine.shape.checkFormat, engine.shape.compile, engine.shape.test.compile

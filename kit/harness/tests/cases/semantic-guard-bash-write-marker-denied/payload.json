@@ -1,0 +1,1 @@
+{"tool_name":"bash","tool_input":{"command":"cat > engine/shape/src/A.scala # semantic-fallback: because"}}

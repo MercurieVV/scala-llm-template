@@ -1,0 +1,1 @@
+{"tool_name":"bash","tool_input":{"command":"d=holdout; cat $d/test/src/PlaybackHoldout.scala"}}

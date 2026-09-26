@@ -1,0 +1,3 @@
+#!/bin/sh
+# One path is already dirty when the session starts.
+printf '\n// pre-existing work, not this session\x27s\n' >> engine/details/src/A.scala

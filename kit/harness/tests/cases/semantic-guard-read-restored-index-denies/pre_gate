@@ -1,0 +1,22 @@
+#!/bin/sh
+# pre_gate: let the GATE build the coverage cache while A.scala is NOT indexed, then restore an index
+# file for it whose mtime is OLDER than the cache -- an `out/` copied back from a backup. Staleness
+# keyed on "a `.semanticdb` newer than the cache" cannot see this, and the covered read would be
+# ALLOWED. The setup drives the gate, not the lib.sh helpers, so this fixture means the same thing
+# against any version of the harness (measured: against the pre-fix guard it fails on the VERDICT).
+set -u
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
+root=$(pwd)
+idx=out/mod/semanticDbDataDetailed.dest/classes/META-INF/semanticdb/engine/shape/src/A.scala.semanticdb
+cache=.dsh/.state/index-coverage
+printf '{"tool_name":"read","tool_input":{"file_path":"engine/shape/src/A.scala"}}' > .dsh/pre-gate-payload.json
+GATE_ROOT="$root" PATH="$repo/.dsh/tests/bin:$PATH" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" semantic-guard \
+  < .dsh/pre-gate-payload.json >/dev/null 2>&1
+[ -s "$cache" ] || { echo "pre_gate: the gate did not write a coverage cache"; exit 1; }
+mkdir -p "$root/$(dirname "$idx")"
+: > "$root/$idx"
+touch -t 202001010000 "$root/$idx" || { echo "pre_gate: could not backdate the index file"; exit 1; }
+if [ "$root/$idx" -nt "$cache" ]; then
+  echo "pre_gate: the restored index file is NOT older than the cache"; exit 1
+fi
+printf 'pre_gate: index file restored with an mtime older than the cache\n'

@@ -1,0 +1,4 @@
+#!/bin/sh
+# The agent reverts the rewrite by hand instead of suppressing it.
+sed -i.bak 's/o.getOrElse(0)/o.get/' core/src/T.scala && rm -f core/src/T.scala.bak
+grep -Fq 'o.get' core/src/T.scala && ! grep -Fq 'getOrElse' core/src/T.scala

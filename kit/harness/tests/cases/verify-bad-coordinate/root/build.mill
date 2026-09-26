@@ -1,0 +1,7 @@
+// minimal build.mill fixture for verify-bad-coordinate
+object core extends ScalaModule {
+  def scalaVersion = "3.7.3"
+  def mvnDeps = Seq(
+    mvn"org.typelevel::cats-core:2.13.0",
+  )
+}

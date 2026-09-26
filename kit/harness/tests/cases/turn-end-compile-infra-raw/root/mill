@@ -1,0 +1,10 @@
+#!/bin/sh
+# A compile failure with no diagnostic behind it: the adapters render INFRA, so the gate must show the
+# raw text (bounded), never the INFRA line plus a pointer at a log the agent then has to open.
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+case "$*" in
+  *app.compile*)
+    printf '[error] app.compile Compilation failed\n'
+    exit 1 ;;
+esac
+exit 0

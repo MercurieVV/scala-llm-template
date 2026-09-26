@@ -1,0 +1,2 @@
+holdout/test/src/PlaybackHoldout.scala is a SEALED PATH
+reason: holdout suite: run by the gate at turn-end, never read or edited by the agent

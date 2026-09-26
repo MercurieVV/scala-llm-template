@@ -1,0 +1,2 @@
+engine/details	engine.details	fmt,scalafix
+engine/shape	engine.shape	fmt,tests

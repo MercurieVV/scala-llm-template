@@ -1,0 +1,12 @@
+#!/bin/sh
+# A Mill that fails `compile` the way the real one does: zinc prints `path:line:col` RELATIVE to the
+# build root (measured on handoff/hostdriven in Task 7), never the absolute path `checkFormat` prints.
+# Everything else succeeds, so the gate must attribute this failure from the relative spelling alone.
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+case "$*" in
+  *compile*)
+    printf '[error] engine/details/src/A.scala:3:1\n'
+    printf '[error] engine.details.compile Compilation failed\n'
+    exit 1 ;;
+esac
+exit 0

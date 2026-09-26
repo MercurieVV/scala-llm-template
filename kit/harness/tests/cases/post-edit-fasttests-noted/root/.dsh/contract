@@ -1,0 +1,1 @@
+fastTests = sh .dsh/fast-stub.sh <module>

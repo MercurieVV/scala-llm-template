@@ -1,0 +1,5 @@
+#!/bin/sh
+# USpec.scala was requested and not answered: the finding still stands on TSpec's values, the gap is
+# said, and the partial test set is not cached.
+for f in .dsh/.state/memo-testvals.*; do [ -e "$f" ] && { echo "a partial test set was cached: $f"; exit 1; }; done
+exit 0

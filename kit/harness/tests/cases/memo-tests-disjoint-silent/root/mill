@@ -1,0 +1,5 @@
+#!/bin/sh
+# Every task this fixture may run (checkFormat, fix --check, fixStrict, test.compile, moduleMap)
+# succeeds: the fixture is about the memorisation family, not about the module compile chain.
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+exit 0

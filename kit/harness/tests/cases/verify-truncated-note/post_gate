@@ -1,0 +1,7 @@
+#!/bin/sh
+# The NOTE's own text, and that a turn is never blocked by it.
+if ! grep -q 'the 50 with the most changed lines were checked and the rest were not' "$GATE_OUT_FILE"; then
+  printf 'the truncation NOTE was not reported\n'
+  exit 1
+fi
+printf 'TRUNCATION-NOTED ok\n'

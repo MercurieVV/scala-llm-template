@@ -1,0 +1,7 @@
+#!/bin/sh
+# The user's in-flight work: this file is already dirty when the session starts, and the session
+# never touches it again. The baseline (recorded here through the real SessionStart hook) must make
+# the turn-end gate skip it, even though the working tree is dirty and its module is mapped.
+printf '\n// pre-existing work, not this session\x27s\n' >> engine/details/src/A.scala
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1

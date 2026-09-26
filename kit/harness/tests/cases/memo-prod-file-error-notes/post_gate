@@ -1,0 +1,4 @@
+#!/bin/sh
+# The production file's error belongs to the production call: it must not be reported as a TEST
+# source that could not be read.
+! grep -Fq "test source(s) could not be read" "$GATE_OUT_FILE"

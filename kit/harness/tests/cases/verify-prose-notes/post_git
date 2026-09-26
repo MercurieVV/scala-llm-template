@@ -1,0 +1,2 @@
+#!/bin/sh
+printf 'See bogusThing for details.\n' >> docs/notes.md

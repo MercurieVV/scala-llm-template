@@ -1,0 +1,5 @@
+#!/bin/sh
+# No SessionStart baseline: the human's in-flight edit to T.scala and the agent's to U.scala look the
+# same to the gate, so it cannot tell whose lines are whose and the rewrite stage must not run at all.
+printf '  def human(o: Option[Int]): Int = o.get\n' >> core/src/T.scala
+printf '  def agent(o: Option[Int]): Int = o.get\n' >> core/src/U.scala

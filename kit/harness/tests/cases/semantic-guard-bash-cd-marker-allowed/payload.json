@@ -1,0 +1,1 @@
+{"tool_name": "bash", "tool_input": {"command": "cd engine/shape/src && cat A.scala # semantic-fallback: the cd is part of the repro"}}

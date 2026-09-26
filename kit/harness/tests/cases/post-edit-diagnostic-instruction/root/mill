@@ -1,0 +1,9 @@
+#!/bin/sh
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+case "$*" in
+  *fixStrict*)
+    printf '[error] app.fixStrict scalafix found 1 diagnostic(s):\n'
+    printf '[WARNING][PreferEffectIdioms.manual-resource] %s/app/src/A.scala:8:5 Manual acquire/release in try/finally. Acquire and release belong in Resource\n' "$(pwd)"
+    exit 1 ;;
+esac
+exit 0

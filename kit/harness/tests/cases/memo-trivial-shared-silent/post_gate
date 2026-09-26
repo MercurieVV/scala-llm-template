@@ -1,0 +1,2 @@
+#!/bin/sh
+! grep -Fq "whose literals are largely" "$GATE_OUT_FILE"

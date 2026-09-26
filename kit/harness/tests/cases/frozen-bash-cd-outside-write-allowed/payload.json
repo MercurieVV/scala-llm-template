@@ -1,0 +1,1 @@
+{"tool_name":"bash","tool_input":{"command":"cd /tmp && printf x > agent-notes.md"}}

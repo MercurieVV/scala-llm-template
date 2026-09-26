@@ -1,0 +1,3 @@
+#!/bin/sh
+# only drafts failed: the F53 "checks failed on files this turn did not touch" line must not claim them
+! grep -q "F53" "$GATE_OUT_FILE"

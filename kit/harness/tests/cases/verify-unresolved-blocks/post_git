@@ -1,0 +1,2 @@
+#!/bin/sh
+printf '  val b = bogusThing\n' >> core/src/A.scala

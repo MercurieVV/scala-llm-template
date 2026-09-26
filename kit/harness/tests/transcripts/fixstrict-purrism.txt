@@ -1,0 +1,6 @@
+compiling 1 Scala source to out/core/semanticDbDataDetailed.dest/classes ...
+compiling 1 Scala source to out/core/compile.dest/classes ...
+done compiling
+done compiling
+[error] core.fixStrict scalafix found 1 diagnostic(s):
+[WARNING][PreferEffectIdioms.manual-resource] /Users/viktorskalinins/IdeaProjects/skreeep2/core/src/com/github/mercurievv/skreeep2/DshScratch.scala:8:5 this `finally` closes a resource and does something else too, so the close cannot be lifted out mechanically. `Using.resource` handles it once the finally only closes; `Resource` once the body is in `F`. A `finally` that closes a resource and does something else too cannot have the close lifted out mechanically, so the acquire/release stays invisible to the effect system.

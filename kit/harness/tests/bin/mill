@@ -1,0 +1,37 @@
+#!/bin/sh
+# Test double for ./mill: records its arguments and exits with MILL_STUB_EXIT (default 0).
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+# MILL_STUB_FIXRANGES_SCRIPT names a script run for `<module>.fixRanges` (cwd = the scratch root, Mill's own
+# arguments passed through, so it can tell the module and read the ranges file): how a
+# fixture simulates purrism rewriting a file. MILL_STUB_COMPILE_FAIL_MARK is a word whose presence in any
+# `.scala` file under the cwd makes `<module>.compile` fail. It is keyed on CONTENT, not on a marker
+# file, on purpose: the gate undoes a breaking rewrite by restoring the originals, and a content marker
+# disappears with the revert, so the compile that follows passes, exactly as it would for real.
+#
+# `fixRanges` takes its ranges file as the NAMED argument `--rangesFile <path>`: real Mill 1.1.8 rejects
+# a positional argument for a `Task.Command(String)` parameter (`Missing argument: --rangesFile <str>`).
+# The stub enforces the same, so a positional caller fails here as it would for real instead of a
+# fixture passing on an invocation the real build refuses. Every other call — `moduleMap`,
+# `MILL_STUB_EXIT` — behaves exactly as before.
+case "$*" in
+  *.fixRanges*)
+    case " $* " in
+      *" --rangesFile "?*) ;;
+      *) printf '[error] stub mill: fixRanges needs --rangesFile <path> (real Mill rejects a positional argument): %s\n' "$*" >&2
+         exit 97 ;;
+    esac
+    if [ -n "${MILL_STUB_FIXRANGES_SCRIPT:-}" ] && [ -f "$MILL_STUB_FIXRANGES_SCRIPT" ]; then
+      sh "$MILL_STUB_FIXRANGES_SCRIPT" "$@"
+    fi
+    printf 'fixRanges: applied 0\n'
+    exit 0 ;;
+  *.compile*)
+    if [ -n "${MILL_STUB_COMPILE_FAIL_MARK:-}" ] && grep -rqs --include='*.scala' "$MILL_STUB_COMPILE_FAIL_MARK" .; then
+      printf '[error] core/src/T.scala:3:1 the rewrite broke this\n'
+      exit 1
+    fi ;;
+esac
+if [ "${1:-}" = "moduleMap" ] && [ -n "${MILL_STUB_MAP:-}" ]; then
+  cat "$MILL_STUB_MAP"
+fi
+exit "${MILL_STUB_EXIT:-0}"

@@ -1,0 +1,3 @@
+#!/bin/sh
+# NOT staged: `git commit -a` stages after the hook has run, so an index-only check sees nothing.
+printf '  val b = bogusThing\n' >> core/src/A.scala

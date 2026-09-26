@@ -1,0 +1,4 @@
+#!/bin/sh
+# A build-script edit that does not parse — the shape F56 measured: Mill's own parseBuildFiles error
+# naming the .mill file, absolute.
+printf '\ndef broken(\n' >> ScalafixExtra.mill

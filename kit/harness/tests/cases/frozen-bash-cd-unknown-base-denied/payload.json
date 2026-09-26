@@ -1,0 +1,1 @@
+{"tool_name":"bash","tool_input":{"command":"cd \"$dir\" && printf x > notes.md"}}

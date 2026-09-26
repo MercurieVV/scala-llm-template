@@ -1,0 +1,14 @@
+#!/bin/sh
+# post_gate: the marker released the read, so the hatch's record must have gained exactly one entry.
+set -u
+log=.dsh/.state/semantic-fallback.log
+if [ -s "$log" ]; then
+  n=$(wc -l < "$log" | tr -d ' ')
+  if [ "$n" = 1 ]; then
+    printf 'fallback log: 1 entry\n'
+  else
+    printf 'fallback log: %s entries\n' "$n"
+  fi
+else
+  printf 'fallback log: none\n'
+fi

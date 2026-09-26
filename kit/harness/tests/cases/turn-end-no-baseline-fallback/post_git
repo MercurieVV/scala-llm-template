@@ -1,0 +1,4 @@
+#!/bin/sh
+# No baseline is recorded for this session (SessionStart never ran, or predates the hook), so the
+# gate must fall back to the tree-based rule it has always had — and the message must say so.
+printf '\n// touched by this turn\n' >> engine/details/src/A.scala

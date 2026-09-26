@@ -1,0 +1,11 @@
+#!/bin/sh
+# Thirty long rewritten lines: the review message is over the 4000-byte report bound, so it is cut.
+# The cut may only ever take diff lines, never the instruction: its last sentence (that // scalafix:ok
+# does not suppress most purrism rewrites) sits just above the diff and is pinned in expect.grep.
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+i=1
+while [ "$i" -le 30 ]; do
+  printf '  def aVeryLongMethodNameNumber%02dThatPadsTheLine(someOptionalValue: Option[Int]): Int = o.get\n' "$i" >> core/src/T.scala
+  i=$((i + 1))
+done

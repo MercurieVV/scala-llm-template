@@ -1,0 +1,6 @@
+#!/bin/sh
+# Only the module whose row grants scalafix is handed to fixRanges: `app` is, `core` never is. The app
+# call is the positive control — it proves the stage ran, so the absence for core means something.
+grep -Fq 'app.fixRanges --rangesFile' mill.log || { echo "fixRanges never ran for app (scalafix)"; exit 1; }
+if grep -q 'core.fixRanges' mill.log; then echo "fixRanges ran for core, which has no scalafix"; exit 1; fi
+echo "no fixRanges for core"

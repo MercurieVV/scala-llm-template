@@ -1,0 +1,5 @@
+#!/bin/sh
+grep -Fqx '  def human(o: Option[Int]): Int = o.get' core/src/T.scala || { echo "the human's line was rewritten"; exit 1; }
+grep -Fqx '  def agent(o: Option[Int]): Int = o.get' core/src/U.scala || { echo "U.scala was rewritten"; exit 1; }
+if grep -q 'fixRanges' mill.log; then echo "fixRanges ran without a session baseline"; exit 1; fi
+echo "nothing rewritten"

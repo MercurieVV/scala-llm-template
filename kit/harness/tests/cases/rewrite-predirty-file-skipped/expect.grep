@@ -1,0 +1,4 @@
+purrism rewrote the lines you changed in app
+was already dirty at SessionStart, so
+core/src/T.scala
+human line untouched; app rewritten

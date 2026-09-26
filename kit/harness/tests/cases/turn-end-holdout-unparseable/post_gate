@@ -1,0 +1,3 @@
+#!/bin/sh
+grep -q 'compilation failed' .dsh/.state/holdout.log || { echo "FAIL: full output not in holdout.log"; exit 1; }
+grep -q '^holdout	-	-	' .dsh/.state/receipts || { echo "FAIL: receipt should carry -<TAB>- counts"; cat .dsh/.state/receipts; exit 1; }

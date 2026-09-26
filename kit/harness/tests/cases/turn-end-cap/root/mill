@@ -1,0 +1,12 @@
+#!/bin/sh
+# The same failing check as `turn-end-dirty`: this turn really is dirty, and the cap is the only
+# reason the gate lets it end.
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+case "$*" in
+  *checkFormat*)
+    root=$(pwd)
+    printf '%s\n' "$root/engine/details/src/A.scala"
+    printf '[error] engine.details.checkFormat Found 1 misformatted files\n'
+    exit 1 ;;
+esac
+exit 0

@@ -1,0 +1,2 @@
+#!/bin/sh
+printf '  // just a comment\n' >> core/src/A.scala

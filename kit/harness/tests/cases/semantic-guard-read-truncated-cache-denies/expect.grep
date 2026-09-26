@@ -1,0 +1,2 @@
+text tools are not allowed on .scala sources
+pre_gate: cache truncated to its header

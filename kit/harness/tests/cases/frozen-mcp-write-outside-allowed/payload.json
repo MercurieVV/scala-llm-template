@@ -1,0 +1,1 @@
+{"tool_name":"mcp__scalasemantic__annotated_source","tool_input":{"uri":"$SCRATCH_ROOT/engine/shape/src/A.scala","write":"package engine.shape\nobject A\n","baseHash":"deadbeef"}}

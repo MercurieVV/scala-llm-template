@@ -1,0 +1,4 @@
+#!/bin/sh
+# The condition under test really held: the block was cut by the byte bound (lib.sh's bound_marker).
+grep -Fq '… truncated' "$GATE_OUT_FILE" || { echo "the message was not long enough to be cut"; exit 1; }
+echo "the message was truncated"

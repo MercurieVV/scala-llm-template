@@ -1,0 +1,1 @@
+{"files":[{"uri":"engine/shape/src/S.scala","references":[{"line":2,"character":10,"name":"Impl","kind":"type","role":"use","resolved":true,"symbol":"skreeep2/engine/details/Impl#","origin":"project","suggestions":[]}],"omitted":0,"error":null}]}

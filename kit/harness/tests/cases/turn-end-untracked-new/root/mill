@@ -1,0 +1,13 @@
+#!/bin/sh
+# The pre-existing, committed file is clean; only the untracked new file is misformatted, and the
+# gate must attribute the failure to it.
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+case "$*" in
+  *checkFormat*)
+    root=$(pwd)
+    printf 'Checking format of 2 Scala sources\n'
+    printf '%s\n' "$root/engine/details/src/New.scala"
+    printf '[error] engine.details.checkFormat Found 1 misformatted files\n'
+    exit 1 ;;
+esac
+exit 0

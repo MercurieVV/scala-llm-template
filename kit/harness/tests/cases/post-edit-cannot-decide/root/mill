@@ -1,0 +1,6 @@
+#!/bin/sh
+# A Mill that cannot produce a map: the lookup has no cache to fall back on (the case ships no
+# modules.tsv), so the gate must deny rather than treat the path as ungated.
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+printf 'mill: build script did not compile\n' >&2
+exit 1

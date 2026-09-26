@@ -1,0 +1,2 @@
+app.fixStrict (failed; names only other files — not blocking)
+DIAGNOSTIC: app/src/Other.scala:8:5

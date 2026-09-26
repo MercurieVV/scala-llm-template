@@ -1,0 +1,4 @@
+#!/bin/sh
+# The raw scalafix line never reaches the agent (the rendered block does), and the raw log was kept.
+! grep -q 'scalafix found 1 diagnostic' "$GATE_OUT_FILE"
+test -n "$(ls .dsh/.state/feedback/*.log 2>/dev/null)"

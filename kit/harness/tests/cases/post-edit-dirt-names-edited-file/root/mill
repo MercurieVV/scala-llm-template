@@ -1,0 +1,14 @@
+#!/bin/sh
+# The same shape as the sibling case, but the misformatted file IS the one this turn edited: the
+# gate must block on it (F53's other direction).
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+case "$*" in
+  *checkFormat*)
+    root=$(pwd)
+    printf 'Checking format of 1 Scala sources\n'
+    printf 'parsed config (v3.10.7): %s/.scalafmt.conf\n' "$root"
+    printf '%s\n' "$root/engine/details/src/A.scala"
+    printf '[error] engine.details.checkFormat Found 1 misformatted files\n'
+    exit 1 ;;
+esac
+exit 0

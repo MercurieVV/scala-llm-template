@@ -1,0 +1,2 @@
+mill --ticker false --color false wiring.details.checkFormat
+mill --ticker false --color false wiring.details.compile

@@ -1,0 +1,4 @@
+#!/bin/sh
+# The tree was clean when the session started, so the baseline holds no paths — but the file still
+# exists, and the second invocation must say so rather than treat the session as un-baselined.
+printf '\n// dirty now\n' >> engine/details/src/A.scala

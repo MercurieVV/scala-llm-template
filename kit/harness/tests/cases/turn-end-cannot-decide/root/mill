@@ -1,0 +1,6 @@
+#!/bin/sh
+# A Mill that cannot produce a map and a case that ships none: the lookup exits 3 with a reason, and
+# the Stop gate has to deny with that reason rather than read it as "nothing to check" (fail closed).
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+printf 'mill: build script did not compile\n' >&2
+exit 1

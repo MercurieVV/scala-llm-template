@@ -1,0 +1,2 @@
+core	core	fmt,scalafix,tests
+app	app	fmt,scalafix,tests

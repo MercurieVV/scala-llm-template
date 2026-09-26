@@ -1,0 +1,12 @@
+#!/bin/sh
+# Test double that returns empty stdout on `call` (simulating a stubbed launcher that doesn't
+# handle the `call` subcommand properly, exiting early without printing anything).
+if [ "${1:-}" = doctor ]; then
+  printf 'ok    SemanticDB index -- the index under the project\n'
+  exit 0
+fi
+if [ "${1:-}" = call ]; then
+  # Return nothing, not even {"files":[]} — this is the bug scenario
+  exit 0
+fi
+exit 0

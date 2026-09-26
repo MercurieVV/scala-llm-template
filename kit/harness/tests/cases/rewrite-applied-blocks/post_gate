@@ -1,0 +1,12 @@
+#!/bin/sh
+# Both modules were rewritten before the gate blocked (`block` never returns, so blocking on the first
+# module would leave the second unrewritten), each module was handed exactly its own changed line
+# (root-relative, 0-based, end-exclusive), the rewrites stay on disk for review, and no check of the
+# normal chain ran after the block — the only compiles are the ones proving each rewrite compiles.
+t=$(printf '\t')
+grep -Fq 'o.getOrElse(0)' core/src/T.scala || { echo "core's rewrite is not on disk"; exit 1; }
+grep -Fq 'o.getOrElse(0)' app/src/A.scala || { echo "app's rewrite is not on disk"; exit 1; }
+[ "$(cat ranges-core.tsv)" = "core/src/T.scala${t}3${t}4" ] || { echo "core ranges: $(cat ranges-core.tsv)"; exit 1; }
+[ "$(cat ranges-app.tsv)" = "app/src/A.scala${t}3${t}4" ] || { echo "app ranges: $(cat ranges-app.tsv)"; exit 1; }
+if grep -q 'checkFormat' mill.log; then echo "the normal chain ran after the rewrite block"; exit 1; fi
+echo "rewrites kept on disk; ranges exact; chain not run"

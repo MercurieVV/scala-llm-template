@@ -1,0 +1,2 @@
+BLOCKED by semantic-guard: engine/spaced/A B.scala is a FROZEN PATH
+reason: the spaced entry, hands off

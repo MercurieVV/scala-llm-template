@@ -1,0 +1,4 @@
+#!/bin/sh
+# The tests share NONE of the production values: a production value matching itself is not a
+# test value, so the finding must never appear.
+! grep -Fq "whose literals are largely" "$GATE_OUT_FILE"

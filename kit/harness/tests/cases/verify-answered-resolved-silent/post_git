@@ -1,0 +1,2 @@
+#!/bin/sh
+printf '  val b = a\n' >> core/src/A.scala

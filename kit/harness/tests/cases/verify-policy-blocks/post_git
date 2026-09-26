@@ -1,0 +1,2 @@
+#!/bin/sh
+printf '  val i: Impl = ???\n' >> engine/shape/src/S.scala

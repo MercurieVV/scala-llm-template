@@ -1,0 +1,2 @@
+# purrism 0.9.1
+PreferEffectIdioms.manual-resource	PreferEffectIdioms	Manual acquire/release in try/finally	E	Wrap the acquire in Resource.make(acquire)(release) and thread it with use; re-run app.fix then compile.	https://x/#effects

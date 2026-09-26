@@ -1,0 +1,16 @@
+#!/bin/sh
+# 55 changed Scala files: past the spec's 50-file cap, so the gate truncates. Every name in every
+# one of them RESOLVES, so there is nothing wrong with this change -- it is the shape a large
+# mechanical rename has, and it must be committable. The stub's answer is generated here so the
+# fixture does not have to ship 55 near-identical JSON objects.
+set -u
+i=1
+printf '{"files":[' > answer.json
+while [ "$i" -le 55 ]; do
+  printf 'package p\nobject F%s:\n  val a = 1\n  val b = a\n' "$i" > "core/src/F$i.scala"
+  [ "$i" = 1 ] || printf ',' >> answer.json
+  printf '{"uri":"core/src/F%s.scala","references":[{"line":3,"character":10,"name":"a","kind":"term","role":"use","resolved":true,"symbol":"p/F%s.a.","origin":"project","suggestions":[]}],"omitted":0,"error":null}' "$i" "$i" >> answer.json
+  git add "core/src/F$i.scala"
+  i=$((i + 1))
+done
+printf ']}\n' >> answer.json

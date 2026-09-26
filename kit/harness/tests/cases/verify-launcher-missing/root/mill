@@ -1,0 +1,9 @@
+#!/bin/sh
+# A Mill that resolves the module map cleanly: this fixture is about diff-scoped verification's own
+# note when the scalasemantic-mcp launcher is missing, not about module resolution, so `core` just
+# needs to own core/src/A.scala and every task on it needs to succeed.
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+if [ "${1:-}" = "--ticker" ] && [ "${3:-}" = "moduleMap" ]; then
+  printf 'core\tcore\t\n'
+fi
+exit 0

@@ -1,0 +1,3 @@
+app.compile (failed; names a file this turn touched)
+DIAGNOSTIC: app/src/A.scala:4:21 [scalac.not-found] Not found: undefinedName
+INSTRUCTION: Check the spelling against the definition

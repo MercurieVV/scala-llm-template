@@ -1,0 +1,1 @@
+{"files":[{"uri":"core/src/A.scala","references":[{"line":3,"character":10,"name":"a","kind":"term","role":"use","resolved":true,"symbol":"p/A.a.","origin":"project","suggestions":[]}],"omitted":0,"error":null}]}

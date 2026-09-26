@@ -1,0 +1,7 @@
+#!/bin/sh
+# Already dirty at SessionStart, then edited again during the session: the hash differs from the
+# baseline's, so the gate has to check it (F61's "changed since" direction).
+printf '\n// pre-existing work, not this session\x27s\n' >> engine/details/src/A.scala
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+printf '\n// this session\x27s own edit\n' >> engine/details/src/A.scala

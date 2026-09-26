@@ -1,0 +1,17 @@
+#!/bin/sh
+# post_gate: what the gate left in .dsh/.state. The stand-down is not an override -- nothing was
+# denied, so there is nothing to release and nothing to record -- so the fallback log must not have
+# been written by this call. Printed (not asserted here) so the case's expect.grep reads it like any
+# other output, and a non-zero exit here would fail the case.
+set -u
+log=.dsh/.state/semantic-fallback.log
+if [ -s "$log" ]; then
+  n=$(wc -l < "$log" | tr -d ' ')
+  if [ "$n" = 1 ]; then
+    printf 'fallback log: 1 entry\n'
+  else
+    printf 'fallback log: %s entries\n' "$n"
+  fi
+else
+  printf 'fallback log: none\n'
+fi

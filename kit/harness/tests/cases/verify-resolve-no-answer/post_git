@@ -1,0 +1,2 @@
+#!/bin/sh
+printf '  val b = nonExistentSymbol\n' >> core/src/A.scala

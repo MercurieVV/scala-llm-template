@@ -1,0 +1,1 @@
+{"tool_name":"bash","tool_input":{"command":"patch -p1 engine/details/notes.md < /tmp/agent.patch"}}

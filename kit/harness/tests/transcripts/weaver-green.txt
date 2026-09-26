@@ -1,0 +1,15 @@
+compiling 1 Scala source to out/backend/cpu/test/compile.dest/classes ...
+done compiling
+java.lang.NoClassDefFoundError: cats/effect/unsafe/UnsafeNonFatal
+	at cats.effect.unsafe.WorkerThread.lookForWork$1(WorkerThread.scala:551)
+	at cats.effect.unsafe.WorkerThread.run(WorkerThread.scala:942)
+Caused by: java.lang.ClassNotFoundException: cats.effect.unsafe.UnsafeNonFatal
+	at java.base/java.net.URLClassLoader.findClass(URLClassLoader.java:445)
+	at mill.api.daemon.MillURLClassLoader.findClass(MillURLClassLoader.scala:42)
+	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:593)
+	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:526)
+	... 2 more
+Running Test Class com.github.mercurievv.skreeep2.backend.cpu.CaptureProps
+[36mcom.github.mercurievv.skreeep2.backend.cpu.CaptureProps[0m
+[32m+ [0mreversing twice is identity [37m[1m37ms[0m
+[32m+ [0mplain expectation that holds [37m[1m10ms[0m

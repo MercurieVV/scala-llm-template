@@ -1,0 +1,16 @@
+#!/bin/sh
+# Two claims. NON-VACUITY first, measured from the index rather than from a string: more than the
+# spec's 50-file cap of Scala files are staged, so the gate's truncation branch necessarily ran.
+# Then the claim itself: it did NOT block, i.e. the truncation NOTE is a degradation and not a
+# finding at the commit boundary. (The tool-policy hook prints verify-diff's output only when it
+# DENIES, so the note's own text is pinned by the turn-end case verify-truncated-note instead.)
+n=$(git diff --cached --name-only | grep -c '\.scala$')
+if [ "$n" -le 50 ]; then
+  printf 'only %s staged Scala files — under the cap, this fixture is not exercising truncation\n' "$n"
+  exit 1
+fi
+if grep -q 'BLOCKED by tool-policy' "$GATE_OUT_FILE"; then
+  printf 'the truncation NOTE blocked the commit\n'
+  exit 1
+fi
+printf 'TRUNCATED-AND-ALLOWED ok (%s staged Scala files)\n' "$n"

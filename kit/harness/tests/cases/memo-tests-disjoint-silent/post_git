@@ -1,0 +1,14 @@
+#!/bin/sh
+# memo-table-blocks' change, but core/test/TSpec.scala here holds zk1..zk10: NONE of the keys. Appended
+# whole (declaration line included) so the range dsh_diff_ranges reports is `@@ -2,0 +3,12 @@` — the
+# 0-indexed range [2,14), which is why literals.json's production rows sit at lines 2 (the `val
+# table` declaration) through 12 (the closing paren).
+{
+  printf '  val table = Map(\n'
+  i=1
+  while [ "$i" -le 10 ]; do
+    printf '    "k%s" -> %s,\n' "$i" "$i"
+    i=$((i + 1))
+  done
+  printf '  )\n'
+} >> core/src/T.scala

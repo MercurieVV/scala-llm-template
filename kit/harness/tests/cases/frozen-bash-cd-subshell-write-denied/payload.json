@@ -1,0 +1,1 @@
+{"tool_name":"bash","tool_input":{"command":"(cd engine/details && cp /tmp/agent-draft.md notes.md)"}}

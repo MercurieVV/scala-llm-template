@@ -1,0 +1,9 @@
+#!/bin/sh
+# The claim is an ABSENCE: this command is not the repository boundary — `git commit-graph write` is
+# a different subcommand, `git commit --dry-run` changes nothing — so the staged unresolvable name
+# in this fixture must NOT produce a denial.
+if grep -q 'BLOCKED by tool-policy' "$GATE_OUT_FILE"; then
+  printf 'the boundary fired for a command that is not a commit\n'
+  exit 1
+fi
+printf 'NOT-THE-BOUNDARY ok\n'

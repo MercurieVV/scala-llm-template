@@ -1,0 +1,8 @@
+#!/bin/sh
+# A fresh clone: no .dsh/.state/modules.tsv until turn-end's module map first runs, which is AFTER
+# verify-diff. So `moduleMap` answers here like the real build does, and every other task succeeds.
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+case " $* " in
+  *" moduleMap "*) printf 'core\tcore\tfmt,scalafix,tests\n' ;;
+esac
+exit 0

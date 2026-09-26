@@ -1,0 +1,8 @@
+#!/bin/sh
+# The human's line (and the whole mixed file) is untouched and never reached fixRanges; the control
+# module was rewritten, which proves the stage ran.
+grep -Fqx '  def human(o: Option[Int]): Int = o.get' core/src/T.scala || { echo "the human's line was rewritten"; exit 1; }
+grep -Fqx '  def agent(o: Option[Int]): Int = o.get' core/src/T.scala || { echo "the mixed file was rewritten"; exit 1; }
+if grep -q 'core.fixRanges' mill.log; then echo "core (only a pre-dirty file) was handed to fixRanges"; exit 1; fi
+grep -Fq 'o.getOrElse(0)' app/src/A.scala || { echo "the control (app) was not rewritten"; exit 1; }
+echo "human line untouched; app rewritten"

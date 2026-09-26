@@ -1,0 +1,6 @@
+#!/bin/sh
+# The only literals this construct shares with the tests are 0 through 9 -- ten of them, at or above
+# min_overlap (8), so the overlap is large enough to be flagged and ONLY the triviality rule keeps it
+# silent: dsh_memo_judge drops numeric literals with |value| <= trivial_abs before counting. With that
+# rule broken this case blocks (measured by removing it in a scratch copy).
+printf '%s\n' '  val flags = Array(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)' >> core/src/T.scala

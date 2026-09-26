@@ -1,0 +1,4 @@
+core.fixRanges --rangesFile
+app.fixRanges --rangesFile
+core.compile
+app.compile

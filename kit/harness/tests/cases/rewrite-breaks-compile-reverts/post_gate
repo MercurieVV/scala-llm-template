@@ -1,0 +1,8 @@
+#!/bin/sh
+# The breaking rewrite was undone in EVERY file it touched: the agent's own lines are back, byte for
+# byte, no BROKEN remains anywhere, and nothing was offered for review.
+if grep -rq BROKEN core; then echo "a breaking rewrite is still on disk: $(grep -rl BROKEN core)"; exit 1; fi
+grep -Fqx '  def f(o: Option[Int]): Int = o.get' core/src/T.scala || { echo "T.scala was not restored"; exit 1; }
+grep -Fqx '  def h(o: Option[Int]): Int = o.get' core/src/U.scala || { echo "U.scala was not restored"; exit 1; }
+if grep -Fq 'purrism rewrote' "$GATE_OUT_FILE"; then echo "a reverted rewrite was offered for review"; exit 1; fi
+echo "originals restored"

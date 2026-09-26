@@ -1,0 +1,16 @@
+#!/bin/sh
+# post_gate: the escape hatch still logs. A marker on a COVERED file releases a read the guard would
+# otherwise deny, and the record of that override is the point of the hatch, so the log must have
+# gained exactly one entry. The same script runs for the unindexed cases, where it must find nothing.
+set -u
+log=.dsh/.state/semantic-fallback.log
+if [ -s "$log" ]; then
+  n=$(wc -l < "$log" | tr -d ' ')
+  if [ "$n" = 1 ]; then
+    printf 'fallback log: 1 entry\n'
+  else
+    printf 'fallback log: %s entries\n' "$n"
+  fi
+else
+  printf 'fallback log: none\n'
+fi

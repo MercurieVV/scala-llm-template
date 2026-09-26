@@ -1,0 +1,4 @@
+#!/bin/sh
+# The agent edits again between the two hook calls: same path, same module, different bytes. The
+# cached verdict must not be reused, so the second run has to invoke Mill all over again.
+printf 'package x\nobject A { val a = 2 }\n' > "$SCRATCH_ROOT/engine/details/src/A.scala"

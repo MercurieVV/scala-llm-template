@@ -1,0 +1,6 @@
+purrism rewrote the lines you changed
+do NOT merely revert it
+restructure that code so the rule no longer matches
+report the rule, the file:line and the reason to the human
+// scalafix:ok does not suppress most purrism rewrites
+the message was truncated

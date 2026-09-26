@@ -1,0 +1,20 @@
+#!/bin/sh
+# post_gate: the cache-refresh proof. The first invocation stood down because the index did not cover
+# the file read. A later compile emits that file's `.semanticdb` -- newer than the cached coverage --
+# so the cache has to be rebuilt, and the SAME read, with no marker and no other change, has to be
+# denied on the second invocation. The sleep keeps the new mtime strictly newer on a filesystem whose
+# timestamps are coarse; `touch` then sets it to now.
+set -u
+root=$(pwd)
+rel=backend/api/src/com/github/mercurievv/skreeep2/backend/api/TopologyBackend.scala
+idx=out/engine/shape/semanticDbDataDetailed.dest/classes/META-INF/semanticdb/backend/api/src/com/github/mercurievv/skreeep2/backend/api
+mkdir -p "$idx"
+: > "$idx/TopologyBackend.scala.semanticdb"
+sleep 1
+touch "$idx/TopologyBackend.scala.semanticdb"
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
+printf '{"tool_name":"read","tool_input":{"file_path":"%s/%s"}}\n' "$root" "$rel" > "$root/second.json"
+out=$(GATE_ROOT="$root" PATH="$repo/.dsh/tests/bin:$PATH" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" semantic-guard < "$root/second.json" 2>&1)
+code=$?
+printf 'second run: exit %s\n' "$code"
+printf '%s\n' "$out" | sed -n '1p'

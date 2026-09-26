@@ -1,0 +1,4 @@
+#!/bin/sh
+# Between the two SessionStart invocations a second path becomes dirty. If the second invocation
+# clobbered the baseline it would record two paths, and the "with 1 path(s)" line could not appear.
+printf '\n// also dirty now\n' >> engine/details/src/B.scala

@@ -1,0 +1,1 @@
+{"files":[{"uri":"core/src/T.scala","references":[{"line":3,"character":10,"name":"bogusThing","kind":"term","role":"use","resolved":false,"symbol":null,"origin":null,"suggestions":[]}],"omitted":0,"error":null}]}

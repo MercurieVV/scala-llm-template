@@ -1,0 +1,5 @@
+#!/bin/sh
+# An answer that names no requested file checked nothing: it must be said, and the (empty) test
+# set must not be cached as if it were the tests' literals.
+for f in .dsh/.state/memo-testvals.*; do [ -e "$f" ] && { echo "a partial test set was cached: $f"; exit 1; }; done
+exit 0

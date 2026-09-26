@@ -1,0 +1,15 @@
+#!/bin/sh
+# The same shape as the post-edit case: `checkFormat` names an absolute path — here the very file the
+# turn touched — and exits 1, so the Stop gate has to block the turn on it (F53's blocking
+# direction) and name both the module and the remedy.
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+case "$*" in
+  *checkFormat*)
+    root=$(pwd)
+    printf 'Checking format of 1 Scala sources\n'
+    printf 'parsed config (v3.10.7): %s/.scalafmt.conf\n' "$root"
+    printf '%s\n' "$root/engine/details/src/A.scala"
+    printf '[error] engine.details.checkFormat Found 1 misformatted files\n'
+    exit 1 ;;
+esac
+exit 0

@@ -1,0 +1,4 @@
+#!/bin/sh
+# A brand-new file `git status --porcelain` lists as untracked: no commit ever saw it, so `git diff`
+# says nothing about it at all — the case the untracked-file walk exists for.
+printf 'See bogusThing for details.\n' > docs/new-notes.md

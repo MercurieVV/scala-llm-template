@@ -1,0 +1,4 @@
+#!/bin/sh
+# Touch the production file so prodfiles is non-empty; its own literal_tokens answer carries no
+# literals, so nothing here could accidentally overlap with anything.
+printf '  // touched by this turn\n' >> core/src/T.scala

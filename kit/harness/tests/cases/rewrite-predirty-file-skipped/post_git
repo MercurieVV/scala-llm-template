@@ -1,0 +1,9 @@
+#!/bin/sh
+# The human had in-flight work in core/src/T.scala at SessionStart; the agent then edits that same
+# file and a clean file in app. T.scala's diff against HEAD mixes both authors, so it is never rewritten;
+# app/src/A.scala was clean at SessionStart, so its diff is the session's own and it is (the control).
+printf '  def human(o: Option[Int]): Int = o.get\n' >> core/src/T.scala
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$repo/.dsh/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+printf '  def agent(o: Option[Int]): Int = o.get\n' >> core/src/T.scala
+printf '  def g(o: Option[Int]): Int = o.get\n' >> app/src/A.scala

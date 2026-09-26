@@ -1,0 +1,1 @@
+{"tool_name":"bash","tool_input":{"command":"cp /tmp/x.scala engine/shape/src/A.scala # semantic-fallback: backup"}}

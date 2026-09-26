@@ -1,0 +1,4 @@
+#!/bin/sh
+# A test answer with omitted literals is a partial set and must not be cached.
+for f in .dsh/.state/memo-testvals.*; do [ -e "$f" ] && { echo "a partial test set was cached: $f"; exit 1; }; done
+exit 0

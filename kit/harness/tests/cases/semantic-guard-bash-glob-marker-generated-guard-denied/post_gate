@@ -1,0 +1,10 @@
+#!/bin/sh
+# post_gate: the in-repo release did not run (a generated guard is installed), so nothing was logged --
+# and the deny came from THIS hook's pattern rule, before delegation, not from the stub guard.
+set -u
+log=.dsh/.state/semantic-fallback.log
+if [ -s "$log" ]; then
+  printf 'fallback log: %s entries\n' "$(wc -l < "$log" | tr -d ' ')"
+else
+  printf 'fallback log: none\n'
+fi

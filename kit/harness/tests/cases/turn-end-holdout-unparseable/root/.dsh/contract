@@ -1,0 +1,2 @@
+preCommit  = ./mill -j 1 preCommit
+holdout = sh .dsh/holdout-stub.sh

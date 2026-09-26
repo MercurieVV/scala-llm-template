@@ -1,0 +1,3 @@
+#!/bin/sh
+# a red fastTests run is not an F53 "checks failed on files this turn did not touch" finding
+! grep -q "F53" "$GATE_OUT_FILE"

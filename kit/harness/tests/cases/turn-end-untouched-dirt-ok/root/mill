@@ -1,0 +1,15 @@
+#!/bin/sh
+# `checkFormat` fails the way the real one does on a module with pre-existing drift: it lists every
+# misformatted file. The only file it names is one this turn did not touch, so F53 says note, never
+# block — six of the repository's modules are in exactly this state today.
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+case "$*" in
+  *checkFormat*)
+    root=$(pwd)
+    printf 'Checking format of 2 Scala sources\n'
+    printf 'parsed config (v3.10.7): %s/.scalafmt.conf\n' "$root"
+    printf '%s\n' "$root/engine/details/src/Dirty.scala"
+    printf '[error] engine.details.checkFormat Found 1 misformatted files\n'
+    exit 1 ;;
+esac
+exit 0

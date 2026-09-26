@@ -1,0 +1,18 @@
+#!/bin/sh
+# Test double for coursier. `resolve <coord>` exits 0 unless the coordinate appears in
+# CS_STUB_UNRESOLVABLE (a space-separated list), in which case it prints coursier's own shape of
+# error and exits 1. Every other subcommand exits 0.
+set -u
+if [ "${1:-}" = resolve ]; then
+  shift
+  for _arg in "$@"; do
+    case "$_arg" in -*) continue ;; esac
+    for _bad in ${CS_STUB_UNRESOLVABLE:-}; do
+      if [ "$_arg" = "$_bad" ]; then
+        printf 'Error downloading %s\n  not found\n' "$_arg" >&2
+        exit 1
+      fi
+    done
+  done
+fi
+exit 0

@@ -1,0 +1,61 @@
+#!/bin/sh
+# Test double for the scalasemantic-mcp launcher.
+#
+# `doctor` prints the three Claude Code config FAILs the real launcher emits in a tree with no
+# .claude/ directory (F42) when SCALASEMANTIC_STUB_DOCTOR_CC_FAILS=1, always prints the
+# SemanticDB index line as ok, and exits with SCALASEMANTIC_STUB_DOCTOR (default 0). Every
+# other subcommand exits 0.
+#
+# SCALASEMANTIC_STUB_DOCTOR_MANY_FAILS=1 makes `doctor` print more FAIL lines than the probe
+# keeps, each longer than a real one, so the notes cap (F47) can be exercised from a fixture.
+#
+# The FAIL wording is fixed here rather than read from the environment because run.sh
+# word-splits each `env` line, so no fixture can pass a value containing spaces.
+set -u
+if [ "${1:-}" = doctor ]; then
+  if [ "${SCALASEMANTIC_STUB_DOCTOR_CC_FAILS:-0}" = 1 ]; then
+    printf '  FAIL  guard hook installed -- not installed: .claude/hooks/scala-semantic-guard.sh\n'
+    printf '  FAIL  guard hook registered -- no PreToolUse entry in .claude/settings.json\n'
+    printf '  FAIL  MCP server configured -- no scala-semantic entry in .mcp.json\n'
+  fi
+  if [ "${SCALASEMANTIC_STUB_DOCTOR_MANY_FAILS:-0}" = 1 ]; then
+    i=1
+    while [ "$i" -le 12 ]; do
+      printf '  FAIL  synthetic condition %s -- %s\n' "$i" \
+        "this deliberately long line stands in for a doctor that repeats itself, so that twelve of them together run well past both the line cap and the character cap the probe keeps"
+      i=$((i + 1))
+    done
+  fi
+  printf '  ok    SemanticDB index -- the index under the project\n'
+  exit "${SCALASEMANTIC_STUB_DOCTOR:-0}"
+fi
+
+# `call <tool> <json> [root] [classpath]`: prints the JSON in the file named by
+# SCALASEMANTIC_STUB_CALL_OUT and exits with SCALASEMANTIC_STUB_CALL (default 0). A fixture writes
+# the answer it wants the gate to read into that file; with no file the stub prints an empty
+# `files` list, which is the "nothing to report" answer.
+#
+# SCALASEMANTIC_STUB_CALL_ERR names a file whose text goes to STDERR, with nothing on stdout -- how the
+# real launcher fails: it exits non-zero with its reason on stderr, beneath the JVM's own
+# `WARNING: ... sun.misc.Unsafe` lines. Pair it with SCALASEMANTIC_STUB_CALL=1.
+if [ "${1:-}" = call ]; then
+  printf 'call %s\n' "$2" >> "${SCALASEMANTIC_STUB_CALL_LOG:-/dev/null}"
+  # SCALASEMANTIC_STUB_LITERALS_OUT names a file answered for `call literal_tokens` only, so a fixture
+  # can script resolve_references and literal_tokens independently. Without it, literal_tokens gets
+  # the same default as any other tool.
+  if [ "$2" = literal_tokens ] && [ -n "${SCALASEMANTIC_STUB_LITERALS_OUT:-}" ] && [ -f "$SCALASEMANTIC_STUB_LITERALS_OUT" ]; then
+    cat "$SCALASEMANTIC_STUB_LITERALS_OUT"
+    exit 0
+  fi
+  if [ -n "${SCALASEMANTIC_STUB_CALL_ERR:-}" ] && [ -f "${SCALASEMANTIC_STUB_CALL_ERR}" ]; then
+    cat "${SCALASEMANTIC_STUB_CALL_ERR}" >&2
+    exit "${SCALASEMANTIC_STUB_CALL:-0}"
+  fi
+  if [ -n "${SCALASEMANTIC_STUB_CALL_OUT:-}" ] && [ -f "${SCALASEMANTIC_STUB_CALL_OUT}" ]; then
+    cat "${SCALASEMANTIC_STUB_CALL_OUT}"
+  else
+    printf '{"files":[]}\n'
+  fi
+  exit "${SCALASEMANTIC_STUB_CALL:-0}"
+fi
+exit 0

@@ -1,0 +1,4 @@
+#!/bin/sh
+# fixRanges ran and changed nothing: the stage says nothing at all.
+if grep -Fq 'purrism rewr' "$GATE_OUT_FILE"; then echo "the rewrite stage spoke with nothing rewritten"; exit 1; fi
+exit 0

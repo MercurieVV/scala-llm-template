@@ -1,0 +1,6 @@
+#!/bin/sh
+# A memorisation-only block must carry the memorisation remedy, never the unresolved-names one: the
+# agent is not told a name does not exist, nor to fix names, when the finding is a memorised table.
+if grep -Fq 'does not exist' "$GATE_OUT_FILE"; then echo "a memorisation block says something does not exist"; exit 1; fi
+if grep -Fqi 'fix the names' "$GATE_OUT_FILE"; then echo "a memorisation block says to fix the names"; exit 1; fi
+echo "no names remedy under a memorisation block"

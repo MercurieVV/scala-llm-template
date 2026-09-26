@@ -1,0 +1,11 @@
+#!/bin/sh
+# A path under the module's own test/ directory: what checks it is the test submodule's compile, and
+# the row has to grant `tests` for that to run at all.
+#
+# `mkdir -p` is not decoration: `root/engine/shape/test/src/` is an EMPTY directory in the fixture
+# tree, git stores no such thing, so a clone has no `test/src` at all and this redirect would fail
+# there while succeeding in the checkout that wrote it (measured: 108 passed / 3 failed in a
+# `git clone --depth 1` of this branch, 111/0 once the three directories existed). The case builds
+# the shape it depends on rather than inheriting it from a working tree.
+mkdir -p engine/shape/test/src
+printf 'package x\nobject HostSpec { val a = 1 }\n' > engine/shape/test/src/HostSpec.scala

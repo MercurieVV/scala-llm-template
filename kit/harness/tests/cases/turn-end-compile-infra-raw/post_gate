@@ -1,0 +1,4 @@
+#!/bin/sh
+# The section is the raw text, not the rendered INFRA block: no INFRA line and no log pointer reach the agent.
+! grep -q 'INFRA:' "$GATE_OUT_FILE"
+! grep -q 'Raw output kept' "$GATE_OUT_FILE"

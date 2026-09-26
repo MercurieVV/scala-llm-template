@@ -1,0 +1,3 @@
+# frozen paths for this fixture
+.dsh/.state/receipts	receipts are the gate's record; the human's
+.dsh/.state/modules.tsv	the coverage map is the build's answer; edit build.mill, not this cache

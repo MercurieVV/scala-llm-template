@@ -1,0 +1,1 @@
+{"files":[{"uri":"core/src/T.scala","literals":[],"omitted":0,"error":null},{"uri":"core/test/TSpec.scala","literals":[],"omitted":0,"error":"core/test/TSpec.scala does not parse as Scala 3"}]}

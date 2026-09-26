@@ -1,0 +1,6 @@
+#!/bin/sh
+if grep -q 'fastTests' "$GATE_OUT_FILE" 2>/dev/null; then
+  echo "unexpected fastTests text in gate output"
+  exit 1
+fi
+exit 0

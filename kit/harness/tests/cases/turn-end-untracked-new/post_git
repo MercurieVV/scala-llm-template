@@ -1,0 +1,5 @@
+#!/bin/sh
+# A brand-new file: `git status --porcelain` lists it as untracked, `git diff --name-only HEAD`
+# cannot see it at all, and the gate has to check it anyway — a new file is the likeliest place for a
+# violation to hide, and the touched set comes from git rather than from the agent's account.
+printf 'package x\nobject New { val  a=1 }\n' > engine/details/src/New.scala

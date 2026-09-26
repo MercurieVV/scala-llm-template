@@ -1,0 +1,16 @@
+Rewriting and linting 9 Scala sources against 21 rules
+/Users/viktorskalinins/IdeaProjects/skreeep2/core/src/com/github/mercurievv/skreeep2/DshScratch.scala:8:5: warning: [PreferEffectIdioms.manual-resource] this `finally` closes a resource and does something else too, so the close cannot be lifted out mechanically. `Using.resource` handles it once the finally only closes; `Resource` once the body is in `F`. A `finally` that closes a resource and does something else too cannot have the close lifted out mechanically, so the acquire/release stays invisible to the effect system.
+    try IO.pure(r.read())
+    ^
+--- /Users/viktorskalinins/IdeaProjects/skreeep2/core/src/com/github/mercurievv/skreeep2/DshScratch.scala
++++ <expected fix>
+@@ -5,7 +5,7 @@
+ object DshScratch:
+   def manual: IO[Int] =
+     val r = new java.io.StringReader("x")
+-    try IO.pure(r.read())
++    try IO.delay(r.read())
+     finally
+       println("closing")
+       r.close()
+[error] core.fix A Scalafix test error was reported. Run `fix` without `--check` or `--diff` to fix the error

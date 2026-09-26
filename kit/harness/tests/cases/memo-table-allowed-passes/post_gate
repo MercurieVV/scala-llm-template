@@ -1,0 +1,3 @@
+#!/bin/sh
+# The allow row must exempt the construct: the finding's own wording must never appear.
+! grep -Fq "whose literals are largely" "$GATE_OUT_FILE"

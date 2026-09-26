@@ -1,0 +1,4 @@
+#!/bin/sh
+# A deleted path is nothing to check: the file the status names no longer exists, so there is no
+# module to run for it (and the stub Mill would fail loudly if the gate ran anything at all).
+rm -f engine/details/src/A.scala

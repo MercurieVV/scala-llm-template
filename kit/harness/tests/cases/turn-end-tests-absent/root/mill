@@ -1,0 +1,3 @@
+#!/bin/sh
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+exit 0

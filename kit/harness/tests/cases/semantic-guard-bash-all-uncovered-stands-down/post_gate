@@ -1,0 +1,9 @@
+#!/bin/sh
+# post_gate: nothing was denied, so the fallback log must not have grown either.
+set -u
+log=.dsh/.state/semantic-fallback.log
+if [ -s "$log" ]; then
+  printf 'fallback log: %s entries\n' "$(wc -l < "$log" | tr -d ' ')"
+else
+  printf 'fallback log: none\n'
+fi
