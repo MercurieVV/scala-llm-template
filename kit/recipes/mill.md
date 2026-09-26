@@ -355,7 +355,13 @@ def scalaSemanticWriteClasspath() = Task.Command {
 ```
 
 `core` is the example's module; `object core extends Formattable with GateLayer { … }`. Checked by
-`kit/harness/tests/smoke-second-project.sh`, which assembles a project from this section's text.
+`kit/harness/tests/smoke-second-project.sh`, which assembles a project from this section's text (with §1's head
+and §3's plumbing).
+
+A `GateLayer` module that does not also mix in `ArchitectureShapeModule` gets no rule added for it, so its
+scalafix config must name at least one rule: with §4's `rules = []` alone, `<module>.fix --check` fails with
+`No rules requested to run`, and so do `preCommit` and turn-end. `moduleMap` prints a row for every compilable
+module, so §1's `scalafixRules` appears with no capabilities beside `core`'s `fmt,scalafix`.
 
 ## What this does not decide (R-11)
 

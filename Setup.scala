@@ -451,6 +451,7 @@ object Setup extends IOApp:
       ConfigureStryker,
       RunSpecializedSetupScripts,
       InstallKit,
+      InstallHarness,
       FormatProject,
       StageGitChanges
     )
@@ -969,7 +970,7 @@ object Setup extends IOApp:
       * scripts. A run from outside a checkout has no kit to read, and says so
       * rather than installing nothing.
       */
-    private def findKitRoot(): Option[os.Path] =
+    def findKitRoot(): Option[os.Path] =
       @annotation.tailrec
       def loop(dir: os.Path): Option[os.Path] =
         if os.exists(dir / "kit" / "arhitecture-shape" / "AllowedShape.scala")
@@ -1458,6 +1459,52 @@ object Setup extends IOApp:
              |  Raise it: project/plugins.sbt — addSbtPlugin("ch.epfl.scala" % "sbt-scalafix" % "$measuredPlugin").
              |""".stripMargin
         )
+
+  /** The harness engine (spec 2026-09-26): `kit/harness/install.sh` vendors it
+    * into `<target>/.dsh/engine/` and seeds the project's gate state. Mill only
+    * — the engine's checks run Mill tasks by name — so any other build tool is
+    * a named skip, never a silent one. The step's status is install.sh's exit
+    * status.
+    */
+  private object InstallHarness extends SetupStep:
+    val id = "install-harness"
+
+    def run(ctx: SetupContext): StepResult =
+      if ctx.answers.getOrElse("kit", "no").toLowerCase != "yes" then
+        StepResult(id, "skipped", "kit not selected")
+      else if ctx.answers.getOrElse("build-tool", "mill").toLowerCase != "mill"
+      then StepResult(id, "skipped", "harness engine supports Mill builds only")
+      else
+        InstallKit.findKitRoot() match
+          case None =>
+            StepResult(
+              id,
+              "failed",
+              "kit sources not found: run Setup.scala from a scala-llm-template checkout"
+            )
+          case Some(kit) =>
+            val r = os
+              .proc(
+                "sh",
+                (kit / "harness" / "install.sh").toString,
+                ctx.targetDir.toString
+              )
+              .call(check = false, mergeErrIntoOut = true)
+            val out = r.out.text()
+            Console.err.print(out)
+            if r.exitCode == 0 then
+              StepResult(
+                id,
+                "completed",
+                "vendored the harness engine into .dsh/engine",
+                List((ctx.targetDir / ".dsh" / "engine").toString)
+              )
+            else
+              StepResult(
+                id,
+                "failed",
+                s"install.sh exited ${r.exitCode}: ${out.linesIterator.toList.lastOption.getOrElse("")}"
+              )
 
   private object FormatProject extends SetupStep:
     val id = "format-project"
