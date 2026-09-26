@@ -288,6 +288,75 @@ the same tool classpath — is the pattern for that case. `AllowedShape` needs n
 Wire `fix --check` into the tasks your gate runs (`preCommit`/`prePush` in the build contract) so the check is not a
 command a human has to remember.
 
+## 7. The gate's tasks
+
+The harness engine (`kit/harness`, vendored to `.dsh/engine/` by `install.sh`) runs Mill tasks **by name**:
+`moduleMap`, `<module>.fixRanges --rangesFile <path>`, `<module>.fixStrict`, `<module>.compile`, `preCommit`,
+`prePush`, `scalaSemanticWriteClasspath`. Copy `kit/recipes/mill/Gate.mill` to `buildKit/Gate.mill`, mix `GateLayer`
+into every module that scalafix checks, and add these root tasks to `build.mill`. The four lists are the project's
+decisions — a module deliberately exempt from scalafix is left out of `scalafixModules`, not hidden in a trait:
+
+```scala
+import mill.scalalib.scalafmt.ScalafmtModule
+import build.buildKit.{Gate, GateLayer}
+
+// A named trait, not the compound type `ScalaModule with ScalafmtModule` inline: Mill 1.1.8's build-file
+// outline parser throws a NullPointerException (`Definitions.andType`) on an `and`-type used as a `def`'s
+// or `val`'s type — whether written directly or behind a `type` alias — so mix it into a trait instead and
+// give modules that type.
+trait Formattable extends ScalaModule with ScalafmtModule
+
+private def mainModules: Seq[Formattable]        = Seq(core)
+private def scalafixModules: Seq[GateLayer]       = Seq(core)
+private def testCompileModules: Seq[ScalaModule] = Seq()
+private def prePushTestModules: Seq[TestModule]  = Seq()
+
+/** Fast gate for every commit: format, lint-check, compile. */
+def preCommit() = Task.Command {
+  Task.traverse(mainModules)(_.reformat())()
+  Task.traverse(scalafixModules)(_.fix("--check"))()
+  Task.traverse(scalafixModules)(_.fixStrict)()
+  Task.traverse(mainModules ++ testCompileModules)(_.compile)()
+  ()
+}
+
+/** Thorough gate for every push: preCommit plus the tests. */
+def prePush() = Task.Command {
+  preCommit()
+  Task.traverse(prePushTestModules)(_.testForked())()
+  ()
+}
+
+/** The coverage map the engine reads (`.dsh/contract`'s `coverage` key). */
+def moduleMap() = Task.Command {
+  println(
+    Gate.moduleMapRows(this, BuildPaths.repoRoot, _.isInstanceOf[ScalafmtModule], mainModules, scalafixModules, testCompileModules)
+      .mkString("\n")
+  )
+}
+
+/** `.scala-semantic/classpath-mill.json`, which the ScalaSemantic server discovers to start its presentation compiler. */
+def scalaSemanticWriteClasspath() = Task.Command {
+  val modules = Task.traverse(mainModules) { m =>
+    Task.Anon {
+      Gate.ClasspathMetadata.Module(
+        id = m.moduleSegments.parts.mkString("."),
+        baseDir = m.moduleDir,
+        scalaVersion = m.scalaVersion(),
+        classpath = m.compile().classes.path +: m.compileClasspath().map(_.path).toSeq
+      )
+    }
+  }()
+  val root    = BuildPaths.repoRoot
+  val out     = Gate.ClasspathMetadata.metadataPath(root)
+  val changed = Gate.ClasspathMetadata.writeIfChanged(out, Gate.ClasspathMetadata.render(root, modules))
+  Task.log.info(s"${if (changed) "Wrote" else "Up to date"} ScalaSemantic classpath metadata: $out (${modules.size} modules)")
+}
+```
+
+`core` is the example's module; `object core extends Formattable with GateLayer { … }`. Checked by
+`kit/harness/tests/smoke-second-project.sh`, which assembles a project from this section's text.
+
 ## What this does not decide (R-11)
 
 A green `fix --check` says the modules name allowlisted types and use no denylisted construct. It does not say the

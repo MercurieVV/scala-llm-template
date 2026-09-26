@@ -1123,6 +1123,7 @@ object Setup extends IOApp:
         )
         val helper = readKit("recipes/mill/ArchitectureShapeModule.mill")
         writeVendored("buildKit/ArchitectureShapeModule.mill", helper)
+        writeVendored("buildKit/Gate.mill", readKit("recipes/mill/Gate.mill"))
         // The anchor file carries just the helper's own package line, so the two cannot disagree.
         writeVendored(
           "buildKit/package.mill",
