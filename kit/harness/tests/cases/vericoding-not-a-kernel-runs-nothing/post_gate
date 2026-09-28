@@ -1,0 +1,5 @@
+#!/bin/sh
+# No kernel touched: neither Stainless nor the contract guard runs.
+if grep -q stainlessVerify mill.log; then echo "stainlessVerify ran"; cat mill.log; exit 1; fi
+if grep -q 'call contract_clauses' semantic.log 2>/dev/null; then echo "contract_clauses was called"; exit 1; fi
+echo "neither stainlessVerify nor contract_clauses ran"

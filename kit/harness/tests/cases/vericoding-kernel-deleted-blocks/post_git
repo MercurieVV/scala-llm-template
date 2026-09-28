@@ -1,0 +1,3 @@
+#!/bin/sh
+# The agent deletes the registered kernel.
+rm -f core/src/K.scala

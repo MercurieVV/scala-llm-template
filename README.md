@@ -61,7 +61,7 @@ This repository avoids local rule files (`.cursorrules`, `.agents/AGENTS.md`) to
 
 ## 4. Reengineering Kit
 
-Brings a project under the kit — the `AllowedShape` scalafix rule with its build wiring, the five process skills and
+Brings a project under the kit — the `AllowedShape` scalafix rule with its build wiring, the six process skills and
 the `R-n` digest — in one installed commit:
 
 ```bash

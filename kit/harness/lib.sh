@@ -796,6 +796,485 @@ MEMOPY
   return 0
 }
 
+# --- kernel verification: the frozen registry of verified kernel files ----
+# The ScalaSemantic launcher every semantic caller uses (moved from verify-diff.sh, unchanged).
+# The launcher is resolved exactly as .dsh/engine/hooks/health.sh resolves it: override, PATH, profile path.
+dsh_semantic_launcher() {
+  _sl=${SCALASEMANTIC_MCP_LAUNCHER:-}
+  if [ -z "$_sl" ]; then
+    _sl=$(command -v scalasemantic-mcp 2>/dev/null) || _sl=""
+    if [ -n "$_sl" ] && [ ! -f "$_sl" ]; then
+      _sl=/Users/viktorskalinins/.local/bin/scalasemantic-mcp
+    fi
+  fi
+  [ -n "$_sl" ] || _sl=/Users/viktorskalinins/.local/bin/scalasemantic-mcp
+  printf '%s\n' "$_sl"
+}
+
+# .dsh/policy/kernels.tsv — the human's frozen registry of verified kernel files (spec 2026-09-27 §1):
+# `<file> TAB <module> TAB <reason>`. Prints `<file>\t<module>` per well-formed row. One leading `./` is
+# stripped, so `./core/src/K.scala` names the same file git reports as `core/src/K.scala` (a spelling
+# that never equals a touched path would silently disable the vericoding stage); any other spelling
+# that is not root-relative is a FAIL in `dsh_kernel_checks`.
+dsh_kernels_rows() {
+  _kr_tsv="$1/.dsh/policy/kernels.tsv"
+  [ -f "$_kr_tsv" ] || return 0
+  tr -d '\r' < "$_kr_tsv" | awk -F'\t' '/^[[:space:]]*(#|$)/ {next} NF >= 3 && $1 != "" && $2 != "" {f = $1; sub(/^\.\//, "", f); print f "\t" $2}'
+}
+
+dsh_kernel_of() { # <root> <root-relative path>
+  dsh_kernels_rows "$1" | awk -F'\t' -v p="$2" '$1 == p {print $2; found=1; exit} END {exit found ? 0 : 1}'
+}
+
+# dsh_kernel_checks [root]: one `ok|fail|note` TAB <message> row per rule; exit 1 when any fail.
+# check-harness.sh maps the rows onto its ok/bad/note; lib-test.sh drives the function directly —
+# the same shape as dsh_verify_checks.
+dsh_kernel_checks() {
+  _kk_root=${1:-$(gate_root)}
+  _kk_tab=$(printf '\t')
+  _kk_bad=0
+
+  # rule 1: the kernels table parses, when there is one
+  _kk_p="$_kk_root/.dsh/policy/kernels.tsv"
+  if [ ! -f "$_kk_p" ]; then
+    printf 'note\tno .dsh/policy/kernels.tsv — no kernels are verified\n'
+    return 0
+  fi
+
+  # rule 2: validate rows (NF >= 3, files exist, modules in map)
+  _kk_m="$_kk_root/.dsh/.state/modules.tsv"
+  _kk_has_rows=0
+
+  _kk_all_bad=0
+  _kk_lineno=0
+  while IFS="$_kk_tab" read -r _kk_line; do
+    _kk_lineno=$((_kk_lineno + 1))
+    # Skip comments and blanks
+    case "$_kk_line" in
+      '#'*|'') continue ;;
+    esac
+    _kk_has_rows=1
+    _kk_f=$(printf '%s\n' "$_kk_line" | awk -F"$_kk_tab" '{print $1}')
+    _kk_m_val=$(printf '%s\n' "$_kk_line" | awk -F"$_kk_tab" '{print $2}')
+    _kk_nf=$(printf '%s\n' "$_kk_line" | awk -F"$_kk_tab" '{print NF}')
+
+    # Check field count
+    if [ "$_kk_nf" -lt 3 ]; then
+      printf 'FAIL\t.dsh/policy/kernels.tsv:%s needs <file> TAB <module> TAB <reason>\n' "$_kk_lineno"
+      _kk_all_bad=1; continue
+    fi
+
+    # Check the spelling: root-relative, as git reports a path. One leading `./` is tolerated (and
+    # stripped by dsh_kernels_rows); an absolute path, a `..` segment or a second `./` never equals a
+    # touched path, so the stage would never run for that kernel.
+    _kk_fr=${_kk_f#./}
+    case "$_kk_fr" in
+      /*|./*|..|../*|*/..|*/../*)
+        printf 'FAIL\t.dsh/policy/kernels.tsv:%s %s must be a root-relative path like core/src/K.scala\n' "$_kk_lineno" "$_kk_f"
+        _kk_all_bad=1; continue ;;
+    esac
+    _kk_f=$_kk_fr
+
+    # Check file exists
+    if [ ! -f "$_kk_root/$_kk_f" ]; then
+      printf 'FAIL\t.dsh/policy/kernels.tsv:%s names %s, which does not exist\n' "$_kk_lineno" "$_kk_f"
+      _kk_all_bad=1; continue
+    fi
+
+    # Check module in map (if map exists)
+    if [ -f "$_kk_m" ]; then
+      _kk_found=$(awk -F"$_kk_tab" -v m="$_kk_m_val" '$2 == m { found = 1 } END { print found + 0 }' "$_kk_m" 2>/dev/null)
+      if [ "$_kk_found" != 1 ]; then
+        printf 'FAIL\t.dsh/policy/kernels.tsv:%s names module %s, which is not in the module map (run ./mill moduleMap)\n' "$_kk_lineno" "$_kk_m_val"
+        _kk_all_bad=1; continue
+      fi
+    fi
+  done < "$_kk_p"
+
+  # Note if modules.tsv is missing
+  if [ ! -f "$_kk_m" ]; then
+    printf 'note\t.dsh/.state/modules.tsv is absent — the kernel module column was not checked (run ./mill moduleMap to generate it)\n'
+  fi
+
+  # Check if kernels.tsv is frozen
+  if [ -n "$(dsh_frozen_reason .dsh/policy/kernels.tsv "$_kk_root" 2>/dev/null)" ]; then
+    printf 'ok\t.dsh/policy/kernels.tsv is frozen\n'
+  else
+    printf 'FAIL\tnot frozen (add to .dsh/frozen-paths): .dsh/policy/kernels.tsv\n'; _kk_all_bad=1
+  fi
+
+  # With kernels registered, what the stage trusts must be frozen too (final review F3, F4): the contract
+  # snapshots — a re-vendored project keeps its old frozen-paths, since install.sh never overwrites it, so
+  # the seed's `.dsh/.state/contracts/**` row may be missing — and the Stainless wiring files, when they
+  # exist: an agent that may edit the verify script can make it print OK.
+  if [ "$_kk_has_rows" = 1 ]; then
+    if [ -z "$(dsh_frozen_reason .dsh/.state/contracts/x.tsv "$_kk_root" 2>/dev/null)" ]; then
+      printf 'FAIL\tthe contract snapshots (.dsh/.state/contracts/**) are not frozen — add the row to .dsh/frozen-paths\n'; _kk_all_bad=1
+    fi
+    for _kk_w in scripts/stainless-verify.sh buildKit/Stainless.mill; do
+      [ -f "$_kk_root/$_kk_w" ] || continue
+      if [ -z "$(dsh_frozen_reason "$_kk_w" "$_kk_root" 2>/dev/null)" ]; then
+        printf 'FAIL\t%s is not frozen — an agent could disable Stainless; add it to .dsh/frozen-paths\n' "$_kk_w"; _kk_all_bad=1
+      fi
+    done
+  fi
+
+  # Probe the launcher if there are kernel rows and no prior FAILs
+  if [ "$_kk_has_rows" = 1 ] && [ "$_kk_all_bad" = 0 ]; then
+    _kk_l=$(dsh_semantic_launcher)
+    _kk_out=$(mktemp 2>/dev/null) || _kk_out=${TMPDIR:-/tmp}/dsh-kk.$$
+    _kk_err=$(mktemp 2>/dev/null) || _kk_err=${TMPDIR:-/tmp}/dsh-kk-err.$$
+    _kk_hung=0
+    dsh_bounded_probe 20 "$_kk_out" "$_kk_err" "$_kk_l" call contract_clauses '{"files":[{"uri":"K.scala","source":"object K"}]}' "$_kk_root" || _kk_hung=1
+    if [ "$_kk_hung" = 1 ]; then
+      printf 'note\tthe launcher at %s did not answer `call contract_clauses` within 20 s and was killed — the contract guard will stand down\n' "$_kk_l"
+    elif ! grep -q '"files"' "$_kk_out" 2>/dev/null; then
+      printf 'note\tthe launcher at %s does not answer `call contract_clauses` — reinstall scalasemantic-mcp (./mill installLocal in ScalaSemanticMCP); the contract guard will stand down\n' "$_kk_l"
+    else
+      printf 'ok\tthe launcher answers `call contract_clauses`\n'
+    fi
+    rm -f "$_kk_out" "$_kk_err" 2>/dev/null
+  fi
+
+  # Report count of kernel files if all checks passed
+  if [ "$_kk_all_bad" = 0 ]; then
+    _kk_rows=$(dsh_kernels_rows "$_kk_root" | wc -l | tr -d ' ')
+    printf 'ok\tkernels.tsv: %s kernel file(s) registered\n' "$_kk_rows"
+  fi
+
+  [ "$_kk_all_bad" = 0 ] && return 0 || return 1
+}
+
+# --- vericoding: the contract snapshot, the contract guard, and Stainless's output (spec 2026-09-27 §3) ---
+# A registered kernel's require/ensuring/decreases are the HUMAN's. `.dsh/engine/hooks/baseline.sh` records
+# them at SessionStart (`dsh_contract_file`); the turn-end gate asks ScalaSemanticMCP's `contract_clauses`
+# again for the kernels the turn touched and diffs the two (`dsh_contract_diff`): a clause whose `shape`
+# changed, or one that is gone, blocks; a def that is new (a lemma, a helper) is allowed.
+#
+# The snapshot file (`dsh_contract_file`): a `# DSH contract snapshot <sid> <date>` header, one `# file <uri>` line per kernel
+# file the tool ANSWERED without error, then `dsh_contracts_tsv` rows. The `# file` lines are what lets
+# the guard tell "this file has no contracts" from "this file was never snapshotted" — an absent row in
+# a file the snapshot never covered must read as "cannot compare", never as "every contract is new"
+# (plan Review Focus 3). Readers skip every `#` line.
+#
+# Stainless is run by the module's `stainlessVerify --targets …` (kit/recipes/mill §8). `./mill` exits 1
+# for the verify script's exit 1 AND exit 2, so the verdict is read off the script's own marker lines
+# (kit/recipes/mill/stainless-feasibility.md, "Line patterns"), on output with ANSI colour stripped and
+# carriage returns turned into newlines — the tool redraws its progress lines with `\r`.
+
+# One file per session under ONE directory, `.dsh/.state/contracts/<key>.tsv`, because the frozen-paths
+# grammar has no `*` glob (a row is a path, a `dir/` or a `prefix/**`): the seed freezes
+# `.dsh/.state/contracts/**`, so no agent tool may rewrite a snapshot (a silent pass) or delete it (the
+# guard downgraded to a note). The hooks write it directly, which the freeze does not govern.
+dsh_contract_file() { printf '%s\n' "$(state_dir)/contracts/$(dsh_state_key "${1:-}").tsv"; }
+
+# dsh_contracts_tsv <json-file>: one `<uri>\t<key>\t<kind>\t<index>\t<shape>\t<text>` row per clause of a
+# contract_clauses answer (kind requires|ensuring|decreases; index = position within `requires`, 0 for
+# the others; tabs/newlines/CRs in any field become spaces). Exit 1 when the answer is not JSON, 2 when
+# neither jq nor python3 is on PATH. A null field is printed empty rather than failing the whole read.
+dsh_contracts_tsv() {
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '.files[]? | .uri as $u | .defs[]? | .key as $k |
+      ((.requires // []) | to_entries[] | [$u,$k,"requires",(.key|tostring),.value.shape,.value.text]),
+      (if .ensuring then [$u,$k,"ensuring","0",.ensuring.shape,.ensuring.text] else empty end),
+      (if .decreases then [$u,$k,"decreases","0",.decreases.shape,.decreases.text] else empty end)
+      | map((. // "") | tostring | gsub("[\t\n\r]";" ")) | @tsv' "$1" 2>/dev/null || return 1
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 - "$1" 2>/dev/null <<'CONTRACTPY' || return 1
+import sys, json, re
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+def c(v):
+    return re.sub(r"[\t\n\r]", " ", "" if v is None else str(v))
+for f in (d.get("files") or []) if isinstance(d, dict) else []:
+    u = f.get("uri")
+    for df in f.get("defs") or []:
+        k = df.get("key")
+        rows = [[u, k, "requires", str(i), r.get("shape"), r.get("text")] for i, r in enumerate(df.get("requires") or [])]
+        for kind in ("ensuring", "decreases"):
+            cl = df.get(kind)
+            if cl:
+                rows.append([u, k, kind, "0", cl.get("shape"), cl.get("text")])
+        for r in rows:
+            print("\t".join(c(x) for x in r))
+CONTRACTPY
+  else
+    return 2
+  fi
+  return 0
+}
+
+# dsh_contracts_unread <json-file> <uris-file>: `<uri>\t<reason>` for every uri listed in <uris-file> the
+# answer does not cover — no entry at all, or an entry carrying an `error` (a file that does not parse).
+# Such a file has no rows in `dsh_contracts_tsv`, and reading that as "no contracts" would make a
+# snapshot compare as "every contract is new" and a turn-end read as "every contract was removed".
+# Exit codes as `dsh_contracts_tsv`.
+dsh_contracts_unread() {
+  _cu_raw=$(mktemp "${TMPDIR:-/tmp}/dsh-cu.XXXXXX") || return 1
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '.files[]? | [(.uri // "" | tostring), ((.error // "") | tostring | gsub("[\t\n\r]";" "))] | @tsv' "$1" > "$_cu_raw" 2>/dev/null \
+      || { rm -f "$_cu_raw"; return 1; }
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 - "$1" > "$_cu_raw" 2>/dev/null <<'UNREADPY' || { rm -f "$_cu_raw"; return 1; }
+import sys, json, re
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+for f in (d.get("files") or []) if isinstance(d, dict) else []:
+    print("%s\t%s" % (f.get("uri") or "", re.sub(r"[\t\n\r]", " ", str(f.get("error") or ""))))
+UNREADPY
+  else
+    rm -f "$_cu_raw"
+    return 2
+  fi
+  awk -F'\t' -v OFS='\t' -v req="$2" '
+    FILENAME == req { if ($0 != "") { want[$0] = 1; order[++n] = $0 }; next }
+    { seen[$1] = 1; if ($2 != "") err[$1] = $2 }
+    END {
+      for (i = 1; i <= n; i++) {
+        u = order[i]
+        if (!(u in seen)) print u, "no entry in the answer"
+        else if (u in err) print u, err[u]
+      }
+    }' "$2" "$_cu_raw"
+  rm -f "$_cu_raw"
+  return 0
+}
+
+# dsh_contract_call <root> <uris-file> <out-json>: ask the launcher's one-shot `contract_clauses` for
+# the listed root-relative files, bounded to 30 s (dsh_bounded_probe: `timeout` is absent on stock
+# macOS). Return 0 with the answer in <out-json>, or 1 with the reason in `dsh_contract_reason`.
+dsh_contract_call() {
+  dsh_contract_reason=''
+  _cc_l=$(dsh_semantic_launcher)
+  if [ ! -f "$_cc_l" ]; then
+    dsh_contract_reason="no scalasemantic-mcp launcher at $_cc_l"
+    return 1
+  fi
+  _cc_req=$(awk '
+    function jesc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return s }
+    $0 != "" { printf "%s{\"uri\":\"%s\"}", (n++ ? "," : ""), jesc($0) }
+    END { }' "$2")
+  _cc_req="{\"files\":[$_cc_req]}"
+  _cc_err="$3.err"
+  if ! dsh_bounded_probe 30 "$3" "$_cc_err" "$_cc_l" call contract_clauses "$_cc_req" "$1"; then
+    dsh_contract_reason="$_cc_l call contract_clauses did not answer within 30 s and was killed"
+    rm -f "$_cc_err"
+    return 1
+  fi
+  if ! grep -q '"files"' "$3" 2>/dev/null; then
+    # The launcher's reason sits beneath the JVM's own `WARNING: … sun.misc.Unsafe` lines (verify-diff).
+    _cc_why=$(grep -v '^WARNING:' "$_cc_err" 2>/dev/null)
+    [ -n "$_cc_why" ] || _cc_why='(no answer and no reason beyond JVM warnings)'
+    dsh_contract_reason="$_cc_l call contract_clauses gave no answer — $(bound_lines "$_cc_why" 3)"
+    rm -f "$_cc_err"
+    return 1
+  fi
+  rm -f "$_cc_err"
+  return 0
+}
+
+# dsh_contract_diff <before.tsv> <after.tsv> <uris-file>: compare two `dsh_contracts_tsv` tables, keyed by
+# uri+key+kind+index, for the uris listed in <uris-file> only. Prints, in <before> order,
+#   changed TAB <uri> TAB <key> TAB <kind> TAB <old text> TAB <new text>   (the clause's shape differs)
+#   removed TAB <uri> TAB <key> TAB <kind> TAB <old text>                  (the clause is gone)
+#   unreadable TAB <uri> TAB <key> TAB <kind>                             (either side has neither shape nor text)
+# then, in <after> order,
+#   added TAB <uri> TAB <key> TAB <kind> TAB <text>                        (a clause new to a def the snapshot had)
+# A row only in <after> whose uri+key the snapshot has (a new `requires`/`ensuring`/`decreases` kind, or a
+# `requires` appended after the existing ones) is `added`: adding a precondition is how a counterexample is
+# made to vanish (final review F1). A row only in <after> for a def the snapshot never saw is ignored: a new
+# def with a contract (a lemma) is allowed. A def with no clause at all is not in `contract_clauses`' answer,
+# so one gaining its first `require` reads as a new def. `#` lines are skipped.
+# When either side's shape is empty the TEXT is compared instead: two empty shapes would otherwise
+# compare equal and hide any edit (fix round 1). A clause with neither is unreadable, never "same".
+dsh_contract_diff() {
+  awk -F'\t' -v OFS='\t' -v uf="$3" -v bf="$1" '
+    FILENAME == uf { if ($0 != "") want[$0] = 1; next }
+    /^#/ { next }
+    FILENAME == bf {
+      if (!($1 in want)) next
+      k = $1 SUBSEP $2 SUBSEP $3 SUBSEP $4
+      if (k in bs) next
+      bs[k] = $5; bt[k] = $6; bu[k] = $1; bk[k] = $2; bn[k] = $3; order[++n] = k; bdef[$1 SUBSEP $2] = 1
+      next
+    }
+    {
+      k = $1 SUBSEP $2 SUBSEP $3 SUBSEP $4
+      if (!(k in seen) && !(k in bs) && (($1 SUBSEP $2) in bdef)) { add[++na] = "added" OFS $1 OFS $2 OFS $3 OFS $6 }
+      as[k] = $5; at[k] = $6; seen[k] = 1
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        k = order[i]
+        if (bs[k] == "" && bt[k] == "") print "unreadable", bu[k], bk[k], bn[k]
+        else if (!(k in seen)) print "removed", bu[k], bk[k], bn[k], bt[k]
+        else if (as[k] == "" && at[k] == "") print "unreadable", bu[k], bk[k], bn[k]
+        else if (bs[k] == "" || as[k] == "") { if (at[k] != bt[k]) print "changed", bu[k], bk[k], bn[k], bt[k], at[k] }
+        else if (as[k] != bs[k]) print "changed", bu[k], bk[k], bn[k], bt[k], at[k]
+      }
+      for (i = 1; i <= na; i++) print add[i]
+    }' "$3" "$1" "$2"
+}
+
+# --- verification escapes (final review F3) ---------------------------------------------------------
+# `assume(`, `@extern` and `@ignore` make Stainless accept a body without proving it, with every clause left
+# untouched — so the contract guard cannot see them. SessionStart records each registered kernel's count
+# as `# escapes <uri> <n>` in the contract snapshot; the turn-end stage blocks a touched kernel whose count
+# went up. A line whose first non-blank characters are `//` or `*` is a comment and is not counted; a
+# `/* … */` on one line is (the rule is the spelling, not the parse). Several markers on one line count once.
+dsh_escape_lines() { # <file>: `<n>:<line>` per counted line
+  [ -f "$1" ] || return 0
+  LC_ALL=C awk '/^[[:space:]]*(\/\/|\*)/ { next } /assume\(|@extern|@ignore/ { print NR ":" $0 }' "$1" 2>/dev/null
+  return 0
+}
+dsh_escape_count() { # <file>: the number of counted lines (0 for a missing file)
+  _ec=$(dsh_escape_lines "$1" | wc -l | tr -d ' ')
+  printf '%s\n' "${_ec:-0}"
+}
+# dsh_snapshot_escapes <snapshot> <uri>: the count recorded for <uri>, exit 1 (nothing printed) when the
+# record has no `# escapes` line for it (a record from an engine older than the count).
+dsh_snapshot_escapes() {
+  awk -v u="$2" '
+    /^# escapes / {
+      n = $NF; p = $0; sub(/^# escapes /, "", p); sub(/ [^ ]*$/, "", p)
+      if (p == u && n ~ /^[0-9]+$/) { print n; found = 1; exit }
+    }
+    END { exit found ? 0 : 1 }' "$1" 2>/dev/null
+}
+
+# dsh_decimal <value> <default>: <value> as a decimal for `$(( ))` — leading zeros stripped (a lone `0`
+# kept), because shell arithmetic reads `08` as a bad octal number and the hook dies on it — or <default>
+# when <value> is empty or not all digits.
+dsh_decimal() {
+  case "$1" in
+    ''|*[!0-9]*) printf '%s\n' "$2" ;;
+    *) _dd=$(printf '%s' "$1" | sed 's/^0*//'); printf '%s\n' "${_dd:-0}" ;;
+  esac
+}
+
+# The capture as the parser reads it: CR -> newline, ANSI colour stripped. LC_ALL=C because the tool's
+# summary table is drawn with UTF-8 box characters and a locale-aware awk/sed may refuse a byte it does
+# not like; every pattern here is ASCII (or matches the UTF-8 bytes literally).
+_dsh_stainless_clean() {
+  LC_ALL=C tr '\r' '\n' < "$1" 2>/dev/null | LC_ALL=C awk '{ gsub(/\033\[[0-9;]*[A-Za-z]/, ""); print }'
+}
+
+# dsh_stainless_report <output-file>: the invalid verification conditions, one headline each
+# (`INVALID <file>:<line>:<col>: '<vc kind>' VC for <function>`) with its counterexample bindings under it,
+# bounded to `max_lines` - 2 lines (and each line to 240 characters: a counterexample can be a whole data
+# structure), then `unknown <N>` — N from the summary line, else the count of TIMEOUT/UNKNOWN detail
+# lines. Colour-free. Exit 0.
+dsh_stainless_report() {
+  _sr_clean=$(_dsh_stainless_clean "$1")
+  _sr_inv=$(printf '%s\n' "$_sr_clean" | LC_ALL=C awk -v maxb=240 '
+    function cut(s) { return length(s) > maxb ? substr(s, 1, maxb) " …" : s }
+    /^\[Warning \]  - Result for / {
+      head = $0; sub(/^\[Warning \]  - Result for /, "", head); sub(/:[[:space:]]*$/, "", head)
+      sub(/ @[0-9]+:[0-9]+$/, "", head); inv = 0; ce = 0; next
+    }
+    /^\[Warning \] .*:[0-9]+:[0-9]+:  => INVALID[[:space:]]*$/ {
+      loc = $0; sub(/^\[Warning \] /, "", loc); sub(/:  => INVALID[[:space:]]*$/, "", loc)
+      print cut("INVALID " loc ": " head); inv = 1; next
+    }
+    inv && /^\[Warning \] Found counter-example:/ { ce = 1; print "  counterexample:"; next }
+    ce && /^\[Warning \]   [^:]+: .* -> / { b = $0; sub(/^\[Warning \]   /, "", b); print cut("    " b); next }
+    { ce = 0 }')
+  _sr_max=$(( ${max_lines:-15} - 2 ))
+  [ "$_sr_max" -gt 0 ] || _sr_max=1
+  [ -n "$_sr_inv" ] && bound_lines "$_sr_inv" "$_sr_max"
+  _sr_unk=$(printf '%s\n' "$_sr_clean" | LC_ALL=C sed -nE 's/.*total:[[:space:]]+[0-9]+[[:space:]]+valid:.*unknown:[[:space:]]+([0-9]+).*/\1/p' | head -n 1)
+  if [ -z "$_sr_unk" ]; then
+    _sr_unk=$(printf '%s\n' "$_sr_clean" | LC_ALL=C grep -Ec ':[0-9]+:[0-9]+:  => (TIMEOUT|UNKNOWN)[[:space:]]*$')
+  fi
+  printf 'unknown %s\n' "${_sr_unk:-0}"
+  return 0
+}
+
+# dsh_stainless_unknowns <output-file>: one line per VC the solver could not decide, from the summary
+# table (`<file>:<line>:<col>  <function>  <vc kind>  (timeout|unknown)`), else from the detail lines.
+dsh_stainless_unknowns() {
+  _su_clean=$(_dsh_stainless_clean "$1")
+  _su=$(printf '%s\n' "$_su_clean" | LC_ALL=C sed -nE 's/^\[  Info  \] [^ ]+ ([^ ]+:[0-9]+:[0-9]+):[[:space:]]+([^ ]+)[[:space:]]+(.*[^ ])[[:space:]][[:space:]]+(timeout|unknown)[[:space:]].*/\1  \2  \3  (\4)/p')
+  if [ -z "$_su" ]; then
+    _su=$(printf '%s\n' "$_su_clean" | LC_ALL=C sed -nE 's/^\[Warning \] (.*:[0-9]+:[0-9]+):  => (TIMEOUT|UNKNOWN)[[:space:]]*$/\1  (\2)/p')
+  fi
+  [ -n "$_su" ] && printf '%s\n' "$_su"
+  return 0
+}
+
+# dsh_stainless_errors <output-file>: Stainless's own error records (`[ Error  ] …`, colour-free) with the
+# source-context lines printed under them, minus the closing `Stainless terminated with an error.`.
+dsh_stainless_errors() {
+  _dsh_stainless_clean "$1" | LC_ALL=C awk '
+    /^\[ Error  \] Stainless terminated with an error\./ { ctx = 0; next }
+    /^\[ Error  \] / { print; ctx = 1; next }
+    ctx && /^[[:space:]]/ { print; next }
+    { ctx = 0 }'
+}
+
+# dsh_stainless_verdict <output-file> <mill exit> [<targets, comma-separated>]: `<class>\t<reason>` where class is
+#   invalid  the script's FAILED marker, or a summary with invalid > 0
+#   setup    the script's SETUP marker or usage line (reason = its text); the OK marker with a non-zero
+#            Mill exit; or no marker at all (a module without StainlessModule, a Mill error) — reason =
+#            the first error line Mill printed, else its last line
+#   missing  the OK marker, but the pipeline summary names `missing implementations` (a typed `???`
+#            body: Stainless treats it as an unconstrained choose and the postcondition "verifies")
+#   ok       the OK marker and none of the above
+#   rejected what would be `setup`, but Stainless's own `[ Error  ] <file>:<l>:<c>: …` record names one of
+#            <targets> (as given, or as the tail of an absolute path): the tool could not compile or
+#            extract a kernel — the body left the supported subset, which is the agent's to fix, not a
+#            setup failure to walk past (fix round 1). reason = `<target>:<line>` of the first such record.
+dsh_stainless_verdict() {
+  _sv=$(_dsh_stainless_clean "$1")
+  _sv_rej=''
+  if [ -n "${3:-}" ]; then
+    _sv_rej=$(printf '%s\n' "$_sv" | LC_ALL=C awk -v tg="$3" '
+      BEGIN { n = split(tg, t, ",") }
+      /^\[ Error  \] .*:[0-9]+:[0-9]+: / {
+        s = $0; sub(/^\[ Error  \] /, "", s)
+        if (!match(s, /:[0-9]+:[0-9]+: /)) next
+        p = substr(s, 1, RSTART - 1); rest = substr(s, RSTART + 1); split(rest, lc, ":")
+        for (i = 1; i <= n; i++) {
+          if (t[i] == "") continue
+          if (p == t[i] || (length(p) > length(t[i]) && substr(p, length(p) - length(t[i])) == "/" t[i])) { print t[i] ":" lc[1]; exit }
+        }
+      }')
+  fi
+  _sv_nl='
+'
+  if printf '%s\n' "$_sv" | LC_ALL=C grep -Eq '^stainless-verify: FAILED — [0-9]+ invalid' \
+     || printf '%s\n' "$_sv" | LC_ALL=C grep -Eq 'total:[[:space:]]+[0-9]+[[:space:]]+valid:.*invalid:[[:space:]]+[1-9][0-9]*[[:space:]]'; then
+    printf 'invalid\t\n'; return 0
+  fi
+  _sv_r=$(printf '%s\n' "$_sv" | LC_ALL=C sed -n 's/^stainless-verify: SETUP — //p' | head -n 1)
+  if [ -n "$_sv_rej" ] && ! printf '%s\n' "$_sv" | LC_ALL=C grep -q '^stainless-verify: OK — '; then
+    printf 'rejected\t%s\n' "$_sv_rej"; return 0
+  fi
+  if [ -n "$_sv_r" ]; then printf 'setup\t%s\n' "$_sv_r"; return 0; fi
+  if printf '%s\n' "$_sv" | LC_ALL=C grep -q '^usage: stainless-verify'; then
+    printf 'setup\tthe verify script was run without a target (%s)\n' "$(printf '%s\n' "$_sv" | LC_ALL=C grep -m 1 '^usage: stainless-verify')"
+    return 0
+  fi
+  if printf '%s\n' "$_sv" | LC_ALL=C grep -q '^stainless-verify: OK — '; then
+    if [ "${2:-0}" != 0 ]; then
+      printf 'setup\tMill exited %s after scripts/stainless-verify.sh reported OK\n' "$2"; return 0
+    fi
+    if printf '%s\n' "$_sv" | LC_ALL=C awk '/Verification pipeline summary:/ { p = 1; next } p && /missing implementations/ { f = 1 } END { exit !f }'; then
+      printf 'missing\t\n'; return 0
+    fi
+    printf 'ok\t\n'; return 0
+  fi
+  _sv_r=$(printf '%s\n' "$_sv" | LC_ALL=C grep -m 1 -E '\[error\]|[Ee]rror' | cut -c1-240)
+  [ -n "$_sv_r" ] || _sv_r=$(printf '%s\n' "$_sv" | LC_ALL=C awk 'NF { l = $0 } END { print substr(l, 1, 240) }')
+  [ -n "$_sv_r" ] || _sv_r='(Mill printed nothing)'
+  printf 'setup\tno verdict line from scripts/stainless-verify.sh (Mill exit %s): %s\n' "${2:-?}" "$_sv_r"
+  return 0
+}
+
 # --- semantic-index coverage, per file (F72; corrected in the fix round) -------------------------
 # The semantic guard has to answer one question about one file -- does the SemanticDB index cover
 # it? -- and the index answers it by construction: Mill and sbt name each index file after the
@@ -2341,6 +2820,15 @@ dsh_instruction_checks() {
 # there. Returns 124 when it had to be killed, else 0 -- the command's own status is not what a probe
 # asks, its output is. The launcher probes below use it, so a wedged launcher can never hang
 # dsh_verify_checks, and with it lib-test.sh and check-harness.sh.
+# _dsh_kill_tree <pid>: kill <pid> and its descendants, deepest first (`pgrep -P`, when there is one).
+# A wrapper script (./mill, the launcher) runs its JVM as a CHILD; killing only the wrapper left that
+# child running past the cap. Without pgrep only <pid> itself is killed, as before.
+_dsh_kill_tree() {
+  for _kt_c in $(pgrep -P "$1" 2>/dev/null); do _dsh_kill_tree "$_kt_c"; done
+  kill "$1" 2>/dev/null
+  return 0
+}
+
 dsh_bounded_probe() {
   _bp_secs=$1; _bp_out=$2; _bp_err=$3
   shift 3
@@ -2355,7 +2843,7 @@ dsh_bounded_probe() {
   _bp_rc=0
   if kill -0 "$_bp_pid" 2>/dev/null; then
     _bp_rc=124
-    kill "$_bp_pid" 2>/dev/null
+    _dsh_kill_tree "$_bp_pid"
   fi
   wait "$_bp_pid" 2>/dev/null
   return "$_bp_rc"

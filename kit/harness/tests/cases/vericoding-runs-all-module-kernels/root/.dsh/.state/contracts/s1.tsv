@@ -1,0 +1,5 @@
+# DSH contract snapshot s1 2026-09-27T00:00:00Z
+# file core/src/K.scala
+core/src/K.scala	K.f	requires	0	aaaa1111	require(x >= 0)
+core/src/K.scala	K.f	ensuring	0	bbbb2222	r => r > x
+# file core/src/L.scala

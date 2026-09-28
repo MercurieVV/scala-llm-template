@@ -13,6 +13,26 @@ printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
 # The stub enforces the same, so a positional caller fails here as it would for real instead of a
 # fixture passing on an invocation the real build refuses. Every other call — `moduleMap`,
 # `MILL_STUB_EXIT` — behaves exactly as before.
+# `<module>.stainlessVerify` (spec 2026-09-27 §3) prints the file MILL_STUB_STAINLESS_OUT names (a real
+# capture from kit/recipes/mill/stainless-feasibility.md, or a case's own) and exits
+# MILL_STUB_STAINLESS_EXIT (default 0) -- `./mill` exits 1 for the script's exit 1 AND 2, so a case sets
+# 1 for both and the output's marker lines tell them apart, as they do for real. Like fixRanges it
+# requires the NAMED argument `--targets <files>`: Mill 1.1.8 rejects a positional one. The gate's `--no-server`
+# (a Mill global option, before the task) is accepted and recorded like any other argument.
+case "$*" in
+  *.stainlessVerify*)
+    case " $* " in
+      *" --targets "?*) ;;
+      *) printf '[error] stub mill: stainlessVerify needs --targets <files> (real Mill rejects a positional argument): %s\n' "$*" >&2
+         exit 97 ;;
+    esac
+    # MILL_STUB_STAINLESS_SLEEP: seconds to sleep first -- a Stainless run that outlives the gate's cap.
+    if [ -n "${MILL_STUB_STAINLESS_SLEEP:-}" ]; then sleep "$MILL_STUB_STAINLESS_SLEEP"; fi
+    if [ -n "${MILL_STUB_STAINLESS_OUT:-}" ] && [ -f "$MILL_STUB_STAINLESS_OUT" ]; then
+      cat "$MILL_STUB_STAINLESS_OUT"
+    fi
+    exit "${MILL_STUB_STAINLESS_EXIT:-0}" ;;
+esac
 case "$*" in
   *.fixRanges*)
     case " $* " in

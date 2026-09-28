@@ -1,7 +1,7 @@
 # Applying the kit to a project
 
 The procedure a human or an agent follows to bring a project nobody prepared under the kit: the `AllowedShape` rule
-and its build wiring (L2), and the five process skills with the `AGENTS.md` digest (L3/L5). The authority is the
+and its build wiring (L2), and the six process skills with the `AGENTS.md` digest (L3/L5). The authority is the
 design's §*The procedure: applying the kit to a project*; this document states that procedure against the artifacts
 as they are — the installer (`Setup.scala`'s `kit` feature), the recipes in `kit/recipes/`, the skills in
 `kit/skills/`, and the rule's own README — and says where each step's output and stop condition go.
@@ -15,7 +15,7 @@ map and the source roots — and holds for a project without that harness too (s
 ## Before step 1
 
 - **A local checkout of `scala-llm-template`.** The `kit` feature reads the rule, the recipes' code blocks, the
-  enforcement README and the five skills from the checkout's `kit/` directory at run time, so the remote one-liner
+  enforcement README and the six skills from the checkout's `kit/` directory at run time, so the remote one-liner
   that fetches `Setup.scala` alone cannot install them — it fails with that reason. Every command below runs
   from that checkout. And the run's exit status is not the verdict: the pre-existing agent-mode machinery ends
   every run with `=== Setup Completed Successfully! ===` and exit 0 even when a step reported `failed`, so read
@@ -72,7 +72,7 @@ What the install writes — the **shared** half only:
 | **sbt** | `scalafix-rules/src/main/scala/AllowedShape.scala` and `scalafix-rules/src/main/resources/META-INF/services/scalafix.v1.Rule`; the plugin line in `project/plugins.sbt`; a marked block in `build.sbt` (SemanticDB, the rule project, the per-module opt-in **commented**) |
 | **scala-cli** | `.kit/arhitecture-shape/` — the rule, its registration, the enforcement README, `check.sh` and its fixtures — and `allowed-shape.sh` |
 
-Then, for every tool: `.kit/arhitecture-shape/README.md` (the enforcement README the digest points at), the five
+Then, for every tool: `.kit/arhitecture-shape/README.md` (the enforcement README the digest points at), the six
 skills byte-for-byte under `.dsh/skills/<name>/SKILL.md`, and the digest planted between
 `<!-- reengineering-kit:begin -->` and `<!-- reengineering-kit:end -->` in `AGENTS.md` (created when the project has
 none) and, where they exist, `.agents/AGENTS.md` and `scala-rules.md`.
@@ -120,7 +120,10 @@ sh kit/harness/install.sh <target-dir>
   <target-dir>` first.
 - It replaces `.dsh/engine/` wholesale, writes `.dsh/engine/STAMP`, and seeds `.dsh/contract`, `frozen-paths`,
   `hooks.json`, `cc-settings.json`, `policy/*.tsv` and `instructions/{local,scalac-kinds}.tsv` **only where
-  absent** — one `seeded` / `kept` / `replaced` line per file. Exit codes are in the README.
+  absent** — one `seeded` / `kept` / `replaced` line per file. Exit codes are in the README. So **a re-vendored
+  project adds the new frozen-paths rows by hand (install.sh never overwrites frozen-paths)**: compare
+  `.dsh/frozen-paths` with `kit/harness/seed/frozen-paths` after an update; check-harness FAILs the missing ones it
+  knows (with kernels registered: `.dsh/.state/contracts/**`).
 - **The Claude Code wiring is the human's step.** `.claude/settings.json` is copied from `.dsh/cc-settings.json`
   by the human (merging anything already there); no installer and no agent writes it.
 - **Add recipe §7's root tasks.** Copy `kit/recipes/mill/Gate.mill` to `buildKit/Gate.mill`, mix `GateLayer`
@@ -129,6 +132,10 @@ sh kit/harness/install.sh <target-dir>
   `moduleMap`, `<module>.fixRanges`, `<module>.fixStrict` and `<module>.compile` by name, and fail by name without
   them; `preCommit`, `prePush` and `scalaSemanticWriteClasspath` are the project's declared gate tasks, run by a
   human, a git hook or the contract — no hook runs them.
+- **Kernels (optional).** To verify a kernel, follow recipe §8 and register the file in `.dsh/policy/kernels.tsv`
+  (the human's: frozen, root-relative paths). The gate then guards the file's `require`/`ensuring`/`decreases`
+  and runs `<module>.stainlessVerify` on it at turn-end; the agent follows the `vericoding` skill. The engine
+  README's "Vericoding" section has the rules.
 
 **Stop condition:** `sh .dsh/engine/check-harness.sh --project .` reports
 `ok   vendored engine matches its STAMP`, every other FAIL it prints is written into step 3's baseline with its

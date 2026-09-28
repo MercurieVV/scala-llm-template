@@ -1,0 +1,12 @@
+#!/bin/sh
+# A snapshot that could not be taken is still RECORDED as incomplete -- a header naming the reason and
+# no `# file` line -- so the guard reads "cannot compare" for every kernel, and a later deletion of the
+# record is distinguishable from "never taken".
+f=.dsh/.state/contracts/s1.tsv
+[ -f "$f" ] || { echo "no snapshot record"; exit 1; }
+head -n 1 "$f" | grep -q 'incomplete: no scalasemantic-mcp launcher at /nonexistent' || { echo "header does not say incomplete:"; cat "$f"; exit 1; }
+if grep -q '^# file ' "$f"; then echo "an incomplete record claims coverage:"; cat "$f"; exit 1; fi
+if grep -qv '^#' "$f"; then echo "an incomplete record has rows:"; cat "$f"; exit 1; fi
+# Final review F3: the escape count needs no launcher, so even an incomplete record carries it.
+grep -qx "# escapes core/src/K.scala 0" "$f" || { echo "no escapes line in the incomplete record"; cat "$f"; exit 1; }
+echo "incomplete record, no coverage"

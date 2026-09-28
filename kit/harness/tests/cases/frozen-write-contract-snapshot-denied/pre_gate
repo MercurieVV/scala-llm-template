@@ -1,0 +1,4 @@
+#!/bin/sh
+# The project's frozen list is the SEED's, verbatim: the row under test is the one every install ships.
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+cp "$engine/seed/frozen-paths" .dsh/frozen-paths

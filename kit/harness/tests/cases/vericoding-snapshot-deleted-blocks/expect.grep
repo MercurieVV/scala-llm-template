@@ -1,0 +1,4 @@
+vericoding: contract snapshot missing
+the gate cannot tell whether a require/ensuring/decreases changed
+git diff -- core/src/K.scala
+a new session snapshots the current contracts as yours

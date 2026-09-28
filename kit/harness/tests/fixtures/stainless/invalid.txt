@@ -1,0 +1,40 @@
+stainless-verify: verifying core/src/Invalid.scala (timeout 10s/VC)
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/Users/viktorskalinins/.cache/scalasemantic/stainless/0.9.9.3-mac-arm64/lib/stainless-dotty-standalone-0.9.9.3.jar)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[[34m  Info  [0m] Compiling with standard Scala 3.7.2 compiler front end...[[34m  Info  [0m] Finished compiling                                       
+[[34m  Info  [0m] Preprocessing the symbols...                             [[34m  Info  [0m] Preprocessing finished                                   
+[[34m  Info  [0m] Running phase ConstructsUsage                            [[34m  Info  [0m] Running phase PartialFunctions                           [[34m  Info  [0m] Running phase XlangLowering                              [[34m  Info  [0m] Running phase InnerClasses                               [[34m  Info  [0m] Running phase Laws                                       [[34m  Info  [0m] Running phase SuperInvariants                            [[34m  Info  [0m] Running phase SuperCalls                                 [[34m  Info  [0m] Running phase Sealing                                    [[34m  Info  [0m] Running phase MethodLifting                              [[34m  Info  [0m] Running phase MergeInvariants                            [[34m  Info  [0m] Running phase FieldAccessors                             [[34m  Info  [0m] Running phase ValueClasses                               [[34m  Info  [0m] Running phase MethodsLowering                            [[34m  Info  [0m] Running phase ExceptionLifting                           [[34m  Info  [0m] Running phase EffectElaboration                          [[34m  Info  [0m] Running phase AntiAliasing                               [[34m  Info  [0m] Running phase ReturnElimination                          [[34m  Info  [0m] Running phase ImperativeCodeElimination                  [[34m  Info  [0m] Running phase ImperativeCleanup                          [[34m  Info  [0m] Running phase AdtSpecialization                          [[34m  Info  [0m] Running phase RefinementLifting                          [[34m  Info  [0m] Running phase TypeEncoding                               [[34m  Info  [0m] Running phase InvariantInitialization                    [[34m  Info  [0m] Running phase FunctionClosure                            [[34m  Info  [0m] Running phase FunctionSpecialization                     [[34m  Info  [0m] Running phase UnfoldOpaque                               [[34m  Info  [0m] Running phase CallSiteInline                             [[34m  Info  [0m] Running phase ChooseInjector                             [[34m  Info  [0m] Running phase ChooseEncoder                              [[34m  Info  [0m] Running phase FunctionInlining                           [[34m  Info  [0m] Running phase TraceInductElimination                     [[34m  Info  [0m] Running phase SizedADTExtraction                         [[34m  Info  [0m] Running phase InductElimination                          [[34m  Info  [0m] Running phase MeasureInference                           [[34m  Info  [0m] Running phase PartialEvaluation                          [[34m  Info  [0m] Finished lowering the symbols                            
+[[34m  Info  [0m] Generating VCs for 1 function...                         [[34m  Info  [0m] Finished generating VCs                                  
+[[34m  Info  [0m] Starting verification...
+[[34m  Info  [0m]  Verified: 0 / 1
+[[33mWarning [0m] The Z3 native interface is not available. Falling back onto smt-z3.
+[[33mWarning [0m]  - Result for 'postcondition' VC for inc @3:22:
+[[33mWarning [0m] x < BigInt("0") || x + BigInt("1") < x
+[[33mWarning [0m] core/src/Invalid.scala:3:22:  => INVALID
+           object Invalid { def inc(x: BigInt): BigInt = { require(x >= 0); x + 1 } ensuring (r => r < x) }
+                                [31m^[0m
+[[33mWarning [0m] Found counter-example:
+[[33mWarning [0m]   x: BigInt -> BigInt("0")
+[[34m  Info  [0m]  Verified: 0 / 1
+[[34m  Info  [0m] Done in 0.92s
+[[34m  Info  [0m]   ┌───────────────────┐
+[[34m  Info  [0m] ╔═╡ [31mstainless summary[0m ╞═════════════════════════════════════════════════════════════════════════════════╗
+[[34m  Info  [0m] ║ └───────────────────┘                                                                                 ║
+[[34m  Info  [0m] ║ [31mcore/src/Invalid.scala:3:22: [0m               [31minc[0m    [31mpostcondition[0m        [31minvalid[0m     [31mU:smt-z3[0m     [31m0.1[0m  ║
+[[34m  Info  [0m] ╟┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╢
+[[34m  Info  [0m] ║ [31mtotal: 1    valid: 0    (0 from cache, 0 trivial) invalid: 1    unknown: 0    time:    0.08[0m           ║
+[[34m  Info  [0m] ╚═══════════════════════════════════════════════════════════════════════════════════════════════════════╝
+[[34m  Info  [0m] Verification pipeline summary:
+[[34m  Info  [0m]   cache, nativez3, non-batched
+[[34m  Info  [0m] Shutting down executor service.
+stainless-verify: summary -> [  Info  ] ║ total: 1    valid: 0    (0 from cache, 0 trivial) invalid: 1    unknown: 0    time:    0.08           ║
+stainless-verify: FAILED — 1 invalid verification condition(s)
+[error] core.stainlessVerify
+java.lang.RuntimeException: stainlessVerify failed (exit 1)
+  scala.sys.package$.error(package.scala:28)
+  build_.buildKit.Stainless_$.build_$buildKit$Stainless_$StainlessModule$$_$stainlessVerify$$anonfun$1(Stainless.mill:21)
+  mill.api.Task$Named.evaluate(Task.scala:443)
+  mill.api.Task$Named.evaluate$(Task.scala:428)
+  mill.api.Task$Command.evaluate(Task.scala:525)

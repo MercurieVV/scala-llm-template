@@ -1,0 +1,6 @@
+#!/bin/sh
+# The stage runs after turnEndTests (final review F2): a module whose turnEndTests blocked is not handed
+# to Stainless, nor to the contract guard -- the Stop budget is not spent on a module already red.
+if grep -q stainlessVerify mill.log; then echo "stainlessVerify ran"; cat mill.log; exit 1; fi
+if grep -q 'call contract_clauses' semantic.log 2>/dev/null; then echo "contract_clauses was called"; exit 1; fi
+echo "no stainlessVerify for a module whose turnEndTests blocked"

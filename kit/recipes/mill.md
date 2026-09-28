@@ -369,6 +369,64 @@ cyclic reference through Mill's sibling-file wrappers. skreeep2 imports it as `i
 — Mill's generated wrapper name, which is brittle across Mill upgrades, but fails loudly (a compile error in the
 build) if Mill renames it, never silently.
 
+## 8. Stainless (vericoding)
+
+For a module whose pure kernels are verified in place: the human writes `require`/`ensuring`, the body is filled until
+[Stainless](https://github.com/epfl-lara/stainless) accepts it. There is no Mill plugin; the wiring is an unmanaged jar
+and a command that shells out to the standalone tool (0.9.9.3, which bundles its own z3/cvc5).
+
+1. Copy `kit/recipes/mill/Stainless.mill` to `buildKit/Stainless.mill`, and `kit/recipes/mill/stainless-verify.sh` to
+   `scripts/stainless-verify.sh`, and freeze both — an agent that may edit the verify script can make it print OK,
+   and check-harness FAILs either one unfrozen once a kernel is registered. Add to `.dsh/frozen-paths`:
+
+   ```
+   scripts/stainless-verify.sh	the Stainless wiring is the human's: an agent that may edit it can turn verification off
+   buildKit/Stainless.mill	the Stainless wiring is the human's: an agent that may edit it can turn verification off
+   ```
+
+2. Put `stainless-library.jar` at `<module>/lib/stainless-library.jar` — the `lib/stainless-library.jar` of the
+   standalone distribution (`stainless-dotty-standalone-0.9.9.3-<platform>.zip`; for 0.9.9.3, sha256
+   `e1d309c7087bd8b4ba48e4d40fd007212340c61db2d09058fccb5bed8380e2c5`). A kernel imports `stainless.lang.*`, so the
+   jar is on the module's compile and run classpath, not only the tool's.
+3. Mix `StainlessModule` into the kernel's module:
+
+   ```scala
+   import build.buildKit.StainlessModule
+
+   object core extends ScalaModule with StainlessModule { def scalaVersion = "3.8.4" }
+   ```
+
+4. Register each kernel file in `.dsh/policy/kernels.tsv` (`<file> TAB <module> TAB <reason>`, root-relative path) —
+   the gate verifies a kernel when a turn touches it.
+5. Add the check to §7's `prePush`, naming the kernel files (comma-separated, as on the command line):
+   `core.stainlessVerify("core/src/…/PureKernels.scala")()`.
+6. Git-ignore `.stainless-cache/` — Stainless writes its VC cache in the working directory (the repo root).
+
+Run it (flag form — Mill 1.1.8 rejects positional command args):
+
+```sh
+./mill core.stainlessVerify --targets core/src/a/PureKernels.scala,core/src/b/Other.scala
+```
+
+| Script exit | Meaning | Marker line (the script's own) |
+|---|---|---|
+| 0 | no `invalid` VC; `unknown` (solver timeout) tolerated | `stainless-verify: OK — …` |
+| 1 | at least one `invalid` VC — a counterexample is printed | `stainless-verify: FAILED — <n> invalid verification condition(s)` |
+| 2 | setup failure: no target, missing file, download/unzip/launcher/java failure, or no summary (e.g. the kernel does not type-check) | `stainless-verify: SETUP — <reason>` |
+
+`./mill` itself exits 1 for both 1 and 2; its error line carries the script's code
+(`stainlessVerify failed (exit 2)`). Env overrides: `STAINLESS_VERSION` (default `0.9.9.3`), `STAINLESS_TIMEOUT`
+(seconds per VC, default 10), `STAINLESS_CACHE_DIR` (default `~/.cache/scala-llm-kit/stainless`; the tool is
+downloaded there once — needs `curl` and `unzip`).
+
+Two things the tool does that a contract author should know, both measured: `a ==> r == c` parses as
+`(a ==> r) == c` (write `a ==> (r == c)`), and a body of `(??? : T)` **verifies** — Stainless treats it as a
+missing implementation satisfying the postcondition, so exit 0 does not mean the body is written — a typed `???`
+verifies in the tool, but the gate blocks it as not implemented.
+
+How this recipe was checked: [`mill/stainless-feasibility.md`](mill/stainless-feasibility.md) — the scratch assembly,
+per-file exits, the K1–K3 pilot verdicts, and the output line patterns the engine parses.
+
 ## What this does not decide (R-11)
 
 A green `fix --check` says the modules name allowlisted types and use no denylisted construct. It does not say the

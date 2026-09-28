@@ -1,0 +1,11 @@
+#!/bin/sh
+f=.dsh/.state/contracts/s1.tsv
+[ -f "$f" ] || { echo "no snapshot file"; exit 1; }
+t=$(printf '\t')
+grep -qx "# file core/src/K.scala" "$f" || { echo "no covered-file line"; cat "$f"; exit 1; }
+grep -qx "core/src/K.scala${t}K.f${t}requires${t}0${t}aaaa1111${t}require(x >= 0)" "$f" || { echo "requires row missing or rewritten"; cat "$f"; exit 1; }
+grep -qx "core/src/K.scala${t}K.f${t}ensuring${t}0${t}bbbb2222${t}r => r > x" "$f" || { echo "ensuring row missing"; cat "$f"; exit 1; }
+grep -q zzzz9999 "$f" && { echo "second SessionStart rewrote the snapshot"; exit 1; }
+# Final review F3: the kernel's count of assume(/@extern/@ignore lines, compared at turn-end.
+grep -qx "# escapes core/src/K.scala 0" "$f" || { echo "no escapes line"; cat "$f"; exit 1; }
+echo "snapshot rows ok"

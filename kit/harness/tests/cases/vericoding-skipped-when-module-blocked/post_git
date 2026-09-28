@@ -1,0 +1,4 @@
+#!/bin/sh
+# The kernel is touched, and so is a sibling whose edit breaks core.compile (the stub's content marker).
+printf '// touched by this turn\n' >> core/src/K.scala
+printf '// BREAKSCOMPILE\n' >> core/src/T.scala

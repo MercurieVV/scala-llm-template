@@ -1,0 +1,5 @@
+#!/bin/sh
+# A later SessionStart of the same session (resume, compact) must not retake a deleted snapshot:
+# that would adopt this session's own contract edits as the human's.
+if [ -e .dsh/.state/contracts/s1.tsv ]; then echo "the snapshot was retaken:"; cat .dsh/.state/contracts/s1.tsv; exit 1; fi
+echo "no snapshot file, as it should be"

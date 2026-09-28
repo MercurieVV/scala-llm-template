@@ -1,0 +1,3 @@
+stainless-verify: SETUP — download failed: https://example.invalid/stainless.zip
+[error] core.stainlessVerify
+java.lang.RuntimeException: stainlessVerify failed (exit 2)

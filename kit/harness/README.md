@@ -48,11 +48,14 @@ sh kit/harness/install.sh <project>      # run from a scala-llm-template checkou
   copy that fails part-way leaves the previous `.dsh/engine/` untouched and complete.
 - **Project state is seeded only where absent, never overwritten.** The seeds (`seed/`): `contract`,
   `frozen-paths` (containing `.dsh/engine/**`), `hooks.json`, `cc-settings.json`, `policy/allowed-types.tsv`,
-  `policy/memorisation.tsv`, `instructions/local.tsv` (with a `scalac.<kind>` row for each of the seven kinds in
+  `policy/memorisation.tsv`, `policy/kernels.tsv` (header-only), `instructions/local.tsv` (with a `scalac.<kind>` row for each of the seven kinds in
   `instructions/scalac-kinds.tsv`), `instructions/scalac-kinds.tsv`. The seeded `frozen-paths` covers every path the
   installation checks require frozen (the self-freeze, `.ignore`, the instruction tables and `purrism.tsv`), so a
   fresh install's only installation FAIL is the absent `purrism.tsv` — `sh .dsh/engine/instructions-sync.sh` writes
   it once the build declares purrism. One line per file: `seeded`, `kept`, or `replaced` (the engine only).
+  Because `frozen-paths` is kept, **a re-vendored project adds the new frozen-paths rows by hand (install.sh never
+  overwrites frozen-paths)** — check-harness names each missing one (e.g. `.dsh/.state/contracts/**` once kernels are
+  registered).
 - **A gitignored engine file is named, never dropped silently.** After the swap, any vendored engine file the
   project's `.gitignore` matches is listed as `ignored  .dsh/engine/<path>`, followed by one remedy line on stderr
   naming the matching rule(s) — anchor it (an unanchored `out/` also matches the fixture trees under
@@ -378,7 +381,7 @@ this gate exists to remove.
 **Every NOTE the gate can print, and what it means** (the table is the whole set: every `dnote` and
 every `section note` in `verify-diff.sh`, the bare lines it prints before its section machinery runs,
 and every non-blocking section `turn-end.sh` files — its own `section note` calls and the headers of
-its `vd_note`/`rw_note` — plus the two notes vendoring added, printed by `health` and by the non-Mill
+its `vd_note`/`rw_note`/`vk_note` — plus the two notes vendoring added, printed by `health` and by the non-Mill
 stand-down. A NOTE not listed here is a bug in this table). **Kind** is the split above:
 a *finding* is something wrong the agent can fix; a *degradation* is "this was not checked", and never
 promotes to a block. The `<module>`, `<check>` and `N` parts of a title are filled in at run time.
@@ -405,6 +408,14 @@ promotes to a block. The `<module>`, `<check>` and `N` parts of a title are fill
 | `turnEndTests: <module> (N draft failure(s) — noted)` | turn-end | finding | the module's turn-end tests failed only on DRAFT properties/tests, which note rather than block. |
 | `vendored engine does not match its stamp` | health | degradation | the vendored `.dsh/engine/` is missing its `STAMP`, no longer matches it, or cannot be hashed (the parenthesis says which). The gate still runs; `sh .dsh/engine/check-harness.sh` FAILs on the same condition. Remedy: re-run `install.sh` from a scala-llm-template checkout. |
 | `gate engine supports Mill builds only` | health, post-edit, turn-end | degradation | positive evidence of another build tool (`found: build.sbt` or `found: project.scala`, and no `build.mill` or `./mill`): the Mill checks stand down, named. At turn-end, diff-scoped verification has already run. See [Non-Mill projects](#non-mill-projects). |
+| `vericoding: <m> — <N> verification condition(s) unknown (solver timeout)` | turn-end | finding | Stainless could neither prove nor refute these VCs within its per-VC timeout; each is listed as `<file>:<l>:<c>  <fn>  <vc kind>  (timeout)`. The human decides whether to accept them. See [Vericoding](#vericoding-contracts-are-the-humans-stainless-checks-the-body). |
+| `vericoding: no contract snapshot for <files>` | turn-end | degradation | the session's contract snapshot does not cover these touched kernels (recorded `incomplete: <reason>`, which the body quotes, or registered since), so their contracts were not compared. Stainless still runs. |
+| `vericoding: contract guard stood down` | turn-end | degradation | `contract_clauses` could not be asked or read: no launcher, a failed call, a per-file error, no JSON reader, or an answer that is not JSON. Contracts were not compared; Stainless still runs. |
+| `vericoding: contract guard cannot compare <key>…` | turn-end | degradation | a clause has neither a shape nor a text in the snapshot or in the answer, so it was not compared. |
+| `vericoding: Stainless could not run for <m>` | turn-end | degradation | the verify script reported `SETUP —` (a download, launcher or java failure, no summary), printed no marker, or said `OK` while Mill failed. The kernels were not verified; this is not a verdict on the body. |
+| `vericoding: Stainless did not finish for <m> within <N> s — not verified` | turn-end | degradation | the run hit its cap (`DSH_STAINLESS_CAP`, default 480 s, or what was left of the Stop budget) and was killed. |
+| `vericoding: no time left to run Stainless for <m> (the Stop hook's budget) — not verified` | turn-end | degradation | 10 s or less of `DSH_STOP_BUDGET` (default 540 s) was left, so the run was not started. |
+| `vericoding: Stainless not run for <m>` | turn-end | degradation | the module's own checks already blocked this turn, so neither the contract guard nor Stainless ran on its kernels. |
 
 `purrism rewrite reverted in <module>`, and `purrism rewrites (not applied) in <module>` after a failed
 `fixRanges`, can end with `COULD NOT RESTORE the original of <files> … — restore it by hand.`: a restore that failed is
@@ -679,6 +690,107 @@ The rewrite stage has no rule of its own; it depends on the SessionStart hook be
 `baseline` entries in `.dsh/hooks.json` and `.dsh/cc-settings.json`) and on `fixRanges` being in the
 module's layer trait (by mixing in `GateLayer`). Without the first it says `purrism rewrites skipped` every turn; without the
 second `fixRanges` fails by name and every module says `purrism rewrites (not applied)`.
+
+## Vericoding: contracts are the human's, Stainless checks the body
+
+Spec 2026-09-27 (roadmap item 9): the human writes a kernel's `require`/`ensuring`/`decreases`, the agent writes the
+body, and [Stainless](https://github.com/epfl-lara/stainless) decides. The agent's side is the `vericoding` skill
+(`.dsh/skills/vericoding/SKILL.md`); the build side is `kit/recipes/mill.md` §8 (`StainlessModule`,
+`scripts/stainless-verify.sh`, measured in `kit/recipes/mill/stainless-feasibility.md`). The implementation is the
+"vericoding" section of `lib.sh`, the snapshot block of `hooks/baseline.sh` and the vericoding stage of
+`hooks/turn-end.sh`, whose headers carry the reasoning.
+
+**`.dsh/policy/kernels.tsv`** — the registry, seeded header-only and frozen (`.dsh/policy/kernels.tsv` in the seeded
+`frozen-paths`). One row per verified file, TAB-separated, `#` comments and blank lines ignored:
+
+```
+core/src/com/example/PureKernels.scala	core	the saturation and time-conversion kernels
+```
+
+The path is root-relative, as git reports it: one leading `./` is stripped; an absolute path, a `..` segment or a
+second `./` is a check-harness FAIL, because it would never equal a touched path and the stage would silently never
+run. check-harness (`dsh_kernel_checks`) also FAILs a row with fewer than three fields, a file that does not exist, a
+module not in `.dsh/.state/modules.tsv`, and a registry that is not frozen; with rows present, it also FAILs contract
+snapshots that are not frozen (`the contract snapshots (.dsh/.state/contracts/**) are not frozen — add the row to
+.dsh/frozen-paths` — a re-vendored project keeps its old frozen-paths) and an existing `scripts/stainless-verify.sh` or
+`buildKit/Stainless.mill` that is not frozen (`<file> is not frozen — an agent could disable Stainless; add it to
+.dsh/frozen-paths`). With rows present and no FAIL it probes
+that the launcher answers `call contract_clauses` (a note, not a FAIL, when it does not — the guard then stands down
+at turn-end, named).
+
+**The contract snapshot** — `.dsh/.state/contracts/<session>.tsv`, frozen by the seeded row `.dsh/.state/contracts/**`.
+SessionStart (`gate.sh baseline`) ALWAYS writes it on a session's first start: the clauses of every registered kernel
+(dirty or not) from ScalaSemanticMCP's `contract_clauses`, one `# file <uri>` line per file the tool read, and one
+`# escapes <uri> <n>` line per registered kernel file — its count of non-comment lines naming `assume(`, `@extern` or
+`@ignore` (needs no launcher, so an `incomplete:` record carries it too); header-only
+when nothing is registered; `# DSH contract snapshot <sid> <date> incomplete: <reason>` with no rows when the tool
+failed. It never blocks SessionStart. A later SessionStart of the same session (resume, compact) keeps the record, and
+does NOT retake a missing one: that would adopt the session's own contract edits as the human's. The flip side is the
+one rule the human must keep: **a new session snapshots the current tree's contracts as the human's**, so before
+starting a new session after an agent session, review `git diff` of the kernel files for contract changes.
+
+**The turn-end stage.** It runs last — after the per-module checks and after turnEndTests — only for a module owning a
+kernel this turn touched, and not for a module whose checks or turnEndTests already blocked (said, by name). For each such module: the contract guard on the touched
+kernels — a clause whose `shape` (a hash of its syntax tree, so reformatting is not a change) changed, or a removed
+clause, or a clause added to a def the snapshot has (a new `requires`, `ensuring` or `decreases`, or a `requires`
+appended after the existing ones — adding a precondition is how a counterexample is made to vanish), blocks, and
+Stainless is not run for that module; a new def with a contract (a lemma) is allowed. Then
+`./mill --no-server --ticker false --color false <m>.stainlessVerify --targets <every kernel of m, kernels.tsv order>`,
+because a body change can break a lemma another kernel relies on. `--no-server` is the measured mode: through a Mill
+daemon the cap's kill would end only the client, and Stainless would keep running in the daemon. The verdict comes from the script's marker lines
+(`stainless-verify: OK —` / `FAILED —` / `SETUP —`; `dsh_stainless_verdict`), not Mill's exit, which is 1 for both
+script exits 1 and 2. Every headline, verbatim (`<m>` the module):
+
+| Condition | Class | Headline |
+|---|---|---|
+| a registered kernel file no longer exists (checked every turn that reaches the gate) | block | `vericoding: registered kernel missing` |
+| a touched kernel's clause changed shape, a clause/def-with-contract was removed, or a clause was added to a def the snapshot has | block | `vericoding: contracts changed in <m>` — rows `<uri> <key> <kind>: was <old>; now <new>` / `… removed (was <old>)` / `… added (<text>)` |
+| a touched kernel has more non-comment lines naming `assume(`, `@extern` or `@ignore` than its `# escapes` count at SessionStart | block | `vericoding: <m> — verification escape added in <file>` — the counted lines, then `assume/@extern/@ignore turn verification off; remove it, or ask the human`; Stainless is not run for that module |
+| no snapshot file for this session (deleted, or the session started under an older engine) | block | `vericoding: contract snapshot missing` — the human reviews `git diff -- <files>` before a new session |
+| Stainless found an `invalid` VC (script exit 1) | block | `vericoding: <m> — Stainless found invalid verification conditions` — each VC, its counterexample, colour stripped and bounded |
+| a `???` on a non-`//` line of a touched kernel, or Stainless's `missing implementations` marker (a typed `(??? : T)` exits 0) | block | `vericoding: <m> — a kernel body is not implemented yet` |
+| Stainless's own compile/extraction error names a target (the body left the supported subset) | block | `vericoding: <m> — Stainless cannot compile <file>:<line>` |
+| `unknown` VCs (solver timeout) | note | `vericoding: <m> — <N> verification condition(s) unknown (solver timeout)` — the human decides whether to accept them |
+| the snapshot is `incomplete:` or does not cover a touched kernel | note | `vericoding: no contract snapshot for <files>` — Stainless still runs |
+| launcher missing, call failed, a file unread, no JSON reader, answer not JSON | stand-down | `vericoding: contract guard stood down` — Stainless still runs |
+| the snapshot has no `# escapes` count for a touched kernel (a record from an older engine) | note | `vericoding: escape markers not compared for <files>` — Stainless still runs |
+| a clause with neither shape nor text on either side | stand-down | `vericoding: contract guard cannot compare <key>…` |
+| script `SETUP —`, no marker, or `OK` with a failed Mill | stand-down | `vericoding: Stainless could not run for <m>` — not a verdict on the body |
+| the run outlived its cap | stand-down | `vericoding: Stainless did not finish for <m> within <N> s — not verified` |
+| 10 s or less left of the Stop budget when the module's turn came | stand-down | `vericoding: no time left to run Stainless for <m> (the Stop hook's budget) — not verified` |
+| the module's own checks or its turnEndTests blocked this turn | stand-down | `vericoding: Stainless not run for <m>` |
+
+The notes and stand-downs are printed on allow AND on block (they ride `vk_note`, like the rewrite stage's notes);
+they are not F53 notes. A successful run adds `<m>.stainlessVerify` to the `Ran, in this order:` line.
+
+**One time budget.** The stage shares the Stop hook's budget and runs last, so Stainless gets only what the checks and
+turnEndTests left: each module's run is capped at `min(DSH_STAINLESS_CAP, what is left of DSH_STOP_BUDGET since the
+hook started)` — defaults 480 s and 540 s, under the hook's 600 s timeout — and is not started at all with 10 s or
+less left. The cap kills the whole process tree. turnEndTests itself is not capped: a suite that outlives the hook's
+timeout ends the turn with no verdict, vericoding or not.
+
+**Dependencies.** ScalaSemanticMCP's `contract_clauses` (one-shot `scalasemantic-mcp call contract_clauses '<json>'
+<root>`, syntax-only, no classpath; install with `./mill installLocal` in ScalaSemanticMCP) — without it the guard
+stands down every turn and SessionStart records an `incomplete:` snapshot; and the module's `StainlessModule` wiring
+(recipe §8), which downloads standalone Stainless 0.9.9.3 on first use (`curl`, `unzip`). Git-ignore
+`.stainless-cache/` in the project.
+
+**Limits, from the tool and from measurement.** Stainless verifies only its supported subset of Scala (pure code, no
+mutable state or unrestricted effects); anything else is a `cannot compile` block. `==>` binds like `==`: a contract
+must bracket implications (`a ==> (r == c)`). Preconditions are proved at call sites, not assumed from callers.
+Nonlinear arithmetic can time out, and a timeout is `unknown`, a note — measured: the multiplication-overflow checks of
+the pilot's `Long` conversions stayed `unknown` at 10 s and at 60 s per VC. A typed `(??? : T)`
+body is reported as a missing implementation and exits 0, which is why the stage blocks on the marker and on a
+`???` in the source instead of trusting the exit.
+
+**What it cannot see.** The guard compares clauses, not meaning: a body that makes a contract vacuous by a construct
+outside the clauses (a shadowing local `require`) is the skill's rule and the reviewer's, not the gate's. A def with no clause at all is not in `contract_clauses`'
+answer, so one gaining its first `require` reads as a new def (a lemma), not as an added clause. The escape count
+matches spellings: `assume (x)` with a space, an aliased import, or another way to tell Stainless to skip a def is not
+counted. Removing the `StainlessModule` mixin from `build.mill` (so `stainlessVerify` no longer resolves — a `could
+not run` note) is the engine-wide `build.mill` exposure, not closed here: `build.mill` is not frozen. Bash `rm`
+of a frozen path is not denied by the frozen-path layer; the snapshot's deletion is caught instead by the
+`contract snapshot missing` block.
 
 ## Running the engine's checks
 

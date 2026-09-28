@@ -1,0 +1,4 @@
+# Verified kernel files (spec 2026-09-27 stainless vericoding). The human's: the agent may read, never write.
+# <file, root-relative> TAB <module id> TAB <reason>
+# A registered file is verified by <module>.stainlessVerify at turn-end, and its require/ensuring/decreases
+# are the human's — the gate blocks any agent change to them.

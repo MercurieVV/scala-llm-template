@@ -1,0 +1,1 @@
+{"files":[{"uri":"core/src/K.scala","defs":[{"key":"K.f","line":3,"requires":[{"text":"require(x >= 1)","shape":"cccc3333"}],"ensuring":{"text":"r => r > x","shape":"bbbb2222"},"decreases":null}],"error":null}]}

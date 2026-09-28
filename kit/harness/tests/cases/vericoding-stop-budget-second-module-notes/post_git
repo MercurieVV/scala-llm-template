@@ -1,0 +1,4 @@
+#!/bin/sh
+# The turn touches a kernel in each of two modules; git lists app/ first, so core is the second.
+printf '// touched by this turn\n' >> app/src/A.scala
+printf '// touched by this turn\n' >> core/src/K.scala

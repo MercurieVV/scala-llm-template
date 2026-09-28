@@ -1,0 +1,1 @@
+{"files":[{"uri":"core/src/K.scala","defs":[{"key":"K.f","line":3,"requires":[{"text":"require(x >= 0)","shape":"aaaa1111"}],"ensuring":{"text":"r => r > x","shape":"bbbb2222"},"decreases":null},{"key":"K.lemma","line":8,"requires":[{"text":"require(y > 0)","shape":"dddd4444"}],"ensuring":{"text":"_ => y + 1 > 1","shape":"eeee5555"},"decreases":null}],"error":null}]}

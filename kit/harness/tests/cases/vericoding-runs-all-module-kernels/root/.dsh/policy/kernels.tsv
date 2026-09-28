@@ -1,0 +1,4 @@
+# Verified kernel files. The human's.
+# <file> TAB <module> TAB <reason>
+core/src/K.scala	core	the pilot kernel
+core/src/L.scala	core	a lemma file

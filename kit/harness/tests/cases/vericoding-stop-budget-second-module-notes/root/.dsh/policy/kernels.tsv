@@ -1,0 +1,4 @@
+# Verified kernel files. The human's.
+# <file> TAB <module> TAB <reason>
+core/src/K.scala	core	the pilot kernel
+app/src/A.scala	app	the second kernel module

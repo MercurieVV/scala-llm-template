@@ -119,15 +119,7 @@ awk -F'\t' '$1 ~ /\.(scala|sc)$/' "$tmpd/ranges" > "$tmpd/scala"
 awk -F'\t' '$1 !~ /\.(scala|sc)$/ && $1 !~ /\.(mill|sbt)$/' "$tmpd/ranges" > "$tmpd/prose"
 
 # --- the semantic check --------------------------------------------------------------------------
-# The launcher is resolved exactly as .dsh/engine/hooks/health.sh resolves it: override, PATH, profile path.
-launcher=${SCALASEMANTIC_MCP_LAUNCHER:-}
-if [ -z "$launcher" ]; then
-  launcher=$(command -v scalasemantic-mcp 2>/dev/null) || launcher=""
-  if [ -n "$launcher" ] && [ ! -f "$launcher" ]; then
-    launcher=/Users/viktorskalinins/.local/bin/scalasemantic-mcp
-  fi
-fi
-[ -n "$launcher" ] || launcher=/Users/viktorskalinins/.local/bin/scalasemantic-mcp
+launcher=$(dsh_semantic_launcher)
 
 semantic_note=''
 prose_note=''

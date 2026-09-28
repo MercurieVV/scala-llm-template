@@ -1,0 +1,4 @@
+#!/bin/sh
+# The capture is coloured (ANSI) and redraws with CR: neither may reach the agent.
+if grep -q "$(printf '\033')" "$GATE_OUT_FILE"; then echo "ANSI escape in the gate output"; exit 1; fi
+echo "no ANSI escape in the gate output"

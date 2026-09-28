@@ -1,0 +1,13 @@
+#!/bin/sh
+# The turn's own edit: the clauses are untouched, but an `assume` makes Stainless accept any body (final
+# review F3).
+cat > core/src/K.scala <<'K'
+import stainless.lang.*
+object K {
+  def f(x: BigInt): BigInt = {
+    require(x >= 0)
+    assume(x + 1 > x)
+    x + 1
+  } ensuring (r => r > x)
+}
+K

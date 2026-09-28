@@ -656,6 +656,21 @@ done <<EOF
 $vk_rows
 EOF
 
+# The kernel registry installation rules (spec 2026-09-27 §1–2): same shape again -- one lib.sh
+# function, unit-tested in lib-test.sh, mapped here.
+kk_rows=$(dsh_kernel_checks "$repo" 2>&1) || :
+while IFS="$tab" read -r kk_kind kk_msg; do
+  [ -n "$kk_kind" ] || continue
+  case "$kk_kind" in
+    ok) ok "$kk_msg" ;;
+    FAIL) bad "$kk_msg" ;;
+    note) note "$kk_msg" ;;
+    *) bad "dsh_kernel_checks printed a row this check does not understand: $kk_kind $kk_msg" ;;
+  esac
+done <<EOF
+$kk_rows
+EOF
+
 # ══ D. the repository's test integrity ═════════════════════════════════════════════════════════
 # F27/F44. The fixtures under .dsh/engine/tests/cases/*/root/ are inputs to the gate, and they have been
 # silently dropped from commits three separate times by ignore patterns that match a directory name

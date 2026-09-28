@@ -99,6 +99,10 @@
 #
 # POSIX sh only: no arrays, no `local`, no `set -e`. `sh -n` and `dash -n` are both clean.
 set -u
+# The hook's start, for the vericoding stage's one time budget (fix round 2): Claude Code kills a Stop
+# hook at its 600 s timeout and the turn then ends with NO verdict, so every Stainless run is capped by
+# what is left of DSH_STOP_BUDGET (default 540 s) since here.
+te_start=$(date +%s 2>/dev/null) || te_start=''
 here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$here/lib.sh"
 
@@ -146,6 +150,7 @@ blockmods=''
 probeline=''
 vd_note=''
 rw_note=''
+vk_note=''
 
 # The session's attempt counter, sanitised so a session id can never name a path of its choosing.
 # The value is stripped of whitespace before it is trusted, so a counter written by `echo` (or by
@@ -224,6 +229,13 @@ $vd_note"
     _body="$_body
 
 $rw_note"
+  fi
+  # The vericoding stage's notes (no snapshot, a guard that stood down, Stainless that could not run,
+  # unknown VCs) likewise.
+  if [ -n "$vk_note" ]; then
+    _body="$_body
+
+$vk_note"
   fi
   _head=$(first_line "$1")
   _note=$(baseline_note)
@@ -415,11 +427,19 @@ The map at $st/modules.tsv is malformed; run ./mill --ticker false moduleMap by 
   printf '%s\t%s\n' "$module" "$path" >> "$tmpd/modfiles"
 done < "$tmpd/scala"
 
+# A registered kernel file (.dsh/policy/kernels.tsv) that no longer exists: read here, before the
+# "nothing to run" exit, because a deleted file is not a touched file (`dsh_touched_files` drops a
+# vanished `.scala`), so a turn whose only change is deleting a kernel would otherwise end unexamined.
+# The vericoding stage below turns each row into a block (plan Review Focus 2: never skip).
+dsh_kernels_rows "$root" | while IFS="$tab" read -r vk_f vk_m; do
+  [ -f "$root/$vk_f" ] || printf '%s\t%s\n' "$vk_f" "$vk_m"
+done > "$tmpd/vk-missing"
+
 # --- nothing to run ---------------------------------------------------------------------------
 # Diff-scoped verification can still have something to say even when nothing here reaches the
 # compile chain — a prose-only turn has no module to map at all — so its note is flushed through
 # `allow` instead of a bare `exit 0`, which would drop it.
-if [ ! -s "$tmpd/mods" ] && [ ! -s "$tmpd/mill" ]; then
+if [ ! -s "$tmpd/mods" ] && [ ! -s "$tmpd/mill" ] && [ ! -s "$tmpd/vk-missing" ]; then
   reset_counter
   allow "$vd_note"
 fi
@@ -748,6 +768,254 @@ done < "$tmpd/mods"
 [ "$te_left" -gt 0 ] && report="$report
 $te_left modules not run — fix this one first"
 
+# --- vericoding: the contract guard and Stainless on registered kernels (spec 2026-09-27 §3) --------
+# Runs for a module only when this turn touched one of its files listed in .dsh/policy/kernels.tsv, and
+# only after that module's own checks AND its turnEndTests above passed: a module already in `blockmods`
+# is not handed to Stainless (a kernel that does not compile would only yield noise; a red test is the
+# verdict already) — that is said, by name. It runs LAST (final review F2): its time budget charges
+# everything the hook spent before it, so Stainless gets only what the checks and the tests left, and
+# turnEndTests is never started after a Stainless run that used the budget up.
+#
+# 1. The contract guard: `contract_clauses` on the touched kernel files, diffed against the snapshot
+#    SessionStart took (`dsh_contract_file`). A changed clause shape or a removed clause blocks —
+#    contracts are the human's — and Stainless is not run for that module (the verdict would be about
+#    a contract nobody approved). So does a clause ADDED to a def the snapshot has (final review F1). A
+#    new def with a contract (a lemma) is allowed. An absent snapshot
+#    record always blocks, whatever the file baseline says: SessionStart always writes one, so an
+#    absent one was deleted (or the session predates the snapshot). A record whose header says
+#    `incomplete:` (or one that does not cover a touched kernel), a clause with neither shape nor text,
+#    a missing launcher, a failed call, no JSON reader: each is a named note and Stainless still runs.
+# 2. Stainless over ALL registered kernels of the module (kernels.tsv order): a body change can break a
+#    lemma another kernel file relies on. The verdict comes from the verify script's marker lines
+#    (`dsh_stainless_verdict`): invalid VCs block; a `missing implementations` pipeline marker (a typed
+#    `???` body, which the script passes) or a `???` left in a touched kernel blocks; Stainless's own
+#    compile/extraction error naming a target blocks (the body left the supported subset); a setup
+#    failure, a run stopped at the cap (DSH_STAINLESS_CAP, default 480 s) and unknown (timeout) VCs are
+#    named notes.
+#
+# Its notes go to `vk_note`, flushed like `rw_note` by `block()` and by the allow path — not through
+# `section note`, whose F53 line counts checks that "failed on files this turn did not touch", which
+# none of these is, and which a blocking verdict never prints.
+vk_add() { # vk_add <title> <body>
+  vk_note="${vk_note:+$vk_note
+}--- $1 ---
+$(bound_lines "$2" "$max_lines")"
+}
+# A registered kernel that no longer exists blocks whatever else this turn touched: the registry is
+# frozen, so only the agent can have made the two disagree this way (or a human who must also fix the
+# registry — check-harness FAILs on it too).
+while IFS="$tab" read -r vk_f vk_m; do
+  [ -n "$vk_f" ] || continue
+  blocked=$((blocked + 1))
+  case " $blockmods " in *" $vk_m "*) ;; *) blockmods="$blockmods $vk_m" ;; esac
+  section blocking "vericoding: registered kernel missing" "$vk_f is listed in .dsh/policy/kernels.tsv but does not exist — restore it; only the human changes the registry"
+  remedies="$remedies
+$vk_m: restore $vk_f (git restore -- $vk_f); only the human edits .dsh/policy/kernels.tsv"
+done < "$tmpd/vk-missing"
+
+: > "$tmpd/vk-touched"  # <module> TAB <touched kernel path>
+while IFS= read -r vk_p; do
+  [ -n "$vk_p" ] || continue
+  vk_m=$(dsh_kernel_of "$root" "$vk_p") || continue
+  printf '%s\t%s\n' "$vk_m" "$vk_p" >> "$tmpd/vk-touched"
+done < "$tmpd/scala"
+cut -f1 "$tmpd/vk-touched" | awk '!seen[$0]++' > "$tmpd/vk-mods"
+vk_snap=$(dsh_contract_file "$sid")
+while IFS= read -r vk_m; do
+  [ -n "$vk_m" ] || continue
+  case " $blockmods " in
+    *" $vk_m "*)
+      vk_add "vericoding: Stainless not run for $vk_m" "its checks or its turnEndTests already blocked this turn, so neither the contract guard nor Stainless ran on its kernels; they run once those pass."
+      continue ;;
+  esac
+  awk -F"$tab" -v m="$vk_m" '$1 == m { print $2 }' "$tmpd/vk-touched" > "$tmpd/vk-uris"
+  vk_files=$(tr '\n' ' ' < "$tmpd/vk-uris")
+
+  # 1. the contract guard
+  vk_changed=0
+  if [ ! -f "$vk_snap" ]; then
+    # SessionStart ALWAYS writes a record (header-only, or `incomplete: <reason>`), so an absent one
+    # was deleted — or the session started under an engine older than the snapshot. Either way the
+    # guard cannot compare, and it must not degrade to a note: that is keyed on nothing an agent can
+    # delete (fix round 2 — the file baseline is not frozen, so it cannot vouch for the record).
+    # Stainless is not the verdict either.
+    vk_changed=1
+    blocked=$((blocked + 1))
+    blockmods="$blockmods $vk_m"
+    section blocking "vericoding: contract snapshot missing" "The contract snapshot for this session ($vk_snap) is gone, so the gate cannot tell whether a require/ensuring/decreases changed in ${vk_files}— do not recreate it.
+Human: review git diff -- ${vk_files}for contract changes before starting a new session (a new session snapshots the current contracts as yours)."
+    remedies="$remedies
+$vk_m: the contract snapshot is gone — stop and ask the human to review git diff -- ${vk_files}for contract changes"
+  else
+    sed -n 's/^# file //p' "$vk_snap" > "$tmpd/vk-covered"
+    awk -v cf="$tmpd/vk-covered" 'FILENAME == cf { c[$0] = 1; next } ($0 in c)' "$tmpd/vk-covered" "$tmpd/vk-uris" > "$tmpd/vk-cmp"
+    awk -v cf="$tmpd/vk-covered" 'FILENAME == cf { c[$0] = 1; next } !($0 in c)' "$tmpd/vk-covered" "$tmpd/vk-uris" > "$tmpd/vk-uncov"
+    if [ -s "$tmpd/vk-uncov" ]; then
+      vk_add "vericoding: no contract snapshot for $(tr '\n' ' ' < "$tmpd/vk-uncov" | sed 's/ *$//')" "this session's snapshot ($vk_snap) does not cover it — the tool could not read it at SessionStart, or it was registered since — so its contracts cannot be compared with the human's. Stainless still runs.$(head -n 1 "$vk_snap" | sed -n 's/^# DSH contract snapshot [^ ]* [^ ]* incomplete: /\
+The snapshot was recorded incomplete: /p')"
+    fi
+    if [ -s "$tmpd/vk-cmp" ]; then
+      if ! dsh_contract_call "$root" "$tmpd/vk-cmp" "$tmpd/vk-answer.json"; then
+        vk_add "vericoding: contract guard stood down" "$dsh_contract_reason — the contracts of $(tr '\n' ' ' < "$tmpd/vk-cmp")were NOT compared with the snapshot. Stainless still runs."
+      else
+        dsh_contracts_unread "$tmpd/vk-answer.json" "$tmpd/vk-cmp" > "$tmpd/vk-unread"
+        vk_rc=$?
+        [ "$vk_rc" = 0 ] && { dsh_contracts_tsv "$tmpd/vk-answer.json" > "$tmpd/vk-now.tsv"; vk_rc=$?; }
+        case "$vk_rc" in
+          0)
+            if [ -s "$tmpd/vk-unread" ]; then
+              vk_add "vericoding: contract guard stood down" "contract_clauses could not read: $(bound_lines "$(cat "$tmpd/vk-unread")" 3)
+Their contracts were NOT compared with the snapshot. Stainless still runs."
+              cut -f1 "$tmpd/vk-unread" > "$tmpd/vk-unread.uris"
+              awk -v uf="$tmpd/vk-unread.uris" 'FILENAME == uf { u[$0] = 1; next } !($0 in u)' "$tmpd/vk-unread.uris" "$tmpd/vk-cmp" > "$tmpd/vk-cmp2"
+            else
+              cp "$tmpd/vk-cmp" "$tmpd/vk-cmp2"
+            fi
+            dsh_contract_diff "$vk_snap" "$tmpd/vk-now.tsv" "$tmpd/vk-cmp2" > "$tmpd/vk-diff.all"
+            # A clause with neither shape nor text (on either side) cannot be compared: said, never "same".
+            awk -F'\t' '$1 == "unreadable"' "$tmpd/vk-diff.all" > "$tmpd/vk-unreadable"
+            awk -F'\t' '$1 != "unreadable"' "$tmpd/vk-diff.all" > "$tmpd/vk-diff"
+            if [ -s "$tmpd/vk-unreadable" ]; then
+              vk_add "vericoding: contract guard cannot compare $(cut -f3 "$tmpd/vk-unreadable" | awk '!s[$0]++' | tr '\n' ' ' | sed 's/ *$//')" "$(awk -F'\t' '{ printf "%s %s %s: the clause has neither a shape nor a text in the snapshot or in the answer\n", $2, $3, $4 }' "$tmpd/vk-unreadable")
+Those clauses were NOT compared with the snapshot. Stainless still runs."
+            fi
+            if [ -s "$tmpd/vk-diff" ]; then
+              vk_changed=1
+              blocked=$((blocked + 1))
+              blockmods="$blockmods $vk_m"
+              vk_rows=$(awk -F'\t' '
+                $1 == "changed" { printf "%s %s %s: was %s; now %s\n", $2, $3, $4, $5, $6 }
+                $1 == "removed" { printf "%s %s %s: removed (was %s)\n", $2, $3, $4, $5 }
+                $1 == "added" { printf "%s %s %s: added (%s)\n", $2, $3, $4, $5 }' "$tmpd/vk-diff")
+              section blocking "vericoding: contracts changed in $vk_m" "$(bound_lines "$vk_rows" $((max_lines - 2)))
+contracts are the human's — ask in chat before changing a require/ensuring/decreases; restore the original clause"
+              remedies="$remedies
+$vk_m: restore the original contract clause(s) above; to change a contract, ask the human in chat"
+            fi ;;
+          2) vk_add "vericoding: contract guard stood down" "no jq and no python3 to read the contract_clauses answer — the contracts of ${vk_files}were NOT compared with the snapshot. Stainless still runs." ;;
+          *) vk_add "vericoding: contract guard stood down" "the contract_clauses answer is not JSON — the contracts of ${vk_files}were NOT compared with the snapshot. Stainless still runs." ;;
+        esac
+      fi
+    fi
+    # 1b. verification escapes (final review F3): assume(/@extern/@ignore make Stainless accept any body
+    # with every clause untouched, so the guard above cannot see them. A touched kernel whose count of
+    # such lines (`dsh_escape_count`) is higher than the snapshot's blocks; a record with no count for it
+    # (an older engine's) is a note.
+    vk_esc_old=''
+    while IFS= read -r vk_p; do
+      [ -n "$vk_p" ] || continue
+      if ! vk_e0=$(dsh_snapshot_escapes "$vk_snap" "$vk_p"); then
+        vk_esc_old="$vk_esc_old$vk_p "
+        continue
+      fi
+      vk_e1=$(dsh_escape_count "$root/$vk_p")
+      [ "$vk_e1" -gt "$vk_e0" ] || continue
+      vk_changed=1
+      blocked=$((blocked + 1))
+      case " $blockmods " in *" $vk_m "*) ;; *) blockmods="$blockmods $vk_m" ;; esac
+      section blocking "vericoding: $vk_m — verification escape added in $vk_p" "$vk_e1 line(s) with assume(, @extern or @ignore now; $vk_e0 at session start:
+$(bound_lines "$(dsh_escape_lines "$root/$vk_p" | sed "s|^|$vk_p:|")" $((max_lines - 3)))
+assume/@extern/@ignore turn verification off; remove it, or ask the human"
+      remedies="$remedies
+$vk_m: remove the assume/@extern/@ignore added to $vk_p; only the human adds one"
+    done < "$tmpd/vk-uris"
+    if [ -n "$vk_esc_old" ]; then
+      vk_add "vericoding: escape markers not compared for $(printf '%s' "$vk_esc_old" | sed 's/ *$//')" "this session's snapshot ($vk_snap) has no \`# escapes\` count for it (a record from an older engine), so an assume/@extern/@ignore added this session is NOT detected. Stainless still runs."
+    fi
+  fi
+  [ "$vk_changed" = 1 ] && continue
+
+  # 2. Stainless, over every registered kernel of the module
+  vk_targets=$(dsh_kernels_rows "$root" | awk -F'\t' -v m="$vk_m" '$2 == m && !seen[$1]++ { printf "%s%s", (n++ ? "," : ""), $1 }')
+  # Bounded (fix round 1): a run that outlived the Stop hook's own 600 s timeout would let the turn
+  # end with no verdict at all. `DSH_STAINLESS_CAP` (default 480 s) is a test seam as much as a knob.
+  # `--no-server` (final review F2): the mode the recipe measured (kit/recipes/mill/stainless-feasibility.md).
+  # Through a Mill daemon the cap's kill ends only the client — Stainless keeps running in the daemon —
+  # and the script's marker lines may never reach the output this parses.
+  vk_cap=$(dsh_decimal "${DSH_STAINLESS_CAP:-}" 480)
+  # One budget for the whole stage (fix round 2): what is left of DSH_STOP_BUDGET since the hook
+  # started. At 10 s or less the run is not started at all — a Stainless that cannot finish verifies
+  # nothing and would only push the hook past its own timeout.
+  vk_budget=$(dsh_decimal "${DSH_STOP_BUDGET:-}" 540)
+  vk_now=$(date +%s 2>/dev/null) || vk_now=''
+  case "$te_start$vk_now" in
+    *[!0-9]*|'') vk_left=$vk_budget ;;
+    *) vk_left=$((vk_budget - (vk_now - te_start))) ;;
+  esac
+  if [ "$vk_left" -le 10 ]; then
+    vk_add "vericoding: no time left to run Stainless for $vk_m (the Stop hook's budget) — not verified" "$vk_left s of the $vk_budget s budget were left when $vk_m's turn came, so ./mill $vk_m.stainlessVerify --targets $vk_targets was not started. Its kernels were NOT verified this turn; run it by hand, or end the turn again once other modules are green."
+    continue
+  fi
+  [ "$vk_left" -lt "$vk_cap" ] && vk_cap=$vk_left
+  rm -f "$tmpd/vk-rc"
+  if dsh_bounded_probe "$vk_cap" "$tmpd/vk-out" "$tmpd/vk-err" \
+       sh -c '"$@" 2>&1; printf "%s" "$?" > "$0"' "$tmpd/vk-rc" \
+       "$mill" --no-server --ticker false --color false "$vk_m.stainlessVerify" --targets "$vk_targets"; then
+    vk_rc=$(cat "$tmpd/vk-rc" 2>/dev/null)
+    case "$vk_rc" in ''|*[!0-9]*) vk_rc=1 ;; esac
+    vk_v=$(dsh_stainless_verdict "$tmpd/vk-out" "$vk_rc" "$vk_targets")
+  else
+    vk_v="timeout	"
+  fi
+  ran="$ran$vk_m.stainlessVerify, "
+  vk_class=${vk_v%%"$tab"*}
+  vk_reason=${vk_v#*"$tab"}
+  vk_rep=$(dsh_stainless_report "$tmpd/vk-out")
+  vk_unk=$(printf '%s\n' "$vk_rep" | sed -n 's/^unknown \([0-9][0-9]*\)$/\1/p' | tail -n 1)
+  vk_inv=$(printf '%s\n' "$vk_rep" | sed '/^unknown [0-9][0-9]*$/d')
+  # A `???` left in a touched kernel (a line that is not a `//` comment): the body is not filled,
+  # whatever Stainless made of it.
+  vk_holes=''
+  while IFS= read -r vk_p; do
+    [ -f "$vk_p" ] || continue
+    vk_h=$(grep -n '???' "$vk_p" 2>/dev/null | grep -v '^[0-9]*:[[:space:]]*//' | head -n 3 | sed "s|^|$vk_p:|")
+    [ -n "$vk_h" ] && vk_holes="${vk_holes:+$vk_holes
+}$vk_h"
+  done < "$tmpd/vk-uris"
+  case "$vk_class" in
+    invalid)
+      blocked=$((blocked + 1))
+      blockmods="$blockmods $vk_m"
+      [ -n "$vk_inv" ] || vk_inv="(the verify script reported invalid verification conditions; none could be read from the output)"
+      section blocking "vericoding: $vk_m — Stainless found invalid verification conditions" "$vk_inv
+fix the body so the contract holds; if the contract itself is wrong, stop and ask the human."
+      remedies="$remedies
+$vk_m: fix the kernel body until ./mill $vk_m.stainlessVerify --targets $vk_targets passes" ;;
+    missing)
+      blocked=$((blocked + 1))
+      blockmods="$blockmods $vk_m"
+      section blocking "vericoding: $vk_m — a kernel body is not implemented yet" "Stainless reports missing implementations: a ??? body verifies only because it is a hole.${vk_holes:+
+$vk_holes}
+a kernel body is not implemented yet: fill it (vericoding skill)"
+      remedies="$remedies
+$vk_m: implement the ??? body so ./mill $vk_m.stainlessVerify --targets $vk_targets verifies it" ;;
+    rejected)
+      blocked=$((blocked + 1))
+      blockmods="$blockmods $vk_m"
+      section blocking "vericoding: $vk_m — Stainless cannot compile $vk_reason" "$(bound_lines "$(dsh_stainless_errors "$tmpd/vk-out")" $((max_lines - 2)))
+the body must be in the Stainless-supported subset of Scala; fix it, or ask the human"
+      remedies="$remedies
+$vk_m: rewrite the kernel body in the Stainless-supported subset until ./mill $vk_m.stainlessVerify --targets $vk_targets compiles it" ;;
+    timeout)
+      vk_add "vericoding: Stainless did not finish for $vk_m within $vk_cap s — not verified" "./mill $vk_m.stainlessVerify --targets $vk_targets was stopped after $vk_cap s so the turn-end gate answers inside the Stop hook's own timeout. The kernels were NOT verified this turn; run it by hand, and tell the human if it keeps timing out." ;;
+    setup)
+      vk_add "vericoding: Stainless could not run for $vk_m" "$vk_reason
+The kernels ($vk_targets) were NOT verified this turn; fix the setup (kit/recipes/mill §8) — this is not a verdict on the body." ;;
+  esac
+  if [ -n "$vk_holes" ] && [ "$vk_class" != missing ] && [ "$vk_class" != invalid ] && [ "$vk_class" != rejected ]; then
+    blocked=$((blocked + 1))
+    case " $blockmods " in *" $vk_m "*) ;; *) blockmods="$blockmods $vk_m" ;; esac
+    section blocking "vericoding: $vk_m — a kernel body is not implemented yet" "$vk_holes
+a kernel body is not implemented yet: fill it (vericoding skill)"
+    remedies="$remedies
+$vk_m: implement the ??? body so ./mill $vk_m.stainlessVerify --targets $vk_targets verifies it"
+  fi
+  if [ -n "$vk_unk" ] && [ "$vk_unk" -gt 0 ]; then
+    vk_add "vericoding: $vk_m — $vk_unk verification condition(s) unknown (solver timeout)" "$(dsh_stainless_unknowns "$tmpd/vk-out")
+The solver could not decide these within its timeout: neither proven nor refuted. Not blocking (spec 2026-09-27 §3); the human decides whether to accept them."
+  fi
+done < "$tmpd/vk-mods"
+
 # --- the verdict --------------------------------------------------------------------------------
 if [ "$blocked" -gt 0 ]; then
   block "this turn left failing the commit gate:$blockmods
@@ -775,6 +1043,7 @@ fi
 [ -n "$probeline" ] && add_line "$probeline"
 [ -n "$vd_note" ] && add_line "$vd_note"
 [ -n "$rw_note" ] && add_line "$rw_note"
+[ -n "$vk_note" ] && add_line "$vk_note"
 if [ -n "$te_greens" ]; then
   while IFS= read -r te_gl; do
     [ -n "$te_gl" ] && add_line "$te_gl"

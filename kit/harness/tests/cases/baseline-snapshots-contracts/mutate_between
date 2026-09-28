@@ -1,0 +1,3 @@
+#!/bin/sh
+# The contracts change between the two SessionStarts: the second must keep the first record.
+sed 's/aaaa1111/zzzz9999/' contracts.json > contracts.json.new && mv contracts.json.new contracts.json

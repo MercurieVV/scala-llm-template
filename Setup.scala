@@ -195,7 +195,7 @@ object Setup extends IOApp:
       "kit",
       "Quality Assurance",
       "Arhitecture-shape rule, skills and lint wiring",
-      "Vendor the AllowedShape rule, its build wiring and the five skills? (yes/no)",
+      "Vendor the AllowedShape rule, its build wiring and the six skills? (yes/no)",
       "no"
     ),
 
@@ -885,7 +885,7 @@ object Setup extends IOApp:
       (lines.take(at) ++ List(line) ++ lines.drop(at)).mkString("\n") + "\n"
 
   /** The reengineering kit: the `AllowedShape` rule, the wiring the chosen
-    * recipe states, the five skills and the digest block. Every file it writes
+    * recipe states, the six skills and the digest block. Every file it writes
     * is read from `kit/` at run time — the rule, its registration, the Mill
     * helper, the recipes' own code blocks, the skills and the digest — so no
     * recipe or rule text is duplicated here. The text mechanics live in
@@ -899,15 +899,16 @@ object Setup extends IOApp:
   private object InstallKit extends SetupStep:
     val id = "install-kit"
 
-    /** The five skill directories `kit/skills/` ships; the digest names the
-      * same five.
+    /** The six skill directories `kit/skills/` ships; the digest names the same
+      * six.
       */
     private val SkillNames = List(
       "shaping-a-module",
       "reengineering-module",
       "reshaping-module-by-linters",
       "verify-before-done",
-      "verification-lane"
+      "verification-lane",
+      "vericoding"
     )
 
     /** Where each recipe states the Scala version and the scalafix version its

@@ -1,0 +1,23 @@
+package build.buildKit
+
+import mill._
+import mill.scalalib._
+import build.BuildPaths
+
+/** Stainless verification for a module whose kernels are verified in place (spec 2026-09-27 §1). The library
+  * jar is an unmanaged dependency at `<module>/lib/stainless-library.jar` (from the standalone
+  * distribution); `stainlessVerify --targets a.scala,b.scala` runs `scripts/stainless-verify.sh` on
+  * exactly those files. Exit codes are the script's: 0 no invalid VC, 1 an invalid VC, 2 setup failure.
+  */
+trait StainlessModule extends ScalaModule {
+  def stainlessJar = Task.Source(moduleDir / "lib" / "stainless-library.jar")
+  override def unmanagedClasspath = Task { super.unmanagedClasspath() ++ Seq(stainlessJar()) }
+
+  def stainlessVerify(targets: String) = Task.Command {
+    val script = BuildPaths.repoRoot / "scripts" / "stainless-verify.sh"
+    val files = targets.split(",").map(_.trim).filter(_.nonEmpty).toSeq
+    if (files.isEmpty) sys.error("stainlessVerify: --targets names no file")
+    val rc = os.proc("sh", script.toString, files).call(cwd = BuildPaths.repoRoot, check = false, stdout = os.Inherit, stderr = os.Inherit)
+    if (rc.exitCode != 0) sys.error(s"stainlessVerify failed (exit ${rc.exitCode})")
+  }
+}

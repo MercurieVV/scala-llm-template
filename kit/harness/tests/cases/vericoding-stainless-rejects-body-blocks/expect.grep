@@ -1,0 +1,3 @@
+vericoding: core — Stainless cannot compile core/src/K.scala:5
+core/src/K.scala:5:24: Found:    (r : Short)
+the body must be in the Stainless-supported subset of Scala; fix it, or ask the human

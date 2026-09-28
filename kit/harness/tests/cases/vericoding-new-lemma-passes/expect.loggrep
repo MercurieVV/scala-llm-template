@@ -1,0 +1,2 @@
+core.stainlessVerify --targets core/src/K.scala
+--no-server --ticker false --color false core.stainlessVerify --targets core/src/K.scala

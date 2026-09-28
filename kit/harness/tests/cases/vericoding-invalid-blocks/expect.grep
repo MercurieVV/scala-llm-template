@@ -1,0 +1,5 @@
+Stainless found invalid verification conditions
+inc
+postcondition
+x: BigInt -> BigInt("0")
+fix the body

@@ -1,0 +1,3 @@
+vericoding: contracts changed in core
+core/src/K.scala K.f requires: added (require(x >= 0))
+contracts are the human's

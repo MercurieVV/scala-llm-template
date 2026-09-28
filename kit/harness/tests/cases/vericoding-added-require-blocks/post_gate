@@ -1,0 +1,4 @@
+#!/bin/sh
+# An added clause is a contract change: the module is not handed to Stainless.
+if grep -q stainlessVerify mill.log; then echo "stainlessVerify ran:"; cat mill.log; exit 1; fi
+echo "no stainlessVerify in the mill log"

@@ -1,0 +1,3 @@
+#!/bin/sh
+# The turn touches a file of the kernel's module that is NOT a registered kernel.
+printf '// touched by this turn\n' >> core/src/Other.scala

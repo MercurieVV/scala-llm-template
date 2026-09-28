@@ -1,0 +1,28 @@
+compiling 5 Scala sources to out/mill-build/compile.dest/classes ...
+done compiling
+stainless-verify: verifying core/src/Valid.scala (timeout 10s/VC)
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/Users/viktorskalinins/.cache/scalasemantic/stainless/0.9.9.3-mac-arm64/lib/stainless-dotty-standalone-0.9.9.3.jar)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[[34m  Info  [0m] Compiling with standard Scala 3.7.2 compiler front end...[[34m  Info  [0m] Finished compiling                                       
+[[34m  Info  [0m] Preprocessing the symbols...                             [[34m  Info  [0m] Preprocessing finished                                   
+[[34m  Info  [0m] Running phase ConstructsUsage                            [[34m  Info  [0m] Running phase PartialFunctions                           [[34m  Info  [0m] Running phase XlangLowering                              [[34m  Info  [0m] Running phase InnerClasses                               [[34m  Info  [0m] Running phase Laws                                       [[34m  Info  [0m] Running phase SuperInvariants                            [[34m  Info  [0m] Running phase SuperCalls                                 [[34m  Info  [0m] Running phase Sealing                                    [[34m  Info  [0m] Running phase MethodLifting                              [[34m  Info  [0m] Running phase MergeInvariants                            [[34m  Info  [0m] Running phase FieldAccessors                             [[34m  Info  [0m] Running phase ValueClasses                               [[34m  Info  [0m] Running phase MethodsLowering                            [[34m  Info  [0m] Running phase ExceptionLifting                           [[34m  Info  [0m] Running phase EffectElaboration                          [[34m  Info  [0m] Running phase AntiAliasing                               [[34m  Info  [0m] Running phase ReturnElimination                          [[34m  Info  [0m] Running phase ImperativeCodeElimination                  [[34m  Info  [0m] Running phase ImperativeCleanup                          [[34m  Info  [0m] Running phase AdtSpecialization                          [[34m  Info  [0m] Running phase RefinementLifting                          [[34m  Info  [0m] Running phase TypeEncoding                               [[34m  Info  [0m] Running phase InvariantInitialization                    [[34m  Info  [0m] Running phase FunctionClosure                            [[34m  Info  [0m] Running phase FunctionSpecialization                     [[34m  Info  [0m] Running phase UnfoldOpaque                               [[34m  Info  [0m] Running phase CallSiteInline                             [[34m  Info  [0m] Running phase ChooseInjector                             [[34m  Info  [0m] Running phase ChooseEncoder                              [[34m  Info  [0m] Running phase FunctionInlining                           [[34m  Info  [0m] Running phase TraceInductElimination                     [[34m  Info  [0m] Running phase SizedADTExtraction                         [[34m  Info  [0m] Running phase InductElimination                          [[34m  Info  [0m] Running phase MeasureInference                           [[34m  Info  [0m] Running phase PartialEvaluation                          [[34m  Info  [0m] Finished lowering the symbols                            
+[[34m  Info  [0m] Generating VCs for 1 function...                         [[34m  Info  [0m] Finished generating VCs                                  
+[[34m  Info  [0m] Starting verification...
+[[34m  Info  [0m]  Verified: 0 / 1
+[[33mWarning [0m] The Z3 native interface is not available. Falling back onto smt-z3.
+[[34m  Info  [0m] Verifying: 1 verification conditions:[[34m  Info  [0m]  Verified: 1 / 1                     
+[[34m  Info  [0m] Done in 1.23s
+[[34m  Info  [0m]   ┌───────────────────┐
+[[34m  Info  [0m] ╔═╡ [32mstainless summary[0m ╞═════════════════════════════════════════════════════════════════════════════════╗
+[[34m  Info  [0m] ║ └───────────────────┘                                                                                 ║
+[[34m  Info  [0m] ║ [32mcore/src/Valid.scala:3:20: [0m                 [32minc[0m    [32mpostcondition[0m         [32mvalid[0m     [32mU:smt-z3[0m      [32m0.1[0m  ║
+[[34m  Info  [0m] ╟┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╢
+[[34m  Info  [0m] ║ [32mtotal: 1    valid: 1    (0 from cache, 0 trivial) invalid: 0    unknown: 0    time:    0.09[0m           ║
+[[34m  Info  [0m] ╚═══════════════════════════════════════════════════════════════════════════════════════════════════════╝
+[[34m  Info  [0m] Verification pipeline summary:
+[[34m  Info  [0m]   cache, nativez3, non-batched
+[[34m  Info  [0m] Shutting down executor service.
+stainless-verify: summary -> [  Info  ] ║ total: 1    valid: 1    (0 from cache, 0 trivial) invalid: 0    unknown: 0    time:    0.09           ║
+stainless-verify: OK — no invalid verification conditions (unknown/timeout VCs tolerated)

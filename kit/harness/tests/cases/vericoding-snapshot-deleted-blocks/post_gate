@@ -1,0 +1,4 @@
+#!/bin/sh
+# Contracts cannot be compared, so Stainless is not the verdict: the module blocks on the missing record.
+if grep -q stainlessVerify mill.log; then echo "stainlessVerify ran"; exit 1; fi
+echo "no stainlessVerify"

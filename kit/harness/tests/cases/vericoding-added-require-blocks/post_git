@@ -1,0 +1,12 @@
+#!/bin/sh
+# The turn's own edit: a precondition added to a def whose snapshot had only an `ensuring` (final review
+# F1) -- the stub answer is the contracts after it.
+cat > core/src/K.scala <<'K'
+import stainless.lang.*
+object K {
+  def f(x: BigInt): BigInt = {
+    require(x >= 0)
+    x + 1
+  } ensuring (r => r > x)
+}
+K

@@ -1,0 +1,4 @@
+#!/bin/sh
+# One budget for the whole stage: the first module's run spent it, so the second is not started.
+if grep -q 'core.stainlessVerify' mill.log; then echo "core.stainlessVerify ran past the budget"; cat mill.log; exit 1; fi
+echo "core.stainlessVerify not started"

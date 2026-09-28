@@ -1,0 +1,4 @@
+#!/bin/sh
+# A module whose contracts changed is not handed to Stainless: the block is about the contract.
+if grep -q stainlessVerify mill.log; then echo "stainlessVerify ran:"; cat mill.log; exit 1; fi
+echo "no stainlessVerify in the mill log"

@@ -47,6 +47,12 @@ if [ "${1:-}" = call ]; then
     cat "$SCALASEMANTIC_STUB_LITERALS_OUT"
     exit 0
   fi
+  # SCALASEMANTIC_STUB_CONTRACTS_OUT names a file answered for `call contract_clauses` only (the
+  # vericoding contract guard and the SessionStart snapshot), the same seam as LITERALS_OUT.
+  if [ "$2" = contract_clauses ] && [ -n "${SCALASEMANTIC_STUB_CONTRACTS_OUT:-}" ] && [ -f "$SCALASEMANTIC_STUB_CONTRACTS_OUT" ]; then
+    cat "$SCALASEMANTIC_STUB_CONTRACTS_OUT"
+    exit 0
+  fi
   if [ -n "${SCALASEMANTIC_STUB_CALL_ERR:-}" ] && [ -f "${SCALASEMANTIC_STUB_CALL_ERR}" ]; then
     cat "${SCALASEMANTIC_STUB_CALL_ERR}" >&2
     exit "${SCALASEMANTIC_STUB_CALL:-0}"

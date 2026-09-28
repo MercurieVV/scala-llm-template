@@ -1,0 +1,5 @@
+#!/bin/sh
+# A module whose compile blocked is not handed to Stainless (it would report noise), nor to the guard.
+if grep -q stainlessVerify mill.log; then echo "stainlessVerify ran"; cat mill.log; exit 1; fi
+if grep -q 'call contract_clauses' semantic.log 2>/dev/null; then echo "contract_clauses was called"; exit 1; fi
+echo "no stainlessVerify for a blocked module"

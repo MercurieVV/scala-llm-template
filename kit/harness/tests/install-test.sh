@@ -12,7 +12,7 @@ scratch() { _d=$(mktemp -d); git -C "$_d" init -q; printf '%s\n' "$_d"; }
 p=$(scratch)
 out=$(sh "$engine/install.sh" "$p" 2>&1); code=$?
 is "fresh_install_seeds: exit" 0 "$code"
-for f in contract frozen-paths hooks.json cc-settings.json policy/allowed-types.tsv policy/memorisation.tsv instructions/local.tsv instructions/scalac-kinds.tsv; do
+for f in contract frozen-paths hooks.json cc-settings.json policy/allowed-types.tsv policy/memorisation.tsv policy/kernels.tsv instructions/local.tsv instructions/scalac-kinds.tsv; do
   is "fresh_install_seeds: seeded $f" yes "$([ -f "$p/.dsh/$f" ] && echo yes || echo no)"
 done
 is "fresh_install_seeds: engine gate" yes "$([ -f "$p/.dsh/engine/gate.sh" ] && echo yes || echo no)"
@@ -47,7 +47,7 @@ is "committed_clone_keeps_stamp: clone verdict" ok "$(dsh_engine_stamp_verdict "
 # fresh_seeds_pass_the_installation_checks: the engine's own rule functions (the rows check-harness.sh maps)
 # find nothing wrong with the seeds. The one FAIL that may remain names a file a fresh project genuinely lacks,
 # with its remedy: purrism.tsv, written by `sh .dsh/engine/instructions-sync.sh` once the build declares purrism.
-fails=$(cd "$p" && for fn in dsh_holdout_checks dsh_feedback_checks dsh_instruction_checks dsh_verify_checks; do "$fn" "$p" 2>/dev/null; done | grep '^FAIL' | grep -v 'purrism\.tsv is missing — run `sh \.dsh/engine/instructions-sync\.sh`')
+fails=$(cd "$p" && for fn in dsh_holdout_checks dsh_feedback_checks dsh_instruction_checks dsh_verify_checks dsh_kernel_checks; do "$fn" "$p" 2>/dev/null; done | grep '^FAIL' | grep -v 'purrism\.tsv is missing — run `sh \.dsh/engine/instructions-sync\.sh`')
 is "fresh_seeds_pass_the_installation_checks: no FAIL from the seeds" "" "$fails"
 
 # vendored_engine_is_runtime_only: the template-only files (seed/, install.sh, its test, the second-project

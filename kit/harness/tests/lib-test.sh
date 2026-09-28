@@ -2149,6 +2149,158 @@ has "dsh_verify_checks: this repository's memorisation.tsv parses" "ok	.dsh/poli
 has "dsh_verify_checks: this repository's memorisation.tsv is frozen" "ok	.dsh/policy/memorisation.tsv is frozen" "$vm_self"
 rm -rf "$self_root"
 
+# --- dsh_semantic_launcher: the launcher resolution ---------------------------------------------------
+_sl_env_test=$(SCALASEMANTIC_MCP_LAUNCHER=/test/launcher dsh_semantic_launcher)
+is "dsh_semantic_launcher: SCALASEMANTIC_MCP_LAUNCHER wins" "/test/launcher" "$_sl_env_test"
+
+# --- dsh_kernels_rows and dsh_kernel_of: kernel registry parsing ------------------------------------
+kk_tmp=$(mktemp -d)
+mkdir -p "$kk_tmp/.dsh/policy"
+# Test parsing: comments, blanks, CR stripping
+printf '# header\n\ncore/src/K.scala\tcore\tpilot\r\nsong/src/S.scala\tsong\tx\n' > "$kk_tmp/.dsh/policy/kernels.tsv"
+kk_rows=$(dsh_kernels_rows "$kk_tmp")
+has "dsh_kernels_rows: parses rows and skips comments/blanks" "core/src/K.scala" "$kk_rows"
+has "dsh_kernels_rows: extracts only file and module (columns 1 and 2)" "core/src/K.scala	core" "$kk_rows"
+has "dsh_kernels_rows: strips CR from rows" "song/src/S.scala" "$kk_rows"
+case "$kk_rows" in *'pilotpilot'*) bad "dsh_kernels_rows: treats CR as part of line" ;; *) ok "dsh_kernels_rows: CR handled correctly" ;; esac
+
+# Test kernel_of lookup
+is "dsh_kernel_of: registered path returns its module" "core" \
+  "$(dsh_kernel_of "$kk_tmp" "core/src/K.scala" 2>&1)"
+is "dsh_kernel_of: registered path looks up correctly" "song" \
+  "$(dsh_kernel_of "$kk_tmp" "song/src/S.scala" 2>&1)"
+is "dsh_kernel_of: unregistered path exits 1" "" \
+  "$(dsh_kernel_of "$kk_tmp" "other/src/X.scala" 2>&1; [ $? -eq 1 ] && echo)"
+
+# --- dsh_kernel_checks: validation of the kernels registry -------------------------------------------
+# absent file: note (early return)
+rm -f "$kk_tmp/.dsh/policy/kernels.tsv"
+kk_rows=$(dsh_kernel_checks "$kk_tmp" 2>&1)
+has "dsh_kernel_checks: absent file is a note" "note" "$kk_rows"
+has "dsh_kernel_checks: absent file names it" "no .dsh/policy/kernels.tsv" "$kk_rows"
+is "dsh_kernel_checks: absent file returns 0" "0" "$(dsh_kernel_checks "$kk_tmp" >/dev/null 2>&1; echo $?)"
+
+# 2-field row: FAIL with line number (line 2: blank, line 3: bad row)
+mkdir -p "$kk_tmp/.dsh/.state"
+printf '# header\n\ncore/src/K.scala\tcore\n' > "$kk_tmp/.dsh/policy/kernels.tsv"
+touch "$kk_tmp/core/src/K.scala"
+kk_rows=$(dsh_kernel_checks "$kk_tmp" 2>&1)
+has "dsh_kernel_checks: 2-field row is a FAIL" "FAIL" "$kk_rows"
+has "dsh_kernel_checks: 2-field row names the line number" "kernels.tsv:3" "$kk_rows"
+has "dsh_kernel_checks: 2-field row says it needs a reason" "needs <file> TAB <module> TAB <reason>" "$kk_rows"
+
+# missing file: FAIL with line number
+printf '# header\ncore/src/K.scala\tcore\treason\n' > "$kk_tmp/.dsh/policy/kernels.tsv"
+rm -f "$kk_tmp/core/src/K.scala"
+kk_rows=$(dsh_kernel_checks "$kk_tmp" 2>&1)
+has "dsh_kernel_checks: missing file is a FAIL" "FAIL" "$kk_rows"
+has "dsh_kernel_checks: missing file names the line number" "kernels.tsv:2" "$kk_rows"
+has "dsh_kernel_checks: missing file names it" "does not exist" "$kk_rows"
+
+# module not in map: FAIL with line number
+mkdir -p "$kk_tmp/core/src"
+touch "$kk_tmp/core/src/K.scala"
+printf 'core/src\tcore\tfmt\n' > "$kk_tmp/.dsh/.state/modules.tsv"
+printf '# header\ncore/src/K.scala\tunknown\treason\n' > "$kk_tmp/.dsh/policy/kernels.tsv"
+kk_rows=$(dsh_kernel_checks "$kk_tmp" 2>&1)
+has "dsh_kernel_checks: unknown module is a FAIL" "FAIL" "$kk_rows"
+has "dsh_kernel_checks: unknown module names the line number" "kernels.tsv:2" "$kk_rows"
+has "dsh_kernel_checks: unknown module says it is not in the map" "not in the module map" "$kk_rows"
+
+# not frozen: FAIL
+printf 'core/src/K.scala\tcore\treason\n' > "$kk_tmp/.dsh/policy/kernels.tsv"
+kk_rows=$(dsh_kernel_checks "$kk_tmp" 2>&1)
+has "dsh_kernel_checks: unfrozen kernels.tsv is a FAIL" "FAIL" "$kk_rows"
+has "dsh_kernel_checks: unfrozen kernels.tsv says to freeze it" "not frozen (add to .dsh/frozen-paths)" "$kk_rows"
+
+# Final review F4: a re-vendored project keeps its old frozen-paths (install.sh never overwrites it), so
+# the snapshot directory may be unfrozen -- with kernel rows that is a FAIL.
+printf '.dsh/policy/kernels.tsv\tthe registry is human-owned\n' > "$kk_tmp/.dsh/frozen-paths"
+kk_rows=$(dsh_kernel_checks "$kk_tmp" 2>&1)
+has "dsh_kernel_checks: unfrozen contract snapshots are a FAIL" \
+  "FAIL	the contract snapshots (.dsh/.state/contracts/**) are not frozen — add the row to .dsh/frozen-paths" "$kk_rows"
+is "dsh_kernel_checks: unfrozen contract snapshots exit 1" 1 "$(dsh_kernel_checks "$kk_tmp" >/dev/null 2>&1; echo $?)"
+: > "$kk_tmp/kk-empty.tsv"; mv "$kk_tmp/.dsh/policy/kernels.tsv" "$kk_tmp/kk-rows.tsv"; cp "$kk_tmp/kk-empty.tsv" "$kk_tmp/.dsh/policy/kernels.tsv"
+kk_rows=$(dsh_kernel_checks "$kk_tmp" 2>&1)
+case "$kk_rows" in *'contract snapshots'*) bad "dsh_kernel_checks: no kernel rows must not require the snapshot freeze: $kk_rows" ;; *) ok "dsh_kernel_checks: no kernel rows, no snapshot-freeze rule" ;; esac
+mv "$kk_tmp/kk-rows.tsv" "$kk_tmp/.dsh/policy/kernels.tsv"
+
+# well-formed without launcher probe: ok
+printf '.dsh/policy/kernels.tsv\tthe registry is human-owned\n.dsh/.state/contracts/**\tthe snapshots are the human'"'"'s\n' > "$kk_tmp/.dsh/frozen-paths"
+kk_rows=$(dsh_kernel_checks "$kk_tmp" 2>&1)
+case "$kk_rows" in *FAIL*) bad "dsh_kernel_checks: kernels.tsv and the snapshots frozen must not FAIL: $kk_rows" ;; *) ok "dsh_kernel_checks: kernels.tsv and the snapshots frozen, no FAIL" ;; esac
+
+# Final review F3: the Stainless wiring files, when they exist, must be frozen too -- an agent that may
+# edit them can turn Stainless off (a script that always prints OK).
+mkdir -p "$kk_tmp/scripts" "$kk_tmp/buildKit"
+printf '#!/bin/sh\n' > "$kk_tmp/scripts/stainless-verify.sh"
+printf '// wiring\n' > "$kk_tmp/buildKit/Stainless.mill"
+kk_rows=$(dsh_kernel_checks "$kk_tmp" 2>&1)
+has "dsh_kernel_checks: an unfrozen scripts/stainless-verify.sh is a FAIL" \
+  "FAIL	scripts/stainless-verify.sh is not frozen — an agent could disable Stainless; add it to .dsh/frozen-paths" "$kk_rows"
+has "dsh_kernel_checks: an unfrozen buildKit/Stainless.mill is a FAIL" \
+  "FAIL	buildKit/Stainless.mill is not frozen — an agent could disable Stainless; add it to .dsh/frozen-paths" "$kk_rows"
+printf 'scripts/stainless-verify.sh\tthe Stainless wiring is the human'"'"'s\nbuildKit/Stainless.mill\tthe Stainless wiring is the human'"'"'s\n' >> "$kk_tmp/.dsh/frozen-paths"
+kk_rows=$(dsh_kernel_checks "$kk_tmp" 2>&1)
+case "$kk_rows" in *FAIL*) bad "dsh_kernel_checks: frozen Stainless wiring must not FAIL: $kk_rows" ;; *) ok "dsh_kernel_checks: frozen Stainless wiring passes" ;; esac
+rm -rf "$kk_tmp/scripts" "$kk_tmp/buildKit"
+kk_rows=$(dsh_kernel_checks "$kk_tmp" 2>&1)
+case "$kk_rows" in *stainless-verify*|*Stainless.mill*) bad "dsh_kernel_checks: absent wiring files are not checked: $kk_rows" ;; *) ok "dsh_kernel_checks: absent wiring files are not checked" ;; esac
+has "dsh_kernel_checks: well-formed and frozen is ok" "ok" "$kk_rows"
+has "dsh_kernel_checks: well-formed reports the count" "1 kernel file(s) registered" "$kk_rows"
+
+# contract_clauses probe: launcher answers good JSON → ok
+kk_l="$kk_tmp/bin/scalasemantic-mcp"
+mkdir -p "$kk_tmp/bin"
+printf '#!/bin/sh\nprintf '\''{"files":[]}'\''\n' > "$kk_l"
+chmod +x "$kk_l"
+kk_rows=$(SCALASEMANTIC_MCP_LAUNCHER="$kk_l" dsh_kernel_checks "$kk_tmp" 2>&1)
+has "dsh_kernel_checks: launcher answering contract_clauses is ok" \
+  "ok	the launcher answers \`call contract_clauses\`" "$kk_rows"
+
+# contract_clauses probe: launcher prints nothing → note
+printf '#!/bin/sh\nexit 0\n' > "$kk_l"
+chmod +x "$kk_l"
+kk_rows=$(SCALASEMANTIC_MCP_LAUNCHER="$kk_l" dsh_kernel_checks "$kk_tmp" 2>&1)
+has "dsh_kernel_checks: launcher not answering contract_clauses is a note" \
+  "note" "$kk_rows"
+has "dsh_kernel_checks: launcher note names reinstall remedy" "reinstall scalasemantic-mcp" "$kk_rows"
+
+# contract_clauses probe: no kernel rows → no probe
+rm -f "$kk_tmp/.dsh/policy/kernels.tsv"
+touch "$kk_tmp/.dsh/policy/kernels.tsv"
+kk_rows=$(SCALASEMANTIC_MCP_LAUNCHER="$kk_l" dsh_kernel_checks "$kk_tmp" 2>&1)
+has "dsh_kernel_checks: no rows means no launcher probe" "" \
+  "$(printf '%s\n' "$kk_rows" | grep -c 'call contract_clauses')"
+
+# modules.tsv absent: note
+rm -f "$kk_tmp/.dsh/.state/modules.tsv"
+mkdir -p "$kk_tmp/core/src"
+touch "$kk_tmp/core/src/K.scala"
+printf 'core/src/K.scala\tcore\treason\n' > "$kk_tmp/.dsh/policy/kernels.tsv"
+printf '#!/bin/sh\nprintf '\''{"files":[]}'\''\n' > "$kk_l"
+chmod +x "$kk_l"
+kk_rows=$(SCALASEMANTIC_MCP_LAUNCHER="$kk_l" dsh_kernel_checks "$kk_tmp" 2>&1)
+has "dsh_kernel_checks: absent modules.tsv is a note" "note" "$kk_rows"
+has "dsh_kernel_checks: absent modules.tsv names it" "modules.tsv is absent" "$kk_rows"
+has "dsh_kernel_checks: absent modules.tsv does not block well-formed" "ok" "$kk_rows"
+
+# Path spelling (fix round 1): `./` is normalised, anything else not root-relative FAILs -- a row that
+# can never equal a touched path would silently disable the vericoding stage.
+printf './core/src/K.scala\tcore\treason\n' > "$kk_tmp/.dsh/policy/kernels.tsv"
+is "dsh_kernels_rows: a leading ./ is stripped" "core/src/K.scala	core" "$(dsh_kernels_rows "$kk_tmp")"
+is "dsh_kernel_of: a ./-spelled row answers for the plain path" core "$(dsh_kernel_of "$kk_tmp" core/src/K.scala)"
+kk_rows=$(SCALASEMANTIC_MCP_LAUNCHER="$kk_l" dsh_kernel_checks "$kk_tmp" 2>&1)
+case "$kk_rows" in *FAIL*) bad "dsh_kernel_checks: a ./-spelled existing kernel must not FAIL: $kk_rows" ;; *) ok "dsh_kernel_checks: a ./-spelled existing kernel is accepted" ;; esac
+for kk_bad in "$kk_tmp/core/src/K.scala" 'core/../core/src/K.scala' '././core/src/K.scala'; do
+  printf '%s\tcore\treason\n' "$kk_bad" > "$kk_tmp/.dsh/policy/kernels.tsv"
+  kk_rows=$(SCALASEMANTIC_MCP_LAUNCHER="$kk_l" dsh_kernel_checks "$kk_tmp" 2>&1)
+  has "dsh_kernel_checks: $kk_bad is a FAIL naming the rule" \
+    "FAIL	.dsh/policy/kernels.tsv:1 $kk_bad must be a root-relative path like core/src/K.scala" "$kk_rows"
+done
+
+rm -rf "$kk_tmp"
+
 # --- dsh_is_test_path: a VISIBLE test source -- under its owning module's test/, not sealed -----
 itp_tmp=$(mktemp -d)
 mkdir -p "$itp_tmp/.dsh/.state"
@@ -2224,6 +2376,244 @@ mr_out=$(cd "$mr_root" && env PATH="$engine/tests/bin:$bare" GATE_ROOT="$mr_root
   SCALASEMANTIC_STUB_LITERALS_OUT="$mr_root/literals.json" /bin/sh "$engine/verify-diff.sh" 2>&1)
 has "verify-diff with no JSON reader says the memorisation check did not run" \
   "no jq and no python3 to read literal_tokens' answer" "$mr_out"
+
+# --- vericoding: contract_clauses rows, the contract diff, Stainless's output (spec 2026-09-27 §3) ------
+# The same seam as dsh_memo_read above: `$mr_jq:$bare` and `$mr_py:$bare` each hold ONE JSON reader,
+# `$bare` none.
+vk_tmp=$(mktemp -d)
+cat > "$vk_tmp/answer.json" <<'JSON'
+{"files":[
+ {"uri":"core/src/K.scala","defs":[
+   {"key":"K.f","line":3,"requires":[{"text":"require(x >= 0)","shape":"s1"},{"text":"require(y\t>\n0)","shape":"s2"}],
+    "ensuring":{"text":"r => r > x","shape":"s3"},"decreases":{"text":"x","shape":"s4"}},
+   {"key":"K.g","line":9,"requires":[],"ensuring":{"text":"r => r","shape":null},"decreases":null},
+   {"key":"K.plain","line":12,"requires":[],"ensuring":null,"decreases":null}],"error":null},
+ {"uri":"core/src/Bad.scala","defs":[],"error":"core/src/Bad.scala does not parse"}
+]}
+JSON
+vk_want_rows="core/src/K.scala	K.f	requires	0	s1	require(x >= 0)
+core/src/K.scala	K.f	requires	1	s2	require(y > 0)
+core/src/K.scala	K.f	ensuring	0	s3	r => r > x
+core/src/K.scala	K.f	decreases	0	s4	x
+core/src/K.scala	K.g	ensuring	0		r => r"
+vk_tsv() { # <reader PATH> <answer> -> rows, then "rc=<n>"
+  PATH="$1" /bin/sh -c '. "$1/lib.sh"; dsh_contracts_tsv "$2"; printf "rc=%s" "$?"' _ "$engine" "$2"
+}
+printf 'core/src/K.scala\ncore/src/Bad.scala\ncore/src/Gone.scala\n' > "$vk_tmp/req"
+for _vr in jq python3; do
+  if [ "$_vr" = jq ]; then [ "$have_jq" = 1 ] || continue; _vrp="$mr_jq:$bare"; else [ "$have_py" = 1 ] || continue; _vrp="$mr_py:$bare"; fi
+  is "dsh_contracts_tsv ($_vr): one row per clause, index per requires, tabs/newlines flattened, null shape empty" \
+    "$vk_want_rows
+rc=0" "$(vk_tsv "$_vrp" "$vk_tmp/answer.json")"
+  printf 'not json\n' > "$vk_tmp/bad.json"
+  has "dsh_contracts_tsv ($_vr): an answer that is not JSON is rc 1" "rc=1" "$(vk_tsv "$_vrp" "$vk_tmp/bad.json")"
+  is "dsh_contracts_unread ($_vr): an errored file and an absent file are named, a clean one is not" \
+    "core/src/Bad.scala	core/src/Bad.scala does not parse
+core/src/Gone.scala	no entry in the answer
+rc=0" "$(PATH="$_vrp" /bin/sh -c '. "$1/lib.sh"; dsh_contracts_unread "$2" "$3"; printf "rc=%s" "$?"' _ "$engine" "$vk_tmp/answer.json" "$vk_tmp/req")"
+done
+if [ "$have_jq" = 1 ] && [ "$have_py" = 1 ]; then
+  is "dsh_contracts_tsv: jq and python3 print identical rows" \
+    "$(vk_tsv "$mr_jq:$bare" "$vk_tmp/answer.json")" "$(vk_tsv "$mr_py:$bare" "$vk_tmp/answer.json")"
+else
+  printf 'note dsh_contracts_tsv cross-reader agreement not compared: only one of jq/python3 is on PATH\n'
+fi
+is "dsh_contracts_tsv: no jq and no python3 is rc 2" "rc=2" "$(vk_tsv "$bare" "$vk_tmp/answer.json")"
+is "dsh_contract_file: under the state dir, keyed by the sanitised session id" \
+  "$(state_dir)/contracts/a_b.tsv" "$(dsh_contract_file 'a/b')"
+
+# dsh_contract_diff: changed / removed / added-ignored / uri filter / `#` lines skipped
+t=$(printf '\t')
+cat > "$vk_tmp/before.tsv" <<ROWS
+# DSH contract snapshot s1 2026-09-27T00:00:00Z
+# file A.scala
+A.scala${t}K.f${t}requires${t}0${t}s1${t}require(x >= 0)
+A.scala${t}K.f${t}ensuring${t}0${t}s2${t}r => r > x
+A.scala${t}K.g${t}requires${t}0${t}s5${t}require(y > 0)
+B.scala${t}L.h${t}ensuring${t}0${t}s9${t}r => true
+ROWS
+cat > "$vk_tmp/after.tsv" <<ROWS
+A.scala${t}K.f${t}requires${t}0${t}s1x${t}require(x >= 1)
+A.scala${t}K.f${t}ensuring${t}0${t}s2${t}r  =>  r > x
+A.scala${t}K.lemma${t}ensuring${t}0${t}s7${t}_ => true
+ROWS
+printf 'A.scala\n' > "$vk_tmp/uris"
+is "dsh_contract_diff: a changed shape and a removed clause, in snapshot order; same shape passes; new lemma and other uris ignored" \
+  "changed	A.scala	K.f	requires	require(x >= 0)	require(x >= 1)
+removed	A.scala	K.g	requires	require(y > 0)" "$(dsh_contract_diff "$vk_tmp/before.tsv" "$vk_tmp/after.tsv" "$vk_tmp/uris")"
+: > "$vk_tmp/none"
+is "dsh_contract_diff: no uris, no rows" "" "$(dsh_contract_diff "$vk_tmp/before.tsv" "$vk_tmp/after.tsv" "$vk_tmp/none")"
+printf 'B.scala\n' > "$vk_tmp/uris"
+is "dsh_contract_diff: a def with a contract that vanished entirely is removed" \
+  "removed	B.scala	L.h	ensuring	r => true" "$(dsh_contract_diff "$vk_tmp/before.tsv" "$vk_tmp/after.tsv" "$vk_tmp/uris")"
+
+# Final review F1: a clause ADDED to a def the snapshot already had a contract for is a change (adding a
+# precondition is how a counterexample is made to vanish): a new kind on a seen key, and an appended
+# requires index. A def the snapshot never saw (a lemma) stays allowed.
+cat > "$vk_tmp/b5.tsv" <<ROWS
+# DSH contract snapshot s1 2026-09-27T00:00:00Z
+# file A.scala
+A.scala${t}K.f${t}ensuring${t}0${t}s2${t}r => r > x
+A.scala${t}K.h${t}requires${t}0${t}s5${t}require(y > 0)
+ROWS
+cat > "$vk_tmp/a5.tsv" <<ROWS
+A.scala${t}K.f${t}requires${t}0${t}s1${t}require(x > 0)
+A.scala${t}K.f${t}ensuring${t}0${t}s2${t}r => r > x
+A.scala${t}K.h${t}requires${t}0${t}s5${t}require(y > 0)
+A.scala${t}K.h${t}requires${t}1${t}s6${t}require(z > 0)
+A.scala${t}K.lemma${t}requires${t}0${t}s7${t}require(w > 0)
+A.scala${t}K.lemma${t}ensuring${t}0${t}s8${t}_ => true
+ROWS
+printf 'A.scala\n' > "$vk_tmp/uris"
+is "dsh_contract_diff: a new clause kind on a snapshotted def, and an appended requires, are added; a new def is not" \
+  "added	A.scala	K.f	requires	require(x > 0)
+added	A.scala	K.h	requires	require(z > 0)" "$(dsh_contract_diff "$vk_tmp/b5.tsv" "$vk_tmp/a5.tsv" "$vk_tmp/uris")"
+printf 'B.scala\n' > "$vk_tmp/uris"
+is "dsh_contract_diff: an added clause in a uri not asked about is not reported" "" \
+  "$(dsh_contract_diff "$vk_tmp/b5.tsv" "$vk_tmp/a5.tsv" "$vk_tmp/uris")"
+
+# Final review extra: a budget knob with leading zeros is a decimal number, never an octal one (`$((08))`
+# is an arithmetic error that crashes the hook under dash and bash alike); junk falls back to the default.
+is "dsh_decimal: leading zeros stripped" 90 "$(dsh_decimal 0090 540)"
+is "dsh_decimal: 08 is eight, not an octal error" 8 "$(dsh_decimal 08 540)"
+is "dsh_decimal: a lone 0 stays 0" 0 "$(dsh_decimal 0 540)"
+is "dsh_decimal: all zeros is 0" 0 "$(dsh_decimal 000 540)"
+is "dsh_decimal: a plain number is itself" 480 "$(dsh_decimal 480 540)"
+is "dsh_decimal: empty is the default" 540 "$(dsh_decimal '' 540)"
+is "dsh_decimal: junk is the default" 540 "$(dsh_decimal 5x 540)"
+is "dsh_decimal: a negative is the default" 540 "$(dsh_decimal -5 540)"
+
+# Final review F3: the verification escapes a kernel carries -- non-comment lines naming assume(, @extern
+# or @ignore (a line whose first non-blank characters are `//` or `*` is a comment).
+cat > "$vk_tmp/Esc.scala" <<'SCALA'
+object K {
+  // assume(x > 0) is only a comment
+   * @extern in a doc comment
+  @extern def ext(x: BigInt): BigInt = x
+  def f(x: BigInt): BigInt = {
+    assume(x > 0); assume(x > 1)
+    x
+  }
+  @ignore def g = 1
+  val assumed = 1
+  /* assume(x) */
+}
+SCALA
+is "dsh_escape_count: assume(, @extern and @ignore lines, comments skipped, one per line" 4 "$(dsh_escape_count "$vk_tmp/Esc.scala")"
+is "dsh_escape_lines: each counted line as <n>: <text>" \
+"4:  @extern def ext(x: BigInt): BigInt = x
+6:    assume(x > 0); assume(x > 1)
+9:  @ignore def g = 1
+11:  /* assume(x) */" "$(dsh_escape_lines "$vk_tmp/Esc.scala")"
+printf 'object K { val x = 1 }\n' > "$vk_tmp/Clean.scala"
+is "dsh_escape_count: a clean file is 0" 0 "$(dsh_escape_count "$vk_tmp/Clean.scala")"
+is "dsh_escape_count: a missing file is 0" 0 "$(dsh_escape_count "$vk_tmp/Nope.scala")"
+t=$(printf '\t')
+printf '# DSH contract snapshot s1 d\n# file a b/K.scala\n# escapes a b/K.scala 2\n# escapes core/L.scala 0\n' > "$vk_tmp/esnap.tsv"
+is "dsh_snapshot_escapes: the recorded count for a uri (a space in the path is kept)" 2 "$(dsh_snapshot_escapes "$vk_tmp/esnap.tsv" 'a b/K.scala')"
+is "dsh_snapshot_escapes: a zero count" 0 "$(dsh_snapshot_escapes "$vk_tmp/esnap.tsv" core/L.scala)"
+is "dsh_snapshot_escapes: no line for the uri is empty, exit 1" "rc=1" "$(dsh_snapshot_escapes "$vk_tmp/esnap.tsv" other/M.scala; printf 'rc=%s' "$?")"
+
+# dsh_stainless_report / _verdict / _unknowns over Task 1's real captures
+fx="$engine/tests/fixtures/stainless"
+esc=$(printf '\033')
+max_lines=15
+vk_r=$(dsh_stainless_report "$fx/invalid.txt")
+is "dsh_stainless_report invalid.txt: the VC, its counterexample, the unknown count" \
+  "INVALID core/src/Invalid.scala:3:22: 'postcondition' VC for inc
+  counterexample:
+    x: BigInt -> BigInt(\"0\")
+unknown 0" "$vk_r"
+case "$vk_r" in *"$esc"*) bad "dsh_stainless_report: ANSI escape survived" ;; *) ok "dsh_stainless_report: colour stripped" ;; esac
+is "dsh_stainless_report unknown.txt: no invalid VC, unknown 1" "unknown 1" "$(dsh_stainless_report "$fx/unknown.txt")"
+is "dsh_stainless_report valid.txt: unknown 0 only" "unknown 0" "$(dsh_stainless_report "$fx/valid.txt")"
+# A long counterexample: 40 bindings, one of them 1000 characters -> bounded lines, each line cut.
+{
+  cat "$fx/invalid.txt"
+  printf '[Warning ]  - Result for '"'"'postcondition'"'"' VC for big @9:1:\n'
+  printf '[Warning ] core/src/Big.scala:9:1:  => INVALID\n'
+  printf '[Warning ] Found counter-example:\n'
+  i=0; while [ "$i" -lt 40 ]; do printf '[Warning ]   v%s: BigInt -> BigInt("%s")\n' "$i" "$i"; i=$((i + 1)); done
+  printf '[Warning ]   long: List[BigInt] -> %s\n' "$(awk 'BEGIN { for (i = 0; i < 1000; i++) printf "9" }')"
+} > "$vk_tmp/long.txt"
+vk_r=$(dsh_stainless_report "$vk_tmp/long.txt")
+is "dsh_stainless_report: bounded to max_lines (13 kept + the cut marker + unknown)" 15 "$(printf '%s\n' "$vk_r" | wc -l | tr -d ' ')"
+has "dsh_stainless_report: the cut is said" "more lines" "$vk_r"
+max_lines=60
+vk_r=$(dsh_stainless_report "$vk_tmp/long.txt")
+is "dsh_stainless_report: no line longer than 240 characters + the marker" "" \
+  "$(printf '%s\n' "$vk_r" | awk 'length($0) > 245')"
+max_lines=15
+is "dsh_stainless_verdict invalid.txt (Mill exit 1)" "invalid	" "$(dsh_stainless_verdict "$fx/invalid.txt" 1)"
+is "dsh_stainless_verdict valid.txt" "ok	" "$(dsh_stainless_verdict "$fx/valid.txt" 0)"
+is "dsh_stainless_verdict unknown.txt: the script passes unknowns" "ok	" "$(dsh_stainless_verdict "$fx/unknown.txt" 0)"
+sed 's/cache, nativez3, non-batched/missing implementations, cache, choose injection,/' "$fx/valid.txt" > "$vk_tmp/missing.txt"
+is "dsh_stainless_verdict: OK with a missing-implementations pipeline marker is missing, never ok" \
+  "missing	" "$(dsh_stainless_verdict "$vk_tmp/missing.txt" 0)"
+is "dsh_stainless_verdict: OK marker but Mill failed is setup" \
+  "setup	Mill exited 1 after scripts/stainless-verify.sh reported OK" "$(dsh_stainless_verdict "$fx/valid.txt" 1)"
+printf 'stainless-verify: SETUP — no Stainless summary in the output (tool or compile error above)\n[error] core.stainlessVerify\n' > "$vk_tmp/setup.txt"
+is "dsh_stainless_verdict: the SETUP marker's reason" \
+  "setup	no Stainless summary in the output (tool or compile error above)" "$(dsh_stainless_verdict "$vk_tmp/setup.txt" 1)"
+printf 'usage: stainless-verify.sh <file.scala> [<file.scala> ...]\n' > "$vk_tmp/usage.txt"
+has "dsh_stainless_verdict: the usage line is setup" "setup	the verify script was run without a target" "$(dsh_stainless_verdict "$vk_tmp/usage.txt" 1)"
+printf 'Cannot resolve core.stainlessVerify. Try `mill resolve core._` to see what is available.\n' > "$vk_tmp/nomarker.txt"
+is "dsh_stainless_verdict: no marker at all (module without StainlessModule) is setup, naming Mill's line" \
+  "setup	no verdict line from scripts/stainless-verify.sh (Mill exit 1): Cannot resolve core.stainlessVerify. Try \`mill resolve core._\` to see what is available." \
+  "$(dsh_stainless_verdict "$vk_tmp/nomarker.txt" 1)"
+is "dsh_stainless_unknowns unknown.txt: the timed-out VC from the summary table" \
+  "probe/Unknown.scala:6:5  samplesToNanos  body assertion: Multiplication overflow  (timeout)" \
+  "$(dsh_stainless_unknowns "$fx/unknown.txt")"
+is "dsh_stainless_unknowns valid.txt: none" "" "$(dsh_stainless_unknowns "$fx/valid.txt")"
+
+# Fix round 1, item 3: Stainless's own compile/extraction errors naming a TARGET file are `rejected`
+# (the body left the supported subset), not a setup failure the agent can walk past.
+rj="$engine/tests/cases/vericoding-stainless-rejects-body-blocks/root/stainless.txt"
+is "dsh_stainless_verdict: a SETUP run whose [ Error  ] lines name a target is rejected at file:line" \
+  "rejected	core/src/K.scala:5" "$(dsh_stainless_verdict "$rj" 1 core/src/K.scala,core/src/L.scala)"
+is "dsh_stainless_verdict: the same errors naming no target stay setup" \
+  "setup	no Stainless summary in the output (tool or compile error above)" "$(dsh_stainless_verdict "$rj" 1 core/src/Other.scala)"
+is "dsh_stainless_verdict: no targets given is the old verdict" \
+  "setup	no Stainless summary in the output (tool or compile error above)" "$(dsh_stainless_verdict "$rj" 1)"
+is "dsh_stainless_errors: the error lines with their source context, colour-free, the terminal line dropped" \
+  "[ Error  ] core/src/K.scala:5:24: Found:    (r : Short)
+[ Error  ] Required: Boolean
+               (v >= 32767.0  ==> r == 32767) &&
+                                  ^" "$(dsh_stainless_errors "$rj")"
+is "dsh_stainless_verdict: an absolute spelling of a target also matches" "rejected	core/src/K.scala:5" \
+  "$(sed 's|\] core/src/K.scala:|] /repo/core/src/K.scala:|' "$rj" > "$vk_tmp/abs.txt"; dsh_stainless_verdict "$vk_tmp/abs.txt" 1 core/src/K.scala | sed 's|/repo/||')"
+
+# Fix round 1, item 4: an empty shape on either side compares TEXT; empty shape AND text is unreadable.
+cat > "$vk_tmp/b4.tsv" <<ROWS
+A.scala${t}K.a${t}requires${t}0${t}${t}require(a > 0)
+A.scala${t}K.b${t}requires${t}0${t}${t}require(b > 0)
+A.scala${t}K.c${t}ensuring${t}0${t}s3${t}r => r > c
+A.scala${t}K.d${t}ensuring${t}0${t}${t}
+A.scala${t}K.e${t}ensuring${t}0${t}s5${t}r => r > e
+ROWS
+cat > "$vk_tmp/a4.tsv" <<ROWS
+A.scala${t}K.a${t}requires${t}0${t}${t}require(a > 1)
+A.scala${t}K.b${t}requires${t}0${t}sb${t}require(b > 0)
+A.scala${t}K.c${t}ensuring${t}0${t}${t}r => r >= c
+A.scala${t}K.d${t}ensuring${t}0${t}sd${t}r => r
+A.scala${t}K.e${t}ensuring${t}0${t}${t}
+ROWS
+printf 'A.scala\n' > "$vk_tmp/uris"
+is "dsh_contract_diff: empty shape -> text compared; empty shape and text -> unreadable" \
+  "changed	A.scala	K.a	requires	require(a > 0)	require(a > 1)
+changed	A.scala	K.c	ensuring	r => r > c	r => r >= c
+unreadable	A.scala	K.d	ensuring
+unreadable	A.scala	K.e	ensuring" "$(dsh_contract_diff "$vk_tmp/b4.tsv" "$vk_tmp/a4.tsv" "$vk_tmp/uris")"
+
+# Fix round 1, item 1: the seed freezes the snapshot directory, and still parses clean (the frozen
+# grammar has no `*` globs, so the snapshots live under one directory frozen as `prefix/**`).
+mkdir -p "$vk_tmp/fz/.dsh"
+cp "$engine/seed/frozen-paths" "$vk_tmp/fz/.dsh/frozen-paths"
+is "seed frozen-paths: a session's contract snapshot is frozen" \
+  "the contract snapshot is the human's record of the contracts at session start" \
+  "$(dsh_frozen_reason "$(dsh_repo_relpath "$(GATE_ROOT="$vk_tmp/fz" dsh_contract_file s1)" "$vk_tmp/fz")" "$vk_tmp/fz")"
+is "seed frozen-paths: parses with no malformed entry" "rc=0" "$(dsh_frozen_paths "$vk_tmp/fz" >/dev/null 2>&1; printf 'rc=%s' "$?")"
+rm -rf "$vk_tmp"
 rm -rf "$bare" "$mr_jq" "$mr_py" "$mr_tmp" "$mr_root"
 
 # --- the memorisation cache without a hasher: never keyed on content it cannot see --------------
