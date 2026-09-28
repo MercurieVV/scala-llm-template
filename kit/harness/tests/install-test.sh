@@ -135,5 +135,29 @@ is "non_mill_detection: sbt" build.sbt "$(dsh_non_mill_build "$n")"
 e=$(mktemp -d); is "non_mill_detection: empty root is not non-Mill" 1 "$(dsh_non_mill_build "$e" >/dev/null; echo $?)"
 s=$(mktemp -d); : > "$s/project.scala"; is "non_mill_detection: scala-cli" project.scala "$(dsh_non_mill_build "$s")"
 
+# seed frozen-paths is readable and parses cleanly (the frozen grammar has no `*` globs, so
+# the snapshots live under one directory frozen as `prefix/**`). Asserts the seed row shipped
+# with every install.
+fz_tmp=$(mktemp -d)
+mkdir -p "$fz_tmp/.dsh"
+cp "$engine/seed/frozen-paths" "$fz_tmp/.dsh/frozen-paths"
+is "seed frozen-paths: a session's contract snapshot is frozen" \
+  "the contract snapshot is the human's record of the contracts at session start" \
+  "$(dsh_frozen_reason "$(dsh_repo_relpath "$(GATE_ROOT="$fz_tmp" dsh_contract_file s1)" "$fz_tmp")" "$fz_tmp")"
+is "seed frozen-paths: parses with no malformed entry" "rc=0" "$(dsh_frozen_paths "$fz_tmp" >/dev/null 2>&1; printf 'rc=%s' "$?")"
+rm -rf "$fz_tmp"
+
+# vendored_engine_suites_self_contained: run the vendored copy's lib-test.sh (which has no
+# project dependencies beyond dsh helpers) to guard against template-only paths leaking into
+# vendored suites. A grep for template-only paths outside comments would be cheaper, but
+# lib-test exercises the actual code paths the gate uses.
+v_scratch=$(scratch)
+sh "$engine/install.sh" "$v_scratch" >/dev/null 2>&1
+v_out=$(sh "$v_scratch/.dsh/engine/tests/lib-test.sh" 2>&1); v_code=$?
+is "vendored_engine_suites_self_contained: lib-test exit" 0 "$v_code"
+v_failed=$(printf '%s\n' "$v_out" | grep -c '^FAIL' || true)
+is "vendored_engine_suites_self_contained: lib-test no failures" 0 "$v_failed"
+rm -rf "$v_scratch"
+
 printf '%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" = 0 ]

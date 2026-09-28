@@ -2605,14 +2605,6 @@ changed	A.scala	K.c	ensuring	r => r > c	r => r >= c
 unreadable	A.scala	K.d	ensuring
 unreadable	A.scala	K.e	ensuring" "$(dsh_contract_diff "$vk_tmp/b4.tsv" "$vk_tmp/a4.tsv" "$vk_tmp/uris")"
 
-# Fix round 1, item 1: the seed freezes the snapshot directory, and still parses clean (the frozen
-# grammar has no `*` globs, so the snapshots live under one directory frozen as `prefix/**`).
-mkdir -p "$vk_tmp/fz/.dsh"
-cp "$engine/seed/frozen-paths" "$vk_tmp/fz/.dsh/frozen-paths"
-is "seed frozen-paths: a session's contract snapshot is frozen" \
-  "the contract snapshot is the human's record of the contracts at session start" \
-  "$(dsh_frozen_reason "$(dsh_repo_relpath "$(GATE_ROOT="$vk_tmp/fz" dsh_contract_file s1)" "$vk_tmp/fz")" "$vk_tmp/fz")"
-is "seed frozen-paths: parses with no malformed entry" "rc=0" "$(dsh_frozen_paths "$vk_tmp/fz" >/dev/null 2>&1; printf 'rc=%s' "$?")"
 rm -rf "$vk_tmp"
 rm -rf "$bare" "$mr_jq" "$mr_py" "$mr_tmp" "$mr_root"
 

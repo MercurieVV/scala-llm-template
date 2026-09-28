@@ -1,4 +1,5 @@
 #!/bin/sh
-# The project's frozen list is the SEED's, verbatim: the row under test is the one every install ships.
-engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
-cp "$engine/seed/frozen-paths" .dsh/frozen-paths
+# Write .dsh/frozen-paths with the seed's contract snapshot row. The seed is template-only
+# and not vendored, so this case writes its own row (asserted in install-test.sh to be shipped
+# by every install). This proves the freeze semantics: the gate rejects writes to frozen paths.
+printf '.dsh/.state/contracts/**\tthe contract snapshot is the human'"'"'s record of the contracts at session start\n' > .dsh/frozen-paths
