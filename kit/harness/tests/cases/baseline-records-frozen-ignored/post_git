@@ -1,5 +1,6 @@
 #!/bin/sh
 # A git-ignored frozen file, a git-ignored frozen gate write, and a tracked frozen-dir sibling git can see.
+mkdir -p .git/info
 printf 'local/\n.dsh/.state/\n' >> .git/info/exclude
 mkdir -p local
 printf 'k\n' > local/k.txt

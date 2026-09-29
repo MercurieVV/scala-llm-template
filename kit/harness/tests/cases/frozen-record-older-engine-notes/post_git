@@ -2,6 +2,7 @@
 # A session that started under an engine older than the frozen-file record: a readable baseline whose
 # header has no ` frozen-record` marker, no record. A re-vendor mid-session must not block every later
 # turn: noted, never `frozen record missing`.
+mkdir -p .git/info
 printf 'local/\n.dsh/.state/\n' >> .git/info/exclude
 mkdir -p local .dsh/.state
 printf 'k\n' > local/k.txt

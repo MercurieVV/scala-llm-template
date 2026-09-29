@@ -1,6 +1,7 @@
 #!/bin/sh
 # .claude/ is typically git-ignored for settings.local.json; ignore it via .git/info/exclude so a
 # root/.gitignore doesn't ignore the fixture's own shipped files in this repository.
+mkdir -p .git/info
 printf '.claude/\n.dsh/.state/\n' >> .git/info/exclude
 mkdir -p .claude
 printf '{"permissions":{}}\n' > .claude/settings.local.json

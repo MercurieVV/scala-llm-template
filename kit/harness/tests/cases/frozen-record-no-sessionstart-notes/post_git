@@ -2,6 +2,7 @@
 # git-ignored frozen files (spec 2026-09-28 §1 item 2): `local/` and `.dsh/.state/` are ignored through
 # .git/info/exclude -- a fixture cannot ship a .gitignore under root/ without it ignoring the fixture
 # files themselves in this repository.
+mkdir -p .git/info
 printf 'local/\n.dsh/.state/\n' >> .git/info/exclude
 mkdir -p local
 printf 'k\n' > local/k.txt

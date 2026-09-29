@@ -1,4 +1,5 @@
 #!/bin/sh
+mkdir -p .dsh/.state/contracts
 # `.dsh/.state` NOT git-ignored: SessionStart writes this session's contract snapshot (untracked,
 # frozen) and the baseline records its hash. Rewritten afterwards by an ungated route -> block (it is NOT the gate's own write).
 engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
