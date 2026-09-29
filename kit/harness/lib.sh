@@ -357,6 +357,64 @@ dsh_engine_tree_hash() {
 # smoke needs the template's install.sh and kit/recipes/mill.md, so it cannot run from a vendored copy either.
 dsh_engine_template_only() { printf '%s\n' seed install.sh tests/install-test.sh tests/smoke-second-project.sh; }
 
+# dsh_fixture_shape_gaps <engine>: check-harness C1's second shape assertion, here so the template's own
+# lib-test runs it too (2026-09-29: sixteen fixtures wrote into directories a clone does not have, and only
+# a vendored project's check-harness saw it). Prints `count <writers> <destinations>` first, then one line
+# per post_git/mutate_between redirect destination whose directory is neither made by that script
+# (`mkdir`), nor by the runner (`.git` with git_init, `.dsh/.state`), nor held by a tracked file under the
+# case's root/ -- in a clone that directory does not exist and the case fails there only.
+dsh_fixture_shape_gaps() {
+  _fs_engine=$1; _fs_writers=0; _fs_dirs=0; _fs_bad=''
+  for _fs_script in "$_fs_engine"/tests/cases/*/post_git "$_fs_engine"/tests/cases/*/mutate_between; do
+    [ -f "$_fs_script" ] || continue
+    _fs_writers=$((_fs_writers + 1))
+    _fs_case_dir=${_fs_script%/*}
+    _fs_case=${_fs_case_dir##*/}
+    # Where this script makes directories itself: the first non-flag argument of every `mkdir`, quotes
+    # stripped. Comments are cut first, so a `mkdir -p` named in prose does not count.
+    _fs_made=$(awk '{ sub(/#.*/, ""); n = split($0, t, /[[:space:]]+/)
+                      for (i = 1; i < n; i++) if (t[i] == "mkdir") {
+                        for (j = i + 1; j <= n; j++) {
+                          if (t[j] ~ /^-/) continue
+                          gsub(/^["'"'"']|["'"'"']$/, "", t[j]); sub(/\/$/, "", t[j]); print t[j]; break
+                        }
+                      } }' "$_fs_script")
+    # Every redirect destination (`>` and `>>`, any fd prefix), comments cut, quotes and the runner's
+    # own `$SCRATCH_ROOT` prefix stripped -- run.sh substitutes that literally, so it is the scratch
+    # root and never a path inside the fixture tree.
+    for _fs_target in $(awk '{ sub(/#.*/, ""); n = split($0, t, /[[:space:]]+/)
+                                for (i = 1; i < n; i++) if (t[i] ~ /^[0-9]?>>?$/) {
+                                  v = t[i + 1]
+                                  gsub(/^["'"'"']|["'"'"']$/, "", v)
+                                  sub(/^\$SCRATCH_ROOT\//, "", v)
+                                  print v
+                                } }' "$_fs_script"); do
+      _fs_dir=$(dirname -- "$_fs_target")
+      [ "$_fs_dir" = "." ] && continue
+      _fs_dirs=$((_fs_dirs + 1))
+      _fs_ok=0
+      for _fs_c in $_fs_made; do
+        case "$_fs_dir" in "$_fs_c"|"$_fs_c"/*) _fs_ok=1 ;; esac
+      done
+      if [ "$_fs_ok" = 0 ]; then
+        case "$_fs_dir" in
+          # git_init makes the repository (run.sh only runs post_git once that commit exists), and
+          # run.sh itself creates the state directory in every scratch root before the tree is copied.
+          .git) [ -f "$_fs_case_dir/git_init" ] && _fs_ok=1 ;;
+          .dsh/.state) _fs_ok=1 ;;
+        esac
+      fi
+      if [ "$_fs_ok" = 0 ] \
+        && [ -n "$(git -C "$_fs_engine" ls-files -- "tests/cases/$_fs_case/root/$_fs_dir" 2>/dev/null | head -n 1)" ]; then
+        _fs_ok=1
+      fi
+      [ "$_fs_ok" = 1 ] || _fs_bad="$_fs_bad
+${_fs_script##*/} of case $_fs_case writes to $_fs_target, and $_fs_dir/ is neither created by that script (mkdir -p), nor created by the runner, nor a directory holding a tracked file under root/ -- in a clone it does not exist, and the case fails there only"
+    done
+  done
+  printf 'count %s %s%s\n' "$_fs_writers" "$_fs_dirs" "$_fs_bad"
+}
+
 # The tree hash a fresh vendor of <template kit/harness dir> would stamp: a copy with the template-only
 # paths removed, hashed like dsh_engine_tree_hash. `-` when there is no hasher or the copy fails.
 dsh_engine_template_hash() {

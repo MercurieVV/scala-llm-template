@@ -756,59 +756,15 @@ fi
 # The same class, one step further in: a directory that exists here only because something else in
 # this checkout made it. What the case itself declares is what counts, so this is a static reading of
 # the two scripts the runner executes against the copied tree (run.sh's `post_git` and
-# `mutate_between`) rather than a second run of them.
-shape_bad=''
-shape_writers=0
-shape_dirs=0
-for shape_script in "$engine"/tests/cases/*/post_git "$engine"/tests/cases/*/mutate_between; do
-  [ -f "$shape_script" ] || continue
-  shape_writers=$((shape_writers + 1))
-  shape_case_dir=${shape_script%/*}
-  shape_case=${shape_case_dir##*/}
-  # Where this script makes directories itself: the first non-flag argument of every `mkdir`, quotes
-  # stripped. Comments are cut first, so a `mkdir -p` named in prose does not count.
-  shape_made=$(awk '{ sub(/#.*/, ""); n = split($0, t, /[[:space:]]+/)
-                      for (i = 1; i < n; i++) if (t[i] == "mkdir") {
-                        for (j = i + 1; j <= n; j++) {
-                          if (t[j] ~ /^-/) continue
-                          gsub(/^["'"'"']|["'"'"']$/, "", t[j]); print t[j]; break
-                        }
-                      } }' "$shape_script")
-  # Every redirect destination (`>` and `>>`, any fd prefix), comments cut, quotes and the runner's
-  # own `$SCRATCH_ROOT` prefix stripped -- run.sh substitutes that literally, so it is the scratch
-  # root and never a path inside the fixture tree.
-  for shape_target in $(awk '{ sub(/#.*/, ""); n = split($0, t, /[[:space:]]+/)
-                              for (i = 1; i < n; i++) if (t[i] ~ /^[0-9]?>>?$/) {
-                                v = t[i + 1]
-                                gsub(/^["'"'"']|["'"'"']$/, "", v)
-                                sub(/^\$SCRATCH_ROOT\//, "", v)
-                                print v
-                              } }' "$shape_script"); do
-    shape_dir=$(dirname -- "$shape_target")
-    [ "$shape_dir" = "." ] && continue
-    shape_dirs=$((shape_dirs + 1))
-    shape_ok=0
-    for shape_c in $shape_made; do
-      case "$shape_dir" in "$shape_c"|"$shape_c"/*) shape_ok=1 ;; esac
-    done
-    if [ "$shape_ok" = 0 ]; then
-      case "$shape_dir" in
-        # git_init makes the repository (run.sh only runs post_git once that commit exists), and
-        # run.sh itself creates the state directory in every scratch root before the tree is copied.
-        .git) [ -f "$shape_case_dir/git_init" ] && shape_ok=1 ;;
-        .dsh/.state) shape_ok=1 ;;
-      esac
-    fi
-    if [ "$shape_ok" = 0 ] \
-      && [ -n "$(git -C "$engine" ls-files -- "tests/cases/$shape_case/root/$shape_dir" 2>/dev/null | head -n 1)" ]; then
-      shape_ok=1
-    fi
-    if [ "$shape_ok" = 0 ]; then
-      shape_bad="$shape_bad
-     ${shape_script##*/} of case $shape_case writes to $shape_target, and $shape_dir/ is neither created by that script (mkdir -p), nor created by the runner, nor a directory holding a tracked file under root/ -- in a clone it does not exist, and the case fails there only"
-    fi
-  done
-done
+# `mutate_between`) rather than a second run of them. The reading lives in lib.sh
+# (`dsh_fixture_shape_gaps`) so the template's own lib-test asserts it too.
+shape_out=$(dsh_fixture_shape_gaps "$engine")
+shape_count=$(printf '%s\n' "$shape_out" | sed -n '1s/^count //p')
+shape_writers=${shape_count% *}
+shape_dirs=${shape_count#* }
+shape_bad=$(printf '%s\n' "$shape_out" | sed '1d' | sed 's/^/     /')
+[ -n "$shape_bad" ] && shape_bad="
+$shape_bad"
 if [ -n "$shape_bad" ]; then
   bad "the fixture writers depend on directories a clone would not have:$shape_bad"
 elif [ "$shape_dirs" -eq 0 ]; then

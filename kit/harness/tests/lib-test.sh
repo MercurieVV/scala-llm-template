@@ -2767,5 +2767,28 @@ has "no hasher: an edited test's new values are read fresh, not from a stale cac
 is "no hasher: no test-literal cache is written" "" "$(ls "$nh_root/.dsh/.state" | grep memo-testvals)"
 rm -rf "$nohash" "$nh_root"
 
+# dsh_fixture_shape_gaps (2026-09-29): sixteen fixtures wrote into directories a clone does not have, and
+# only a vendored project's check-harness saw it. The template's own fixtures must have no gap here, and
+# the reading must find something to assert (a zero destination count proves nothing).
+# "A clone has it" only means something once the fixtures are in git: a just-vendored, uncommitted
+# engine tracks nothing yet (install.sh does not stage), and check-harness group D names untracked
+# fixture files on its own -- so this row runs where the tree is tracked (the template, a committed
+# vendor) and is skipped, by name, where it is not.
+fs_out=$(dsh_fixture_shape_gaps "$engine")
+if [ -n "$(git -C "$engine" ls-files -- tests/cases 2>/dev/null | head -n 1)" ]; then
+  is "fixture shape: the engine's own post_git/mutate_between write only into directories a clone has" "" "$(printf '%s\n' "$fs_out" | sed '1d')"
+else
+  is "fixture shape: skipped -- this engine's fixtures are not tracked by git yet (commit the vendor)" "" ""
+fi
+is "fixture shape: destinations were read" yes "$(printf '%s\n' "$fs_out" | sed -n '1p' | awk '$3 > 0 { print "yes" }')"
+fs_eng=$(mktemp -d "${TMPDIR:-/tmp}/dsh-fs.XXXXXX")
+mkdir -p "$fs_eng/tests/cases/gap" "$fs_eng/tests/cases/made"
+printf '#!/bin/sh\nprintf x > a/b.txt\n' > "$fs_eng/tests/cases/gap/post_git"
+printf '#!/bin/sh\nmkdir -p a/\nprintf x > a/b.txt\n' > "$fs_eng/tests/cases/made/post_git"
+fs_out=$(dsh_fixture_shape_gaps "$fs_eng")
+is "fixture shape: a write into a directory nothing makes is a gap" yes "$(printf '%s\n' "$fs_out" | grep -q '^post_git of case gap writes to a/b.txt' && echo yes || echo no)"
+is "fixture shape: mkdir -p a/ (trailing slash) makes a/" no "$(printf '%s\n' "$fs_out" | grep -q 'case made' && echo yes || echo no)"
+rm -rf "$fs_eng"
+
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" = 0 ]
