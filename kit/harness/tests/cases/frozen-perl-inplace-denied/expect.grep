@@ -1,2 +1,3 @@
-BLOCKED by tool-policy: engine/details/src/com/TopicFlow.scala is a FROZEN PATH
+BLOCKED by tool-policy: engine/details is a FROZEN PATH
 reason: in-flight reshape by the human — do not edit, move or fix this module
+an interpreter can write where the shell rules cannot see

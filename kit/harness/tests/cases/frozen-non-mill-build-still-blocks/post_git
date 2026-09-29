@@ -1,0 +1,4 @@
+#!/bin/sh
+# An sbt project: the Mill checks stand down at turn-end, but the post-hoc frozen check runs before
+# that exit and still blocks a frozen file written through an ungated route.
+printf x >> engine/details/A.scala

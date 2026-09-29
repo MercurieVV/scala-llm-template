@@ -1,0 +1,6 @@
+{
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "FOO=1 echo hi"
+  }
+}

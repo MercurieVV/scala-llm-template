@@ -1,0 +1,17 @@
+#!/bin/sh
+# git-ignored frozen files: `local/` and `.dsh/.state/` ignored through .git/info/exclude (a root/.gitignore
+# would ignore the fixture files themselves in this repository).
+printf 'local/\n.dsh/.state/\n' >> .git/info/exclude
+mkdir -p local
+printf 'k\n' > local/k.txt
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" >/dev/null || exit 1
+# Another session's contract snapshot, in a record written by an engine whose gate-written list did not
+# yet leave other sessions' records out (the row is added here the way that engine wrote it). The other
+# session rewriting its own record is the gate's bookkeeping, not this session's write: turn-end filters
+# every recorded row through `dsh_gate_written` too, so it never blocks.
+mkdir -p .dsh/.state/contracts
+printf '# DSH contract snapshot s2 2026-09-28T00:00:00Z\n' > .dsh/.state/contracts/s2.tsv
+h=$(if command -v shasum >/dev/null 2>&1; then shasum -a 256 .dsh/.state/contracts/s2.tsv; else sha256sum .dsh/.state/contracts/s2.tsv; fi | cut -c1-64)
+printf '%s\t.dsh/.state/contracts/s2.tsv\n' "$h" >> .dsh/.state/frozen/s1.tsv
+printf '# DSH contract snapshot s2 2026-09-28T00:05:00Z\n' > .dsh/.state/contracts/s2.tsv

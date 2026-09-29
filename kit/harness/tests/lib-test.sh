@@ -279,6 +279,115 @@ has_line 'Moved.mill'
 hasnt_line 'Move.mill'
 hasnt_line 'notes.md'
 hasnt_line 'Gone.scala'
+# `dsh_changed_paths` is the same read UNFILTERED (spec 2026-09-28 §1, the post-hoc frozen check):
+# every extension, a deletion, BOTH names of a rename, an untracked file, a non-ASCII name.
+changed_out="$touchrepo.changed"
+changed_code=$(/bin/sh -c '. "$1/lib.sh"; dsh_changed_paths "$2" "$3"; printf "%s" "$?"' \
+               _ "$engine" "$touchrepo" "$changed_out")
+is "dsh_changed_paths exits 0 on a readable tree" "0" "$changed_code"
+for n in 'notes.md' 'Gone.scala' 'Build.mill' 'Move.mill' 'Moved.mill' 'Newé.scala' 'é.scala' "Tab${tab}Name.scala" 'A.scala'; do
+  if grep -qxF -- "$n" "$changed_out"; then ok "dsh_changed_paths keeps $n"; else
+    bad "dsh_changed_paths keeps $n: got [$(tr '\n' ' ' < "$changed_out")]"
+  fi
+done
+is "dsh_changed_paths lists each path once" "$(sort -u "$changed_out" | wc -l | tr -d ' ')" "$(wc -l < "$changed_out" | tr -d ' ')"
+is "dsh_changed_paths leaves no scratch files beside its output" "" \
+   "$(ls "$touchrepo".changed.* 2>/dev/null)"
+# `dsh_gate_written`: the ONE list of paths the gate itself writes during a session (fix round 1).
+gw() { if /bin/sh -c '. "$1/lib.sh"; dsh_gate_written "$2" "$3"' _ "$engine" "$1" "${2:-}"; then printf yes; else printf no; fi; }
+is "dsh_gate_written: receipts" "yes" "$(gw .dsh/.state/receipts)"
+is "dsh_gate_written: ./-spelled receipts" "yes" "$(gw ./.dsh/.state/receipts)"
+is "dsh_gate_written: modules.tsv" "yes" "$(gw .dsh/.state/modules.tsv)"
+is "dsh_gate_written: a turn-end counter" "yes" "$(gw .dsh/.state/turn-end-s1.count)"
+is "dsh_gate_written: a feedback log" "yes" "$(gw .dsh/.state/feedback/2026-09-28T00-00-00Z.log)"
+is "dsh_gate_written: the human's machine-local frozen-paths is NOT the gate's" "no" "$(gw .dsh/.state/frozen-paths)"
+is "dsh_gate_written: a project file is not" "no" "$(gw engine/details/A.scala)"
+is "dsh_gate_written: another session's contract snapshot" "yes" "$(gw .dsh/.state/contracts/s2.tsv s1)"
+is "dsh_gate_written: THIS session's contract snapshot is not (its baseline hash guards it)" "no" "$(gw .dsh/.state/contracts/s1.tsv s1)"
+is "dsh_gate_written: THIS session's frozen record is not" "no" "$(gw .dsh/.state/frozen/s1.tsv s1)"
+# The state key is cached per session id: a second id in the same shell must not reuse the first key.
+is "dsh_gate_written: cached key follows a changed session id" "no-yes-no" \
+   "$(/bin/sh -c '. "$1/lib.sh"; r=""; for a in "s1 s1" "s1 s2" "s2 s2"; do set -- $a; if dsh_gate_written ".dsh/.state/contracts/$1.tsv" "$2"; then r="$r-yes"; else r="$r-no"; fi; done; printf "%s" "${r#-}"' _ "$engine")"
+# `dsh_frozen_match`: parse once, match many; same verdicts as `dsh_frozen_reason`.
+fmroot=$(mktemp -d); mkdir -p "$fmroot/.dsh"
+printf 'engine/details/**\tdir reason\nREADME.md\texact reason\nsealed\thold/\tsealed reason\n' > "$fmroot/.dsh/frozen-paths"
+fm() { /bin/sh -c '. "$1/lib.sh"; r=$(dsh_frozen_paths "$2" 2>/dev/null); if dsh_frozen_match "$3" "$4" "$r"; then printf "%s" "$dsh_frozen_match_reason"; else printf "-"; fi' _ "$engine" "$fmroot" "$1" "$2"; }
+is "dsh_frozen_match: prefix row" "dir reason" "$(fm any engine/details/X.scala)"
+is "dsh_frozen_match: prefix row names the directory itself" "dir reason" "$(fm any engine/details)"
+is "dsh_frozen_match: sibling with the prefix as a name prefix is not frozen" "-" "$(fm any engine/detailsX/A.scala)"
+is "dsh_frozen_match: exact row" "exact reason" "$(fm any README.md)"
+is "dsh_frozen_match: exact row does not match a child" "-" "$(fm any README.md/x)"
+is "dsh_frozen_match: sealed row answers want=sealed" "sealed reason" "$(fm sealed hold/t.log)"
+is "dsh_frozen_match: frozen row does not answer want=sealed" "-" "$(fm sealed README.md)"
+is "dsh_frozen_match: no rows, no match" "-" "$(/bin/sh -c '. "$1/lib.sh"; if dsh_frozen_match any README.md ""; then printf y; else printf -- -; fi' _ "$engine")"
+is "dsh_frozen_reason agrees with dsh_frozen_match" "dir reason" "$(/bin/sh -c '. "$1/lib.sh"; dsh_frozen_reason engine/details/X.scala "$2"' _ "$engine" "$fmroot")"
+rm -rf "$fmroot"
+# `dsh_frozen_ignored_files` (spec 2026-09-28 §1 item 2): the git-ignored files a frozen row answers
+# for, minus the gate's own writes (`dsh_gate_written`, with the session id passed through).
+firoot=$(mktemp -d)
+( cd "$firoot" && git init -q . && mkdir -p .dsh/.state/contracts local/sub other \
+  && printf 'local/\nother/\n.dsh/.state/\n' > .gitignore \
+  && printf 'local/**\tlocal notes\ntracked.md\ttracked\nuntracked.md\tuntracked\n.dsh/.state/receipts\treceipts\n.dsh/.state/contracts/**\tsnapshots\n' > .dsh/frozen-paths \
+  && printf t > tracked.md && git add -A && git -c user.email=t@t -c user.name=t commit -qm base \
+  && printf u > untracked.md && printf a > local/a.txt && printf b > local/sub/b.txt && printf o > other/x.txt \
+  && printf r > .dsh/.state/receipts && printf c1 > .dsh/.state/contracts/s1.tsv && printf c2 > .dsh/.state/contracts/s2.tsv ) >/dev/null 2>&1
+fi_run() { /bin/sh -c '. "$1/lib.sh"; dsh_frozen_ignored_files "$2" "$3"; printf "rc=%s %s" "$?" "$dsh_frozen_ignored_reason"' _ "$engine" "$@"; }
+is "dsh_frozen_ignored_files: with the session id, its own contract snapshot stays in" \
+   "$(printf '.dsh/.state/contracts/s1.tsv\nlocal/a.txt\nlocal/sub/b.txt\nrc=0 ')" "$(fi_run "$firoot" s1)"
+is "dsh_frozen_ignored_files: without one, every session's records stay out" \
+   "$(printf 'local/a.txt\nlocal/sub/b.txt\nrc=0 ')" "$(fi_run "$firoot" '')"
+fi_none=$(mktemp -d)
+is "dsh_frozen_ignored_files: no frozen rows lists nothing" "rc=0 " "$(fi_run "$fi_none" s1)"
+mkdir -p "$fi_none/.dsh" && printf 'a.txt\tx\n' > "$fi_none/.dsh/frozen-paths" && printf a > "$fi_none/a.txt"
+has "dsh_frozen_ignored_files: git's answer failing is exit 1 with a reason, never 'nothing ignored'" \
+    "rc=1 git check-ignore failed" "$(GIT_CEILING_DIRECTORIES="$fi_none" fi_run "$fi_none" s1)"
+is "dsh_frozen_record_file: under .dsh/.state/frozen/, keyed like the other records" "$firoot/.dsh/.state/frozen/a_b.tsv" \
+   "$(GATE_ROOT="$firoot" /bin/sh -c '. "$1/lib.sh"; dsh_frozen_record_file "a/b"' _ "$engine")"
+fr_run() { /bin/sh -c '. "$1/lib.sh"; dsh_frozen_record_checks "$2"; printf "rc=%s" "$?"' _ "$engine" "$1"; }
+has "dsh_frozen_record_checks: frozen rows without the records' row FAIL" \
+    "FAIL	the frozen-path hash records (.dsh/.state/frozen/**) are not frozen — add the row to .dsh/frozen-paths" "$(fr_run "$firoot")"
+has "dsh_frozen_record_checks: ... and exit 1" "rc=1" "$(fr_run "$firoot")"
+printf '.dsh/.state/frozen/**\tthe frozen-path hash record is the human'"'"'s record of the frozen files at session start\n' >> "$firoot/.dsh/frozen-paths"
+has "dsh_frozen_record_checks: with the row, ok" "ok	the frozen-path hash records" "$(fr_run "$firoot")"
+has "dsh_frozen_record_checks: ... and exit 0" "rc=0" "$(fr_run "$firoot")"
+rm -f "$fi_none/.dsh/frozen-paths"
+is "dsh_frozen_record_checks: no frozen rows, nothing to say" "rc=0" "$(fr_run "$fi_none")"
+rm -rf "$firoot" "$fi_none"
+# `dsh_hash_files` (fix round 1, I1): one hasher run for many files, never a mis-attributed hash. Every
+# row must equal the per-file `dsh_file_hash` of the same path; a file that cannot be hashed is absent.
+hfroot=$(mktemp -d)
+( cd "$hfroot" && mkdir -p 'd ir' && printf a > a.txt && printf b > 'd ir/with space.txt' \
+  && printf c > 'back\slash.txt' && printf d > -dash.txt && printf e > 'two  spaces.txt' \
+  && printf s > secret.txt && chmod 000 secret.txt )
+printf '%s\n' a.txt 'd ir/with space.txt' 'back\slash.txt' -dash.txt 'two  spaces.txt' secret.txt gone.txt > "$hfroot.list"
+hf_code=$(/bin/sh -c '. "$1/lib.sh"; dsh_hash_files "$2" "$3" "$4"; printf "%s" "$?"' _ "$engine" "$hfroot" "$hfroot.list" "$hfroot.out")
+is "dsh_hash_files: exit 0" "0" "$hf_code"
+for n in a.txt 'd ir/with space.txt' 'back\slash.txt' -dash.txt 'two  spaces.txt'; do
+  hf_want=$(/bin/sh -c '. "$1/lib.sh"; h=$(dsh_file_hash "$2/$3"); printf "%s" "${h#\\}"' _ "$engine" "$hfroot" "$n")
+  is "dsh_hash_files: $n hashed, and to its own hash" "$hf_want	$n" "$(grep -F -x -- "$hf_want	$n" "$hfroot.out")"
+done
+is "dsh_hash_files: an unreadable and a missing file are absent, not guessed" "5" "$(wc -l < "$hfroot.out" | tr -d ' ')"
+is "dsh_hash_files: no scratch files beside its output" "" "$(ls "$hfroot".out.* 2>/dev/null)"
+chmod 600 "$hfroot/secret.txt"; rm -rf "$hfroot" "$hfroot.list" "$hfroot.out"
+# baseline.sh killed mid-hash (the SessionStart timeout) leaves no scratch directory behind (M1), under
+# /bin/sh and under dash when present: dash skips an EXIT trap on a fatal signal unless one is set for it.
+for kl_sh in /bin/sh dash; do
+  command -v "$kl_sh" >/dev/null 2>&1 || continue
+  klroot=$(mktemp -d); kltmp=$(mktemp -d); klbin=$(mktemp -d)
+  ( cd "$klroot" && git init -q . && mkdir -p .dsh conf && printf 'conf/\n.dsh/.state/\n' > .gitignore \
+    && printf 'conf/**\tconf\n' > .dsh/frozen-paths && git add -A && git -c user.email=t@t -c user.name=t commit -qm b \
+    && printf x > conf/a ) >/dev/null 2>&1
+  printf '#!/bin/sh\n: > "%s/reached"\nsleep 4\n' "$klbin" > "$klbin/shasum"; chmod +x "$klbin/shasum"
+  printf '{"session_id":"k1"}' | TMPDIR="$kltmp" GATE_ROOT="$klroot" GATE_SH="$kl_sh" PATH="$klbin:$PATH" "$kl_sh" "$engine/gate.sh" baseline >/dev/null 2>&1 &
+  klpid=$!
+  kl_i=0; while [ ! -f "$klbin/reached" ] && [ "$kl_i" -lt 50 ]; do sleep 0.2; kl_i=$((kl_i + 1)); done
+  is "baseline.sh kill test ($kl_sh): the hook reached the hasher" "yes" "$([ -f "$klbin/reached" ] && printf yes)"
+  is "baseline.sh kill test ($kl_sh): its scratch directory exists while it hashes" "1" "$(ls -A "$kltmp" | wc -l | tr -d ' ')"
+  kill -TERM "$klpid" 2>/dev/null; wait "$klpid" 2>/dev/null
+  is "baseline.sh killed mid-hash ($kl_sh) leaves no scratch directory in TMPDIR" "" "$(ls -A "$kltmp")"
+  sleep 4
+  rm -rf "$klroot" "$kltmp" "$klbin"
+done
 # A read of the working tree that FAILS must not look like a clean tree: corruption of the index is
 # the cheapest way to make `git status` error while the repository is still recognisable.
 printf 'not an index at all' > "$touchrepo/.git/index"
@@ -293,7 +402,15 @@ case "$fail_reason" in
 esac
 is "dsh_touched_files exits 1 outside a work tree" "1" \
    "$(GIT_CEILING_DIRECTORIES="$touchrepo" /bin/sh -c '. "$1/lib.sh"; dsh_touched_files "$2" "$3"; printf "%s" "$?"' _ "$engine" /nonexistent-dsh-root "$touched_out.none")"
-rm -rf "$touchrepo" "$touched_out" "$touched_out.none" "$hashed" "$basefile" "$garbage"
+is "dsh_changed_paths exits 2 when git cannot read the tree" "2" \
+   "$(/bin/sh -c '. "$1/lib.sh"; dsh_changed_paths "$2" "$3"; printf "%s" "$?"' _ "$engine" "$touchrepo" "$changed_out")"
+case "$(/bin/sh -c '. "$1/lib.sh"; dsh_changed_paths "$2" "$3" >/dev/null 2>&1; printf "%s" "$dsh_touched_reason"' _ "$engine" "$touchrepo" "$changed_out")" in
+  *'git status'*failed*) ok "dsh_changed_paths names the failed read" ;;
+  *) bad "dsh_changed_paths names the failed read" ;;
+esac
+is "dsh_changed_paths exits 1 outside a work tree" "1" \
+   "$(GIT_CEILING_DIRECTORIES="$touchrepo" /bin/sh -c '. "$1/lib.sh"; dsh_changed_paths "$2" "$3"; printf "%s" "$?"' _ "$engine" /nonexistent-dsh-root "$changed_out.none")"
+rm -rf "$touchrepo" "$touched_out" "$touched_out.none" "$changed_out" "$changed_out.none" "$hashed" "$basefile" "$garbage"
 
 # --- (g) the EPIPE class, end to end through both long-message hooks (F62/F63) -----------------
 # Five separate instances of this defect were found by five separate probes, so this section makes the
@@ -2482,6 +2599,10 @@ is "dsh_decimal: a plain number is itself" 480 "$(dsh_decimal 480 540)"
 is "dsh_decimal: empty is the default" 540 "$(dsh_decimal '' 540)"
 is "dsh_decimal: junk is the default" 540 "$(dsh_decimal 5x 540)"
 is "dsh_decimal: a negative is the default" 540 "$(dsh_decimal -5 540)"
+# DSH_TESTS_CAP (spec 2026-09-28 §3, the turnEndTests time cap): the same dsh_decimal rule, its own
+# default (300) instead of the Stop-hook budget's 540.
+is "dsh_decimal: DSH_TESTS_CAP junk falls back to its own default (300)" 300 "$(dsh_decimal bad 300)"
+is "dsh_decimal: DSH_TESTS_CAP leading zeros stripped like every other knob" 2 "$(dsh_decimal 002 300)"
 
 # Final review F3: the verification escapes a kernel carries -- non-comment lines naming assume(, @extern
 # or @ignore (a line whose first non-blank characters are `//` or `*` is a comment).

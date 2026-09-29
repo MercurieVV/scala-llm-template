@@ -1,0 +1,4 @@
+#!/bin/sh
+# The turn's own edit: touches the kernel core/src/K.scala, whose contracts match the snapshot below
+# (the contract guard passes cleanly, so the turn reaches the Stainless budget check).
+printf '// touched by this turn\n' >> core/src/K.scala

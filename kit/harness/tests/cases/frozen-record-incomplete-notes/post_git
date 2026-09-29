@@ -1,0 +1,14 @@
+#!/bin/sh
+# git-ignored frozen files (spec 2026-09-28 §1 item 2): `local/` and `.dsh/.state/` are ignored through
+# .git/info/exclude -- a fixture cannot ship a .gitignore under root/ without it ignoring the fixture
+# files themselves in this repository.
+printf 'local/\n.dsh/.state/\n' >> .git/info/exclude
+mkdir -p local
+printf 'k\n' > local/k.txt
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+# A frozen ignored file SessionStart cannot hash (unreadable): the record says `incomplete:`.
+printf 's\n' > local/secret.txt
+chmod 000 local/secret.txt
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" >/dev/null || exit 1
+chmod 600 local/secret.txt
+head -n 1 .dsh/.state/frozen/s1.tsv | grep -q " incomplete: " || { echo "record not incomplete"; cat .dsh/.state/frozen/s1.tsv; exit 1; }

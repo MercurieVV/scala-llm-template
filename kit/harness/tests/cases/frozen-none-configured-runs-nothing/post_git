@@ -1,0 +1,3 @@
+#!/bin/sh
+# No frozen rows at all: a non-Scala change is nothing for the post-hoc check to look at.
+printf 'more\n' >> NOTES.md

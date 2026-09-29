@@ -1,0 +1,6 @@
+{
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "bash -lc 'echo x > engine/details/A.scala'"
+  }
+}

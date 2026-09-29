@@ -1,0 +1,5 @@
+local/**	the human's local notes, never committed
+.dsh/.state/receipts	receipts are the gate's record; the human's
+.dsh/.state/modules.tsv	the coverage map is the build's answer; edit build.mill, not this cache
+.dsh/.state/contracts/**	the contract snapshot is the human's record of the contracts at session start
+.dsh/.state/frozen/**	the frozen-path hash record is the human's record of the frozen files at session start

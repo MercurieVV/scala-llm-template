@@ -25,6 +25,7 @@
 .dsh/.state/receipts	receipts are the gate's record; the human's
 .dsh/.state/modules.tsv	the coverage map is the build's answer; edit build.mill, not this cache
 .dsh/.state/contracts/**	the contract snapshot is the human's record of the contracts at session start
+.dsh/.state/frozen/**	the frozen-path hash record is the human's record of the frozen files at session start
 .dsh/instructions/purrism.tsv	purrism's findings table, vendored by .dsh/engine/instructions-sync.sh; the human's
 .dsh/instructions/local.tsv	the project's instruction table; the agent proposes rows in chat, the human writes them
 .dsh/instructions/scalac-kinds.tsv	the scalac headline→kind table; the human's

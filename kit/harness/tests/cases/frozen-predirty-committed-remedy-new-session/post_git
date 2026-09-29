@@ -1,0 +1,11 @@
+#!/bin/sh
+# Dirty at SessionStart, edited further this session, then COMMITTED (final-review fix pass, I2
+# residual): the SessionStart baseline compares this path's content at session start, never HEAD, so
+# committing the further edit does not clear the finding -- `git diff HEAD` shows nothing once this
+# runs, yet the block persists. This is the repro the remedy text must name explicitly.
+printf 'draft\n// the human'"'"'s in-flight work\n' > NOTES.md
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+printf 'draft\n// the human'"'"'s in-flight work\n// edited further this session through an ungated route\n' > NOTES.md
+git add NOTES.md
+git -c user.email=t@t -c user.name=t commit -qm "human commits the further edit"

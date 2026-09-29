@@ -1,0 +1,2 @@
+#!/bin/sh
+! grep -q "frozen record missing" "$GATE_OUT_FILE"

@@ -1,0 +1,11 @@
+#!/bin/sh
+# The stub's grandchild (te-child.sh, a `sleep 30`) must be gone too: dsh_bounded_probe kills the
+# whole process tree, not just the top-level te-stub.sh -- a wrapper's own child left running past
+# the cap is exactly the failure mode _dsh_kill_tree exists to close. te-child.sh's path (under this
+# case's own scratch root, a fresh mktemp directory) is the unique marker: no other test can share it.
+if pgrep -f te-child.sh >/dev/null 2>&1; then
+  echo "leftover child from te-child.sh"
+  pgrep -fl te-child.sh
+  exit 1
+fi
+echo "no leftover child"

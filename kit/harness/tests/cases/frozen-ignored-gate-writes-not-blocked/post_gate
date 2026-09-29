@@ -1,0 +1,7 @@
+#!/bin/sh
+rec=.dsh/.state/frozen/s1.tsv
+[ -f "$rec" ] || { echo "FAIL: no frozen-ignored record"; exit 1; }
+grep -q '	local/k.txt$' "$rec" || { echo "FAIL: local/k.txt not recorded"; cat "$rec"; exit 1; }
+if grep -q '	\.dsh/\.state/receipts$\|	\.dsh/\.state/modules\.tsv$' "$rec"; then echo "FAIL: the gate's own writes were recorded"; cat "$rec"; exit 1; fi
+if grep -q 'frozen path\|frozen record' "$GATE_OUT_FILE"; then echo "FAIL: the gate's own writes blocked"; exit 1; fi
+echo "post_gate: gate writes not recorded, not blocked"

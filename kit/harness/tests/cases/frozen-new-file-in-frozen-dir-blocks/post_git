@@ -1,0 +1,3 @@
+#!/bin/sh
+# A brand-new file under a frozen `dir/**` row: untracked, reported by `-uall`.
+printf 'package engine.details\n\nobject New\n' > engine/details/New.scala

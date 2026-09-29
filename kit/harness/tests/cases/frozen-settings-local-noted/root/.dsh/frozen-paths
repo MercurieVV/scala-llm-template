@@ -1,0 +1,2 @@
+.claude/settings.local.json	the hook wiring Claude Code actually reads; the human's
+.dsh/.state/frozen/**	the frozen-path hash record is the human's record of the frozen files at session start

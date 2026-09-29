@@ -1,0 +1,3 @@
+frozen path removed this turn: engine/details/A.scala
+frozen path changed this turn: engine/details/B.scala
+git diff HEAD -- engine/details/A.scala

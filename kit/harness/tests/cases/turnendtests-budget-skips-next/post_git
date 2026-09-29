@@ -1,0 +1,5 @@
+#!/bin/sh
+# The turn touches a kernel in each of two modules; git lists app/ first, so core is the second --
+# the same ordering vericoding-stop-budget-second-module-notes relies on.
+printf '\n// touched this turn\n' >> app/src/A.scala
+printf '\n// touched this turn\n' >> core/src/K.scala

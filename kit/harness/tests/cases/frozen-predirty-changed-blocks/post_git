@@ -1,0 +1,6 @@
+#!/bin/sh
+# Dirty at SessionStart, then changed further this session: the hash differs from the baseline's.
+printf '\n// the human\x27s in-flight work\n' >> engine/details/A.scala
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+printf '\n// this session\x27s write through an ungated route\n' >> engine/details/A.scala

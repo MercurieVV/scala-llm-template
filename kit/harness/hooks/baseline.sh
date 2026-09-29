@@ -39,6 +39,21 @@ sid=$(payload_get session_id)
 [ -n "$sid" ] || sid=unknown
 baseline=$(dsh_baseline_file "$sid")
 
+# Every scratch directory this hook makes is removed on every exit — including a kill by the hook's own
+# timeout mid-hash (fix round 1, M1): a signal exits through the EXIT trap, which a bare kill skips.
+tmpd=''
+fzd=''
+snapd=''
+cleanup() {
+  _rc=$?
+  for _cd in "$tmpd" "$fzd" "$snapd"; do
+    if [ -n "$_cd" ]; then rm -rf "$_cd" 2>/dev/null; fi
+  done
+  exit "$_rc"
+}
+trap cleanup 0
+trap 'exit 143' HUP INT TERM
+
 # --- the contract snapshot (spec 2026-09-27 §3) -------------------------------------------------
 # Taken here, BEFORE every early exit below: a session whose file baseline is already recorded, or that
 # has no hasher or no git, still needs its kernels' contracts recorded, because the turn-end contract
@@ -136,6 +151,80 @@ DSH baseline: no contract snapshot for $(cut -f1 "$snapd/unread" | tr '\n' ' ')�
   fi
   [ -n "$snapd" ] && rm -rf "$snapd" 2>/dev/null
 fi
+
+# --- the git-ignored frozen-file record (spec 2026-09-28 §1 item 2) -------------------------------
+# git cannot see a git-ignored file, so turn-end's post-hoc check (which reads git) never lists one.
+# This records the sha256 of every existing git-ignored file a frozen row answers for
+# (`dsh_frozen_ignored_files`, minus the gate's own writes), and turn-end re-hashes each. Written right
+# after the contract snapshot — so this session's own snapshot is a legitimate row (written before,
+# never rewritten) — and BEFORE every early exit below, like the snapshot. ALWAYS written on a session's
+# first SessionStart: header-only when nothing is frozen or ignored, `incomplete: <reason>` in the header
+# when something could not be hashed (the rows that could are kept), so "absent" at turn-end means
+# "deleted". A second SessionStart keeps the first record, and one that finds it DELETED after the
+# session's file baseline exists does not retake it (it would adopt this session's own writes as the
+# human's; turn-end blocks instead) — the contract snapshot's rule. Never blocks a session start.
+fz_note=''
+fz_rec=$(dsh_frozen_record_file "$sid")
+fz_rec_rel=.dsh/.state/frozen/$(dsh_state_key "$sid").tsv
+if [ -f "$fz_rec" ]; then
+  :
+elif [ -f "$baseline" ]; then
+  case "$(head -n 1 "$baseline" 2>/dev/null)" in
+    *' frozen-record')
+      fz_note="DSH baseline: the frozen-file record for session $sid ($fz_rec) is gone although this session already wrote one (its file baseline $baseline says so) — it was deleted, and it is not retaken (a new record would adopt this session's own writes to git-ignored frozen files as the human's). The turn-end gate blocks on it; a new session records afresh." ;;
+    *)
+      fz_note="DSH baseline: session $sid started under an engine that did not record the git-ignored frozen files (its file baseline $baseline predates the record); none is taken mid-session, so they are not compared this session — the turn-end gate notes it. A new session records them." ;;
+  esac
+else
+  fz_head="# DSH frozen-ignored $sid $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  fz_reason=''
+  fz_n=0
+  fz_bad=''
+  mkdir -p "$(dirname -- "$fz_rec")" 2>/dev/null
+  # A named template, so the directory lands in $TMPDIR (and a test can see it is gone).
+  fzd=$(mktemp -d "${TMPDIR:-/tmp}/dsh-frozen.XXXXXX" 2>/dev/null) || fzd=''
+  if [ -z "$fzd" ]; then
+    fz_reason='no temporary directory could be made'
+  elif [ -n "$(dsh_frozen_paths "$root" 2>/dev/null)" ]; then
+    : > "$fzd/rows"
+    if ! dsh_has_hasher; then
+      fz_reason='no sha256 tool (shasum or sha256sum) is on PATH'
+    else
+      dsh_frozen_ignored_files "$root" "$sid" > "$fzd/list.all" || fz_reason=$dsh_frozen_ignored_reason
+      # Never the record inside itself (it is written after this list, and must not describe itself).
+      awk -v me="$fz_rec_rel" 'NF && $0 != me' "$fzd/list.all" > "$fzd/list"
+      # One hasher run for the whole list (fix round 1, I1): a fork per file cost 33 s for 3000 files.
+      dsh_hash_files "$root" "$fzd/list" "$fzd/rows"
+      fz_n=$(awk 'END { print NR }' "$fzd/rows")
+      awk -F'\t' -v d="$fzd/rows" 'FILENAME == d { ok[$2] = 1; next } !($0 in ok)' "$fzd/rows" "$fzd/list" > "$fzd/bad"
+      if [ -s "$fzd/bad" ]; then
+        fz_bad="$(head -n 5 "$fzd/bad" | tr '\n' ' ')"
+        fz_nbad=$(awk 'END { print NR }' "$fzd/bad")
+        [ "$fz_nbad" -gt 5 ] && fz_bad="$fz_bad(and $((fz_nbad - 5)) more)"
+        fz_reason="${fz_reason:+$fz_reason; }could not be hashed: ${fz_bad% }"
+      fi
+    fi
+  fi
+  if [ -n "$fz_reason" ]; then
+    fz_head="$fz_head incomplete: $(printf '%s' "$fz_reason" | tr '\n' ' ')"
+    fz_note="DSH baseline: the frozen-file record ($fz_rec) is incomplete — $fz_reason; turn-end compares the $fz_n file(s) it did record and notes the rest as not compared."
+  elif [ "$fz_n" -gt 0 ]; then
+    fz_note="DSH baseline: recorded $fz_n git-ignored frozen file(s) at $fz_rec; the turn-end gate blocks when one of them changes."
+  fi
+  if { printf '%s\n' "$fz_head"; if [ -n "$fzd" ] && [ -f "$fzd/rows" ]; then cat "$fzd/rows"; fi; } > "$fz_rec.tmp.$$" 2>/dev/null \
+     && mv -f "$fz_rec.tmp.$$" "$fz_rec" 2>/dev/null; then
+    :
+  else
+    rm -f "$fz_rec.tmp.$$" 2>/dev/null
+    fz_note="DSH baseline: the frozen-file record $fz_rec could not be written, so the git-ignored frozen files cannot be compared this session; the turn-end gate notes it on every turn."
+  fi
+  [ -n "$fzd" ] && rm -rf "$fzd" 2>/dev/null
+fi
+if [ -n "$fz_note" ]; then
+  snap_note="${snap_note:+$snap_note
+}$fz_note"
+fi
+
 # Every exit of this hook carries the snapshot's note, whichever early exit the file baseline takes.
 ballow() {
   if [ -n "$snap_note" ]; then
@@ -162,12 +251,6 @@ if [ -z "$tmpd" ]; then
   tmpd=${TMPDIR:-/tmp}/dsh-baseline.$$
   mkdir -p "$tmpd" 2>/dev/null
 fi
-cleanup() {
-  _rc=$?
-  if [ -n "$tmpd" ]; then rm -rf "$tmpd" 2>/dev/null; fi
-  exit "$_rc"
-}
-trap cleanup 0
 
 dsh_touched_files "$root" "$tmpd/touched"
 touched_code=$?
@@ -180,12 +263,43 @@ fi
 
 rows=0
 : > "$tmpd/new"
-printf '# DSH session baseline %s %s\n' "$sid" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$tmpd/new"
+# ` frozen-record` closes the header when this session's git-ignored frozen-file record exists as the
+# baseline is taken (written above, or kept): it is how turn-end tells "the record was deleted" (block)
+# from "this session started under an engine that never wrote one" (a note — a re-vendor mid-session
+# must not block every later turn of every live session). `dsh_baseline_readable` reads only the
+# header's first 23 bytes, so an older reader is unaffected.
+fz_mark=''
+[ -f "$fz_rec" ] && fz_mark=' frozen-record'
+printf '# DSH session baseline %s %s%s\n' "$sid" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$fz_mark" > "$tmpd/new"
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   printf '%s\t%s\n' "$(dsh_file_hash "$root/$path")" "$path" >> "$tmpd/new"
   rows=$((rows + 1))
 done < "$tmpd/touched"
+
+# Dirty FROZEN paths of every other extension too (spec 2026-09-28 §1): turn-end's post-hoc check
+# blocks on any frozen path this session changed, and "already dirty at SessionStart, unchanged
+# since" can only be told apart from "changed this session" by a row here. The touched set is
+# `.scala`/`.sc`/`.mill` only, so without these rows the human's dirty `README.md` under a freeze
+# would block every turn. No frozen rows -> no second read. A read that fails here records nothing
+# at all (the same verdict as a failed first read): a baseline missing these rows would make
+# turn-end block the human's own pre-existing work, which is a wrong statement about the session.
+fz_rows=$(dsh_frozen_paths "$root" 2>/dev/null) || :
+if [ -n "$fz_rows" ]; then
+  dsh_changed_paths "$root" "$tmpd/changed"
+  changed_code=$?
+  if [ "$changed_code" != 0 ]; then
+    ballow "DSH baseline: nothing was recorded — the working tree could not be read for the frozen paths ($dsh_touched_reason). The turn-end gate will fall back to the tree-based rule and say so; it fails closed on that read itself."
+  fi
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    grep -qxF -- "$path" "$tmpd/touched" 2>/dev/null && continue
+    dsh_gate_written "$path" "$sid" && continue
+    dsh_frozen_match any "$path" "$fz_rows" || continue
+    printf '%s\t%s\n' "$(dsh_file_hash "$root/$path")" "$path" >> "$tmpd/new"
+    rows=$((rows + 1))
+  done < "$tmpd/changed"
+fi
 
 if mv -f "$tmpd/new" "$baseline" 2>/dev/null; then
   ballow "DSH baseline: recorded $rows pre-existing dirty path(s) for session $sid at $baseline. The turn-end gate will check a path that was already dirty only when its content changes from here, and any path that becomes dirty from a clean start."

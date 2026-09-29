@@ -1,0 +1,6 @@
+{
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "perl -pe 's/a/b/' engine/other/B.scala"
+  }
+}

@@ -1,0 +1,7 @@
+#!/bin/sh
+# The human commits their own in-flight frozen work mid-session: git no longer lists the file, but
+# its content is exactly the baseline's, so nothing was written to it — no block.
+printf '\n// the human\x27s in-flight work\n' >> engine/details/A.scala
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+git add engine/details/A.scala && git -c user.email=t@t -c user.name=t commit -qm human

@@ -151,6 +151,7 @@ probeline=''
 vd_note=''
 rw_note=''
 vk_note=''
+fz_note=''
 
 # The session's attempt counter, sanitised so a session id can never name a path of its choosing.
 # The value is stripped of whitespace before it is trusted, so a counter written by `echo` (or by
@@ -236,6 +237,12 @@ $rw_note"
     _body="$_body
 
 $vk_note"
+  fi
+  # The frozen stage's "not compared" notes (an incomplete or absent git-ignored frozen record) likewise.
+  if [ -n "$fz_note" ]; then
+    _body="$_body
+
+$fz_note"
   fi
   _head=$(first_line "$1")
   _note=$(baseline_note)
@@ -332,6 +339,245 @@ while IFS= read -r path; do
   if [ "$rootp" != "$root" ]; then printf '%s\n' "$root/$path" >> "$tmpd/spell"; fi
 done < "$tmpd/touched"
 
+# --- frozen paths this session changed: the post-hoc check (spec 2026-09-28 §1) ------------------
+# The pre-call hooks deny the writes to a frozen path they can recognise in a command's TEXT; a write
+# they cannot see (an interpreter given inline code, a path the shell computes, a script's own `cd`)
+# still lands. This is the route-independent ground truth behind them: every path git reports as
+# changed or untracked (`dsh_changed_paths` — every extension, deletions, both names of a rename)
+# that a frozen row answers for, and that this SESSION changed, blocks. "This session" is the touched
+# loop's rule: a path already dirty at SessionStart counts only when its hash moved since (`-` for a
+# deleted file on both sides, so a file already gone then and still gone now is not a change), and a
+# path absent from the baseline counts always. baseline.sh records dirty FROZEN paths of every
+# extension for exactly this comparison; without a comparable baseline (no record, an unreadable
+# one, no hasher) every frozen dirty path counts, and `baseline_note` in the block says why.
+#
+# It blocks at once rather than joining the verdict at the end: the only remedy is to stop and ask
+# the human (the agent cannot restore the file — writing it is what the freeze denies), so every
+# later check would only spend the Stop budget, and several later exits (a non-Mill build standing
+# down, "nothing to run", a diff-scoped block with its own report) would otherwise carry the turn
+# out without this finding. The attempt cap in `block` still bounds it. No frozen rows at all ->
+# nothing is read and nothing is said.
+#
+# The gate's own bookkeeping under `.dsh/.state` (`dsh_gate_written`: receipts, the module map, logs,
+# counters) is skipped — in a checkout that does not git-ignore `.dsh/.state`, the seed's frozen
+# receipts would otherwise block every turn after the gate wrote them. The frozen list is parsed ONCE
+# (`dsh_frozen_paths`) and each path is matched against the parsed rows (`dsh_frozen_match`).
+fz_rows=$(dsh_frozen_paths "$root" 2>/dev/null) || :
+if [ -n "$fz_rows" ]; then
+  dsh_changed_paths "$root" "$tmpd/changed"
+  changed_code=$?
+  if [ "$changed_code" = 1 ]; then
+    reset_counter
+    allow "DSH turn-end: nothing was checked — $root is not a git work tree, so the files this turn touched cannot be read from git, and this gate never blocks a turn whose files it cannot read.
+Install or repair the repository if that is a mistake; nothing here is a verdict on the turn's Scala, and the tests (./mill prePush) were not run."
+  fi
+  if [ "$changed_code" != 0 ]; then
+    block "this turn cannot be checked — the working tree could not be read, so the gate cannot tell whether this turn changed a frozen path.
+$dsh_touched_reason
+Fix git (or the repository) and end the turn again; this gate fails closed rather than reading a failed read as a clean tree."
+  fi
+  # This session's own SessionStart records (its contract snapshot, its frozen hash record) stay
+  # checked only when a comparable session baseline holds their hash; in every other state
+  # (`tree`, `nohash`, `unreadable`) nothing recorded them, so they are the gate's own writes like any
+  # other session's (fix round 2: a hasher-less PATH otherwise blocked every turn on the snapshot).
+  fz_gw_sid=''
+  [ "$baseline_state" = session ] && fz_gw_sid=$sid
+  fz_hits=0
+  fz_hit() { # fz_hit <path> <reason> [what shows it] [how] [predirty]: file one frozen-path finding.
+    # <predirty>, non-empty, marks a TRACKED path that had a SessionStart baseline row (dirty when the
+    # session started) — its own remedy branch below, because for this path the comparison that raised
+    # the finding is against the SessionStart hash, never against HEAD (I2 residual, final-review fix
+    # pass): committing it, or restoring it to HEAD, changes nothing this check reads.
+    if [ -n "${4:-}" ]; then fz_how=$4
+    elif [ -e "$1" ] || [ -L "$1" ]; then fz_how=changed; else fz_how=removed; fi
+    # $3 is given only by the git-ignored call sites below (an explicit "how it shows" phrase this
+    # function cannot work out from git itself) — so its presence, captured BEFORE `fz_show` is set
+    # from it, is also the tracked/ignored switch the remedy text needs (I2, final-review fix pass).
+    fz_ignored=${3:+1}
+    # Against HEAD, not the index: a staged change (a `git mv`, a `git add`) is invisible to a bare
+    # `git diff`. A file neither HEAD nor the index knows shows in no diff at all; name what does.
+    if [ -n "${3:-}" ]; then
+      fz_show=$3
+    elif git cat-file -e "HEAD:$1" 2>/dev/null || git ls-files --error-unmatch -- "$1" >/dev/null 2>&1; then
+      fz_show="git diff HEAD -- $1 shows what changed"
+    else
+      fz_show="git status -- $1 shows it (a new file git does not track yet)"
+    fi
+    # ONE exact-path exemption (human decision, final-review fix pass, I1): Claude Code itself writes
+    # .claude/settings.local.json whenever the human picks "don't ask again" on a permission prompt.
+    # The file is seed-frozen and usually git-ignored, so this finding would otherwise block every
+    # later turn for a write that is neither the agent's own edit nor a stale baseline. A finding for
+    # exactly this path is a NAMED NOTE instead of a block — `fz_hits`/`blocked` stay untouched and
+    # nothing goes into `report`, so it can never by itself trip the `block` call below; every OTHER
+    # finding in the same turn still blocks normally. This is the one exemption; it is not a general
+    # mechanism, and it does not touch the tool-policy text rules — an agent's own Write/Edit/
+    # interpreter write naming this path is still denied before it lands.
+    if [ "$1" = .claude/settings.local.json ]; then
+      fz_note="${fz_note:+$fz_note
+}--- frozen path $fz_how this turn: .claude/settings.local.json (noted, not blocked) ---
+$(bound_lines "Claude Code writes this file when the human picks \"don't ask again\" on a permission prompt. If the human did not approve a permission prompt this turn, the agent changed its own permissions or hooks. Tell the human; $fz_show." "$max_lines")"
+      return 0
+    fi
+    fz_hits=$((fz_hits + 1))
+    blocked=$((blocked + 1))
+    fz_predirty=${5:-}
+    if [ -n "$fz_ignored" ]; then
+      fz_remedy="Stop and ask the human: $fz_show. If the human restores the file, that clears this block. If the human keeps the change, it stays blocked until a new session starts — SessionStart takes a fresh hash record of every git-ignored frozen file, and only that fresh record can stop reading a kept change as new."
+    elif [ -n "$fz_predirty" ]; then
+      fz_remedy="Stop and ask the human: $fz_show. This file was already dirty when THIS SESSION STARTED, so this is measured against its content AT SESSION START, never against HEAD — committing it does not clear this block, and neither does restoring it to HEAD. To clear it, restore the exact content it had at SessionStart, or start a new session (a new session takes a fresh baseline of the human's in-flight files). Once it is committed, \`git diff HEAD\` may show nothing even though this stays blocked."
+    else
+      fz_remedy="Stop and ask the human: $fz_show. If the human restores the file, that clears this block. If the human keeps the change, it stays blocked until the human commits it — a kept, uncommitted change still differs from HEAD (this is also true of the human's own edit to .dsh/frozen-paths itself, to unfreeze a path: it blocks until committed)."
+    fi
+    section blocking "frozen path $fz_how this turn: $1" "$2
+You cannot restore it — writing a frozen path is what the freeze denies. $fz_remedy"
+  }
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    dsh_gate_written "$path" "$fz_gw_sid" && continue
+    dsh_frozen_match any "$path" "$fz_rows" || continue
+    fz_reason=$dsh_frozen_match_reason
+    fz_pd=''
+    if [ "$baseline_state" = session ]; then
+      baseline_hash=$(dsh_baseline_hash "$baseline" "$path")
+      if [ -n "$baseline_hash" ]; then
+        fz_pd=1
+        # A touched path (.scala/.sc/.mill) was already counted by the loop above; `baseline_note`'s
+        # counts cover the frozen rows of other extensions through here.
+        fz_count=1
+        grep -qxF -- "$path" "$tmpd/touched" 2>/dev/null && fz_count=0
+        [ "$fz_count" = 1 ] && seen_base=$((seen_base + 1))
+        if [ "$baseline_hash" = "$(dsh_file_hash "$path")" ]; then
+          [ "$fz_count" = 1 ] && skipped=$((skipped + 1))
+          continue
+        fi
+      fi
+    fi
+    fz_hit "$path" "$fz_reason" '' '' "$fz_pd"
+  done < "$tmpd/changed"
+  # A frozen path dirty at SessionStart that git no longer lists: reverted to HEAD (an ungated
+  # `git checkout`/`git restore` in a script), committed, or removed while untracked. Its hash against
+  # the baseline's decides: the same content (the human committed their own work) is no write; any
+  # other (the human's in-flight edit discarded) is. Only a comparable session baseline can say this.
+  if [ "$baseline_state" = session ]; then
+    while IFS="$tab" read -r fz_bh path; do
+      case "$fz_bh" in '#'*|'') continue ;; esac
+      [ -n "$path" ] || continue
+      grep -qxF -- "$path" "$tmpd/changed" 2>/dev/null && continue
+      dsh_gate_written "$path" "$fz_gw_sid" && continue
+      dsh_frozen_match any "$path" "$fz_rows" || continue
+      [ "$fz_bh" = "$(dsh_file_hash "$path")" ] && continue
+      fz_hit "$path" "$dsh_frozen_match_reason" '' '' 1
+    done < "$baseline"
+  fi
+  # Git-ignored frozen files (spec 2026-09-28 §1 item 2): git lists none of them, so the loops above
+  # never see one. SessionStart hashed each into this session's record (`dsh_frozen_record_file`);
+  # each recorded file is re-hashed here — changed or gone -> the same finding as above. The rows go
+  # through the same `dsh_gate_written` filter with the same session-id rule (the ONE list), and through
+  # the frozen rows as they are NOW (a row the human has since unfrozen answers for nothing). A path
+  # git-ignored cannot also be in git's changed list, so nothing is reported twice.
+  #
+  # The record is ALWAYS written by a session's first SessionStart, so its absence blocks
+  # (`frozen record missing`) — but only when this session's SessionStart demonstrably wrote one: its
+  # file baseline's header ends in ` frozen-record` (baseline.sh sets it when the record exists as the
+  # baseline is taken). Without that — no baseline at all (SessionStart not wired), a baseline this gate
+  # cannot read, or one from an engine that predates the record (a re-vendor mid-session, which must not
+  # block every later turn of every live session) — there is nothing to compare against: the same
+  # fallback as a missing baseline, a named note, never a block. The contract snapshot is NOT a witness:
+  # every snapshot an older engine wrote would then block. An `incomplete:` record, or no hasher now, is a
+  # named note too ("frozen ignored paths not compared"); the rows an incomplete record did hash are
+  # still compared. Notes go to `fz_note`, flushed on every exit.
+  fz_rec=$(dsh_frozen_record_file "$sid")
+  fz_rec_rel=.dsh/.state/frozen/$(dsh_state_key "$sid").tsv
+  fz_nc() { # fz_nc <body>: one "not compared" note
+    fz_note="${fz_note:+$fz_note
+}--- frozen ignored paths not compared ---
+$(bound_lines "$1" "$max_lines")"
+  }
+  fz_missing() { # fz_missing <why>: the record this session's SessionStart wrote is not there to read
+    fz_hits=$((fz_hits + 1))
+    blocked=$((blocked + 1))
+    section blocking "frozen record missing: $fz_rec_rel" "$1 Without it the gate cannot tell whether a git-ignored frozen file changed this session (git cannot see one).
+You cannot recreate it — writing it is what the freeze denies, and a record written now would adopt this session's own writes as the human's. Stop and ask the human: the human reviews the git-ignored frozen files and starts a new session, which records them afresh."
+  }
+  if [ -f "$fz_rec" ]; then
+    fz_rhead=$(head -n 1 "$fz_rec" 2>/dev/null)
+    case "$fz_rhead" in
+      '# DSH frozen-ignored '*)
+        case "$fz_rhead" in
+          *' incomplete: '*)
+            fz_nc "SessionStart could not record every git-ignored frozen file: ${fz_rhead#* incomplete: }. A change to a file it could not record is not seen here; the $(grep -vc '^#' "$fz_rec" 2>/dev/null) file(s) it did record were compared." ;;
+        esac
+        fz_ign_show="git cannot show it (the file is git-ignored; $fz_rec_rel holds its hash at SessionStart)"
+        if ! dsh_has_hasher; then
+          fz_nc "No sha256 tool (shasum or sha256sum) is on PATH, so the git-ignored frozen files recorded in $fz_rec_rel were not re-hashed."
+        else
+          # The rows still answered for (gate-written filter, frozen rows as they are now), then ONE hasher
+          # run over their paths (`dsh_hash_files`, fix round 1 I1); a path it could not hash (gone,
+          # unreadable) has no current hash and is a finding.
+          : > "$tmpd/fz-want"
+          while IFS="$tab" read -r fz_rh path; do
+            case "$fz_rh" in '#'*|'') continue ;; esac
+            [ -n "$path" ] || continue
+            dsh_gate_written "$path" "$fz_gw_sid" && continue
+            dsh_frozen_match any "$path" "$fz_rows" || continue
+            printf '%s\t%s\n' "$fz_rh" "$path" >> "$tmpd/fz-want"
+          done < "$fz_rec"
+          cut -f2- "$tmpd/fz-want" > "$tmpd/fz-paths"
+          dsh_hash_files "$root" "$tmpd/fz-paths" "$tmpd/fz-now"
+          awk -F'\t' -v n="$tmpd/fz-now" '
+            FILENAME == n { now[substr($0, index($0, "\t") + 1)] = $1; next }
+            { p = substr($0, index($0, "\t") + 1); if (!(p in now) || now[p] != $1) print p }' \
+            "$tmpd/fz-now" "$tmpd/fz-want" > "$tmpd/fz-diff"
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            dsh_frozen_match any "$path" "$fz_rows" || continue
+            fz_hit "$path" "$dsh_frozen_match_reason" "$fz_ign_show"
+          done < "$tmpd/fz-diff"
+        fi
+        # A git-ignored file ADDED under a frozen row since SessionStart (fix round 1; parity with item 1's
+        # new file under a frozen directory): re-enumerated with the same session-id rule, minus what the
+        # record holds, minus the record itself. Only when that subtraction means something: a complete
+        # record, in session mode, whose baseline says this SessionStart wrote it. An incomplete record
+        # leaves out files that were there (they would read as new), so it is not done there — the note
+        # above already says the ignored paths were not all compared.
+        case "$fz_rhead" in *' incomplete: '*) fz_added=0 ;; *) fz_added=1 ;; esac
+        [ "$baseline_state" = session ] || fz_added=0
+        case "$(head -n 1 "$baseline" 2>/dev/null)" in *' frozen-record') ;; *) fz_added=0 ;; esac
+        if [ "$fz_added" = 1 ]; then
+          if dsh_frozen_ignored_files "$root" "$fz_gw_sid" > "$tmpd/fz-now-list"; then
+            awk -F'\t' -v r="$fz_rec" -v me="$fz_rec_rel" '
+              FILENAME == r { if ($0 !~ /^#/) had[substr($0, index($0, "\t") + 1)] = 1; next }
+              NF && $0 != me && !($0 in had)' "$fz_rec" "$tmpd/fz-now-list" > "$tmpd/fz-added"
+            while IFS= read -r path; do
+              [ -n "$path" ] || continue
+              dsh_frozen_match any "$path" "$fz_rows" || continue
+              fz_hit "$path" "$dsh_frozen_match_reason" "git cannot show it (the file is git-ignored, and $fz_rec_rel has no row for it — it did not exist at SessionStart)" added
+            done < "$tmpd/fz-added"
+          else
+            fz_nc "The git-ignored frozen files could not be listed again ($dsh_frozen_ignored_reason), so a file ADDED under a frozen row since SessionStart is not seen this turn."
+          fi
+        fi ;;
+      *)
+        fz_missing "The file at $fz_rec_rel is not a record this gate wrote (its first line is not the '# DSH frozen-ignored' header): it was replaced." ;;
+    esac
+  else
+    fz_bhead=''
+    dsh_baseline_readable "$baseline" && fz_bhead=$(head -n 1 "$baseline" 2>/dev/null)
+    case "$fz_bhead" in
+      *' frozen-record')
+        fz_missing "This session's SessionStart wrote this record (its baseline $baseline says so), and it is gone: it was deleted." ;;
+      *)
+        fz_nc "No SessionStart record for this session ($fz_rec_rel): SessionStart (gate.sh baseline) did not run for it, or the session started under an engine that predates the record, so a change to a git-ignored frozen file is not seen this session. Wire .dsh/engine/hooks/baseline.sh to SessionStart; a new session records one." ;;
+    esac
+  fi
+  if [ "$fz_hits" -gt 0 ]; then
+    block "this turn has $fz_hits frozen-path finding(s) — the human's files, whatever route wrote them:
+$report
+
+Stop and ask the human now; no other check ran this turn, because nothing else matters until the human has answered."
+  fi
+fi
+
 # --- diff-scoped verification (spec 2026-09-24 §2) ---------------------------------------------
 # Runs BEFORE the module map is even read: it is cheap, it is the only check here scoped to the
 # changed LINES rather than to whole files, and a failure blocks with a precise message instead of
@@ -397,7 +643,8 @@ fi
 if nm=$(dsh_non_mill_build "$root"); then
   reset_counter
   allow "DSH gate: gate engine supports Mill builds only; found: $nm -- checks stand down for this turn${vd_note:+
-$vd_note}"
+$vd_note}${fz_note:+
+$fz_note}"
 fi
 
 # --- which modules own them, and what each row grants -----------------------------------------
@@ -441,7 +688,8 @@ done > "$tmpd/vk-missing"
 # `allow` instead of a bare `exit 0`, which would drop it.
 if [ ! -s "$tmpd/mods" ] && [ ! -s "$tmpd/mill" ] && [ ! -s "$tmpd/vk-missing" ]; then
   reset_counter
-  allow "$vd_note"
+  allow "$vd_note${vd_note:+${fz_note:+
+}}$fz_note"
 fi
 
 mill=$(resolve_mill "$root") || mill=""
@@ -734,6 +982,17 @@ $module: $remedy"
   fi
 done < "$tmpd/mods"
 
+# vk_add <title> <body>: files a named note on `vk_note` -- shared by the turnEndTests time cap below
+# and the vericoding stage further down, both bounded by the same Stop-hook budget. Flushed like
+# `rw_note` by `block()` and by the allow path — not through `section note`, whose F53 line counts
+# checks that "failed on files this turn did not touch", which none of these is, and which a blocking
+# verdict never prints. Defined here, ahead of its first caller, so it exists at call time either way.
+vk_add() { # vk_add <title> <body>
+  vk_note="${vk_note:+$vk_note
+}--- $1 ---
+$(bound_lines "$2" "$max_lines")"
+}
+
 # --- turnEndTests (spec 2026-09-20 §2) -----------------------------------------------------------
 # The contract's full selection per touched module, through the wrapper. A red human-owned property
 # or test BLOCKS the turn; a red DRAFT is noted. Modules run in order and stop at the first blocking
@@ -744,13 +1003,56 @@ done < "$tmpd/mods"
 # the adapters do not cover) has no record to excuse it, so it blocks with the exit status.
 # `fb_noted` counts these notes apart from `noted`: the F53 summary line speaks of checks that failed
 # on files this turn did not touch, and a draft failure is not one of those.
+#
+# Time cap (spec 2026-09-28 §3): each module's run is bounded by `dsh_bounded_probe`, itself -- a run
+# with no cap of its own can outlive the Stop hook's own 600 s timeout and end the turn with NO
+# verdict at all, the same failure mode `DSH_STAINLESS_CAP` closes for the vericoding stage below. The
+# cap is `min(DSH_TESTS_CAP (default 300), what is left of DSH_STOP_BUDGET (default 540) since the hook
+# started)` -- one shared budget, so a slow module leaves less for the ones after it, exactly like the
+# vericoding stage's `vk_left`. A run that has to be killed gives a NAMED NOTE, never a block: it was
+# not verified, but it also did not fail, so it must not count as `blocked` or as a draft failure
+# (`fb_noted`). With ten seconds or less left, the remaining modules are not started at all -- a run
+# that cannot finish verifies nothing and would only push the hook past its own timeout -- and each is
+# noted instead. These notes go to `vk_note`, the same channel the vericoding stage's notes use, so
+# they reach the agent on every exit path (`block()` flushes it, and so does the allow path).
+te_tests_cap=$(dsh_decimal "${DSH_TESTS_CAP:-}" 300)
+te_stop_budget=$(dsh_decimal "${DSH_STOP_BUDGET:-}" 540)
+te_budget_out=0
 te_stopped=0; te_left=0; te_greens=''; fb_noted=0
 while IFS="$tab" read -r te_mod te_caps; do
   [ -n "$te_mod" ] || continue
   case ",$te_caps," in *,tests,*) ;; *) continue ;; esac
   te_cmd=$(dsh_contract_for_module turnEndTests "$te_mod" "$root") || continue
   if [ "$te_stopped" = 1 ]; then te_left=$((te_left + 1)); continue; fi
-  te_out=$(sh "$here/hooks/feedback.sh" --selector "$te_mod.test" -- sh -c "$te_cmd" 2>&1); te_rc=$?
+  if [ "$te_budget_out" = 1 ]; then
+    te_left=$((te_left + 1))
+    vk_add "turnEndTests: $te_mod not started — the Stop hook's budget" "no time was left of the $te_stop_budget s Stop-hook budget when $te_mod's turn came, so its turnEndTests were not started. Not verified this turn; run it by hand, or end the turn again once other modules are green."
+    continue
+  fi
+  te_now=$(date +%s 2>/dev/null) || te_now=''
+  case "$te_start$te_now" in
+    *[!0-9]*|'') te_budget_left=$te_stop_budget ;;
+    *) te_budget_left=$((te_stop_budget - (te_now - te_start))) ;;
+  esac
+  if [ "$te_budget_left" -le 10 ]; then
+    te_budget_out=1
+    te_left=$((te_left + 1))
+    vk_add "turnEndTests: $te_mod not started — the Stop hook's budget" "$te_budget_left s of the $te_stop_budget s Stop-hook budget were left when $te_mod's turn came, so its turnEndTests were not started. Not verified this turn; run it by hand, or end the turn again once other modules are green."
+    continue
+  fi
+  te_cap=$te_tests_cap
+  [ "$te_budget_left" -lt "$te_cap" ] && te_cap=$te_budget_left
+  rm -f "$tmpd/te-out" "$tmpd/te-err" "$tmpd/te-rc"
+  if dsh_bounded_probe "$te_cap" "$tmpd/te-out" "$tmpd/te-err" \
+       sh -c '"$@" 2>&1; printf "%s" "$?" > "$0"' "$tmpd/te-rc" \
+       sh "$here/hooks/feedback.sh" --selector "$te_mod.test" -- sh -c "$te_cmd"; then
+    te_out=$(cat "$tmpd/te-out" 2>/dev/null)
+    te_rc=$(cat "$tmpd/te-rc" 2>/dev/null)
+    case "$te_rc" in ''|*[!0-9]*) te_rc=1 ;; esac
+  else
+    vk_add "turnEndTests: $te_mod did not finish within $te_cap s — not verified" "the run was killed at the ${te_cap} s cap (DSH_TESTS_CAP, default 300, bounded by what was left of the Stop hook's own budget) and never reached a verdict. Not counted as a failure; run it by hand, or end the turn again."
+    continue
+  fi
   if [ "$te_rc" = 0 ]; then te_greens="$te_greens
 turnEndTests: $te_mod green"; continue; fi
   te_nondraft=$(printf '%s\n' "$te_out" | grep -Ec '^(PROPERTY|TEST|INFRA|UNREADABLE):')
@@ -793,14 +1095,7 @@ $te_left modules not run — fix this one first"
 #    failure, a run stopped at the cap (DSH_STAINLESS_CAP, default 480 s) and unknown (timeout) VCs are
 #    named notes.
 #
-# Its notes go to `vk_note`, flushed like `rw_note` by `block()` and by the allow path — not through
-# `section note`, whose F53 line counts checks that "failed on files this turn did not touch", which
-# none of these is, and which a blocking verdict never prints.
-vk_add() { # vk_add <title> <body>
-  vk_note="${vk_note:+$vk_note
-}--- $1 ---
-$(bound_lines "$2" "$max_lines")"
-}
+# Its notes go to `vk_note` too (via `vk_add`, defined above the turnEndTests loop).
 # A registered kernel that no longer exists blocks whatever else this turn touched: the registry is
 # frozen, so only the agent can have made the two disagree this way (or a human who must also fix the
 # registry — check-harness FAILs on it too).
@@ -1044,6 +1339,7 @@ fi
 [ -n "$vd_note" ] && add_line "$vd_note"
 [ -n "$rw_note" ] && add_line "$rw_note"
 [ -n "$vk_note" ] && add_line "$vk_note"
+[ -n "$fz_note" ] && add_line "$fz_note"
 if [ -n "$te_greens" ]; then
   while IFS= read -r te_gl; do
     [ -n "$te_gl" ] && add_line "$te_gl"

@@ -1,0 +1,2 @@
+#!/bin/sh
+! grep -q "frozen path\|frozen record" "$GATE_OUT_FILE"

@@ -428,6 +428,50 @@ dsh_baseline_hash() { # <baseline-file> <path>
 #      changed" is the silent allow this status exists to prevent. `dsh_touched_reason` carries the
 #      reason for either failure (set before returning).
 dsh_touched_files() {
+  _dsh_git_changed "${1:-}" "${2:-}.all" "${2:-}.rename"
+  _tc=$?
+  [ "$_tc" = 0 ] || return "$_tc"
+  _root=${1:-}
+  _out=${2:-}
+  _ren="$_out.rename"
+  : > "$_out"
+  while IFS= read -r _path; do
+    [ -n "$_path" ] || continue
+    case "$_path" in
+      *.scala|*.sc)
+        # A rename's vanished half is dropped by existence, for source files, always.
+        [ -f "$_root/$_path" ] || continue ;;
+      *.mill)
+        # A `.mill` that was simply deleted stays a touched build file — the build changed, and the
+        # probe must run — but the vanished half of a RENAME is not a second change: the surviving
+        # name already brought the probe in, and reporting both says the build file changed twice.
+        if [ ! -f "$_root/$_path" ] && grep -qxF -- "$_path" "$_ren" 2>/dev/null; then
+          continue
+        fi ;;
+      *) continue ;;
+    esac
+    printf '%s\n' "$_path" >> "$_out"
+  done < "$_out.all"
+  rm -f "$_out.all" "$_ren" 2>/dev/null
+  return 0
+}
+
+# `dsh_changed_paths <root> <out>`: the same git read as `dsh_touched_files`, UNFILTERED — every path
+# git reports as changed against HEAD or untracked, one per line, sorted and unique: every extension,
+# deleted paths included, and BOTH names of a rename or copy (the vanished source is a removal of its
+# own here: the post-hoc frozen-path check at turn-end has to see a frozen file moved away). Exit
+# status and `dsh_touched_reason` exactly as `dsh_touched_files`.
+dsh_changed_paths() {
+  _dsh_git_changed "${1:-}" "${2:-}" "${2:-}.rename"
+  _tc=$?
+  rm -f "${2:-}.rename" 2>/dev/null
+  return "$_tc"
+}
+
+# `_dsh_git_changed <root> <out> <renames>`: the shared read behind both helpers above. <out> gets
+# every path git reported (sorted, unique, unfiltered); <renames> gets both names of every rename or
+# copy pair. Exit status and `dsh_touched_reason` as documented on `dsh_touched_files`.
+_dsh_git_changed() {
   _root=${1:-}
   _out=${2:-}
   dsh_touched_reason=''
@@ -438,7 +482,7 @@ dsh_touched_files() {
   _z="$_out.status.z"
   _zd="$_out.diff.z"
   _raw="$_out.raw"
-  _ren="$_out.rename"
+  _ren=${3:-"$_out.rename"}
   ( cd "$_root" 2>/dev/null && git status --porcelain -z -uall ) > "$_z" 2>/dev/null
   _sc=$?
   ( cd "$_root" 2>/dev/null && git diff --name-only -z HEAD ) > "$_zd" 2>/dev/null
@@ -483,26 +527,8 @@ dsh_touched_files() {
     done
   }
   tr '\0' '\n' < "$_zd" >> "$_raw"
-  sort -u "$_raw" > "$_raw.s"
-  : > "$_out"
-  while IFS= read -r _path; do
-    [ -n "$_path" ] || continue
-    case "$_path" in
-      *.scala|*.sc)
-        # A rename's vanished half is dropped by existence, for source files, always.
-        [ -f "$_root/$_path" ] || continue ;;
-      *.mill)
-        # A `.mill` that was simply deleted stays a touched build file — the build changed, and the
-        # probe must run — but the vanished half of a RENAME is not a second change: the surviving
-        # name already brought the probe in, and reporting both says the build file changed twice.
-        if [ ! -f "$_root/$_path" ] && grep -qxF -- "$_path" "$_ren" 2>/dev/null; then
-          continue
-        fi ;;
-      *) continue ;;
-    esac
-    printf '%s\n' "$_path" >> "$_out"
-  done < "$_raw.s"
-  rm -f "$_raw" "$_raw.s" "$_ren" "$_z" "$_zd" 2>/dev/null
+  sort -u "$_raw" | awk '$0 != ""' > "$_out"
+  rm -f "$_raw" "$_z" "$_zd" 2>/dev/null
   return 0
 }
 
@@ -1818,8 +1844,24 @@ _dsh_frozen_lookup() {
   [ -n "$_fn_path" ] || return 1
   _fn_root=${3:-$(gate_root)}
   _fn_rows=$(dsh_frozen_paths "$_fn_root" 2>/dev/null) || :
+  dsh_frozen_match "$_fn_want" "$_fn_path" "$_fn_rows" || return 1
+  printf '%s\n' "$dsh_frozen_match_reason"
+}
+
+# dsh_frozen_match <want: any|sealed> <repo-relative path> <rows>: the matching half of the lookup
+# above, over rows `dsh_frozen_paths` already parsed -- so a caller asking about many paths (the
+# post-hoc check at turn-end, baseline.sh) parses the list ONCE instead of once per path. No
+# subshell, no output: the reason goes to `dsh_frozen_match_reason` (exit 0), or it is emptied and the
+# exit is 1. The path must already be repo-relative and canonical (a path git reports is); the
+# lookup above canonicalises any other spelling first.
+dsh_frozen_match() {
+  dsh_frozen_match_reason=''
+  _fn_want=${1:-any}
+  _fn_path=${2:-}
+  _fn_rows=${3:-}
+  [ -n "$_fn_path" ] || return 1
   [ -n "$_fn_rows" ] || return 1
-  _fn_tab=$(printf '\t')
+  _fn_tab='	'
   _fn_noglob=1
   case $- in *f*) _fn_noglob=0 ;; esac
   [ "$_fn_noglob" = 1 ] && set -f
@@ -1848,7 +1890,8 @@ _dsh_frozen_lookup() {
   IFS=$_fn_ifs
   [ "$_fn_noglob" = 1 ] && set +f
   [ -n "$_fn_reason" ] || return 1
-  printf '%s\n' "$_fn_reason"
+  dsh_frozen_match_reason=$_fn_reason
+  return 0
 }
 
 # dsh_frozen_reason <path> [root]: the WRITE verdict -- an entry of any access answers. Contract
@@ -1864,6 +1907,194 @@ dsh_sealed_reason() { _dsh_frozen_lookup sealed "${1:-}" "${2:-$(gate_root)}"; }
 dsh_frozen_access() {
   if dsh_sealed_reason "${1:-}" "${2:-$(gate_root)}" >/dev/null; then printf 'sealed\n'; return 0; fi
   if dsh_frozen_reason "${1:-}" "${2:-$(gate_root)}" >/dev/null; then printf 'frozen\n'; return 0; fi
+  return 1
+}
+
+# dsh_gate_written <repo-relative path> [session id]: exit 0 when the path is one the gate ITSELF
+# writes while a session runs -- so the post-hoc frozen check (turn-end) and the git-ignored record
+# (SessionStart/turn-end, spec 2026-09-28 §1) never read the gate's own bookkeeping as an agent's write
+# to a frozen path. ONE list, shared by both: a path missing here blocks every turn once `.dsh/.state`
+# is not git-ignored (the seed freezes receipts and modules.tsv); a path listed here too broadly is a
+# frozen file nobody compares. `.dsh/.state/frozen-paths` is deliberately ABSENT: it is the human's
+# machine-local freeze list, never written by the gate.
+#
+# With a session id, THIS session's own SessionStart records (`contracts/<key>.tsv`, `frozen/<key>.tsv`)
+# are NOT excluded: they are written once, before the session's baseline is taken, so the baseline /
+# the frozen hash record holds their hash and any later change to them is exactly the write the freeze
+# exists to catch. Other sessions' records (a second session in the same checkout starting up) are.
+# A caller passes the session id ONLY when such a hash exists (turn-end: `baseline_state=session`); with
+# no comparable record, every session's records -- its own included -- are the gate's own writes.
+dsh_gate_written() {
+  _gw_p=${1:-}
+  case "$_gw_p" in ./*) _gw_p=${_gw_p#./} ;; esac
+  if [ -n "${2:-}" ]; then
+    # The key is cached per session id: a caller walking hundreds of paths pays one `tr` fork, not one
+    # per path.
+    if [ "${_gw_sid:-}" != "$2" ] || [ -z "${_gw_k:-}" ]; then
+      _gw_sid=$2
+      _gw_k=$(dsh_state_key "$2")
+    fi
+    case "$_gw_p" in
+      ".dsh/.state/contracts/$_gw_k.tsv"|".dsh/.state/frozen/$_gw_k.tsv") return 1 ;;
+    esac
+  fi
+  case "$_gw_p" in
+    .dsh/.state/receipts) return 0 ;;              # turn-end holdout receipt rows (and prePush's)
+    .dsh/.state/modules.tsv|.dsh/.state/modules.tsv.tmp.*) return 0 ;;  # module-map.sh's cache, via a temp + mv
+    .dsh/.state/holdout.log) return 0 ;;           # turn-end: the sealed holdout run's full output
+    .dsh/.state/unverified.log) return 0 ;;        # turn-end: every released (unverified) turn
+    .dsh/.state/health|.dsh/.state/.health.*) return 0 ;;  # health.sh's report, via a temp + mv
+    .dsh/.state/index-coverage|.dsh/.state/index-coverage.*) return 0 ;;  # coverage cache (health, semantic-guard), temp + mv
+    .dsh/.state/turn-end-*) return 0 ;;            # turn-end's per-session attempt counter
+    .dsh/.state/baseline-*) return 0 ;;            # baseline.sh's per-session record
+    .dsh/.state/contracts/*) return 0 ;;           # baseline.sh's contract snapshots (other sessions', see above) and their temps
+    .dsh/.state/frozen/*) return 0 ;;              # SessionStart's git-ignored frozen hash records (other sessions', see above)
+    .dsh/.state/feedback/*) return 0 ;;            # feedback.sh: the raw log of every wrapped Mill run
+    .dsh/.state/instructions-missing) return 0 ;;  # feedback.sh: diagnostics with no instruction row
+    .dsh/.state/memo-testvals.*) return 0 ;;       # verify-diff.sh: the memorisation check's test-values cache
+    .dsh/.state/semantic-fallback.log) return 0 ;; # semantic-guard: every released read, for audit
+    .dsh/.state/green/*) return 0 ;;               # post-edit: per-module fastTests green cache, temp + mv
+  esac
+  return 1
+}
+
+# --- git-ignored frozen files (spec 2026-09-28 §1 item 2) -------------------------------------------
+# git cannot see a git-ignored file, so the post-hoc check's git read never lists one: the `.dsh/.state`
+# records the seed freezes (contract snapshots, receipts, the module map) and any ignored file under a
+# frozen row. SessionStart (baseline.sh) hashes every such file into this session's record; turn-end
+# re-hashes each recorded file. The record is ALWAYS written on a session's first SessionStart —
+# header-only (`# DSH frozen-ignored <sid> <iso>`) when there is nothing to record, the same header plus
+# ` incomplete: <reason>` when something could not be recorded — so at turn-end "absent" means "deleted".
+# Rows are `<sha256> TAB <repo-relative path>`. It is itself frozen by the seed's
+# `.dsh/.state/frozen/**` row (check-harness FAILs without it).
+dsh_frozen_record_file() { printf '%s\n' "$(state_dir)/frozen/$(dsh_state_key "${1:-}").tsv"; }
+
+# dsh_frozen_ignored_files <root> [session id]: the existing git-ignored FILES a frozen `exact` or
+# `prefix` entry answers for, repo-relative, one per line, sorted and unique — minus the gate's own
+# writes (`dsh_gate_written`, the ONE list; the session id is passed straight through to it, so with one
+# this session's own contract snapshot stays in, and with none every session's records stay out). A
+# tracked file is never listed: git sees it, and `git check-ignore` does not report it.
+# Exit 0: the list is complete. Exit 1: it may not be — `dsh_frozen_ignored_reason` says why, and
+# whatever was found is still printed (a frozen directory that could not be listed completely), or
+# nothing at all (git's own answer failed). No frozen rows -> nothing, exit 0.
+dsh_frozen_ignored_files() {
+  _fi_root=${1:-$(gate_root)}
+  _fi_sid=${2:-}
+  dsh_frozen_ignored_reason=''
+  _fi_rows=$(dsh_frozen_paths "$_fi_root" 2>/dev/null) || :
+  [ -n "$_fi_rows" ] || return 0
+  _fi_tmp=$(mktemp -d 2>/dev/null) || {
+    dsh_frozen_ignored_reason='no temporary directory could be made'
+    return 1
+  }
+  _fi_tab='	'
+  : > "$_fi_tmp/raw"
+  while IFS="$_fi_tab" read -r _fi_a _fi_k _fi_p _fi_r; do
+    [ -n "$_fi_p" ] || continue
+    if [ -f "$_fi_root/$_fi_p" ]; then
+      printf '%s\n' "$_fi_p" >> "$_fi_tmp/raw"
+    elif [ "$_fi_k" = prefix ] && [ -d "$_fi_root/$_fi_p" ]; then
+      # `./`-led so a path starting with `-` is never read as an option.
+      if ! ( cd "$_fi_root" 2>/dev/null && find "./$_fi_p" -type f -print ) > "$_fi_tmp/found" 2>/dev/null; then
+        dsh_frozen_ignored_reason="${dsh_frozen_ignored_reason:+$dsh_frozen_ignored_reason; }the frozen directory $_fi_p could not be listed completely"
+      fi
+      sed 's|^\./||' "$_fi_tmp/found" >> "$_fi_tmp/raw"
+    fi
+  done <<FI_ROWS
+$_fi_rows
+FI_ROWS
+  awk 'NF' "$_fi_tmp/raw" | sort -u > "$_fi_tmp/cand"
+  if [ -s "$_fi_tmp/cand" ]; then
+    # Exit 0 (some ignored) and 1 (none) are both answers; anything else — not a work tree, a path
+    # beyond a symlink — is not, and must never read as "nothing is ignored".
+    ( cd "$_fi_root" 2>/dev/null || exit 128
+      tr '\n' '\0' < "$_fi_tmp/cand" | git check-ignore --stdin -z ) > "$_fi_tmp/ign.z" 2> "$_fi_tmp/err"
+    _fi_rc=$?
+    case "$_fi_rc" in
+      0|1)
+        tr '\0' '\n' < "$_fi_tmp/ign.z" > "$_fi_tmp/ign"
+        while IFS= read -r _fi_p; do
+          [ -n "$_fi_p" ] || continue
+          dsh_gate_written "$_fi_p" "$_fi_sid" && continue
+          printf '%s\n' "$_fi_p"
+        done < "$_fi_tmp/ign" ;;
+      *)
+        dsh_frozen_ignored_reason="${dsh_frozen_ignored_reason:+$dsh_frozen_ignored_reason; }git check-ignore failed (exit $_fi_rc): $(head -n 1 "$_fi_tmp/err" 2>/dev/null)" ;;
+    esac
+  fi
+  rm -rf "$_fi_tmp" 2>/dev/null
+  [ -z "$dsh_frozen_ignored_reason" ]
+}
+
+# dsh_hash_files <root> <list> <out>: <out> gets `<sha256> TAB <path>` for every path of <list> (one
+# repo-relative path per line) that could be hashed; a path that could not (gone, unreadable, no hasher)
+# is ABSENT, never guessed. One hasher run over the whole list (`xargs`), not one fork per file: 3000
+# files cost ~11 ms each through `dsh_file_hash` on macOS, which a 60 s hook timeout does not survive.
+# The hasher is `dsh_file_hash`'s (shasum first, then sha256sum), so a row here equals that function's
+# answer for the same file. Names are passed `./`-led (a leading `-` is never an option) and read back
+# from each output line after the 64-hex hash and its two-character separator; a line is taken only when
+# its name is one that was asked for, once, so no hash is ever attributed to another path. A name with a
+# backslash (which the hashers escape in their output) and every path the batch did not answer go
+# through `dsh_file_hash` one by one. Exit 0; 1 when there is no hasher at all (<out> empty).
+dsh_hash_files() {
+  _hf_root=${1:-}
+  _hf_list=${2:-}
+  _hf_out=${3:-}
+  : > "$_hf_out"
+  if command -v shasum >/dev/null 2>&1; then
+    _hf_cmd='shasum -a 256'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    _hf_cmd=sha256sum
+  else
+    return 1
+  fi
+  awk 'NF && index($0, "\\") == 0 { print "./" $0 }' "$_hf_list" | tr '\n' '\0' > "$_hf_out.z"
+  : > "$_hf_out.raw"
+  if [ -s "$_hf_out.z" ]; then
+    # shellcheck disable=SC2086
+    ( cd "$_hf_root" 2>/dev/null && xargs -0 $_hf_cmd < "$_hf_out.z" ) > "$_hf_out.raw" 2>/dev/null
+  fi
+  awk -v want="$_hf_list" '
+    FILENAME == want { if (NF) w[$0] = 1; next }
+    {
+      h = substr($0, 1, 64); sep = substr($0, 65, 2); p = substr($0, 67)
+      if (length(h) != 64 || h ~ /[^0-9a-f]/) next
+      if (sep != "  " && sep != " *") next
+      if (substr(p, 1, 2) != "./") next
+      p = substr(p, 3)
+      if (!(p in w) || (p in done)) next
+      done[p] = 1
+      printf "%s\t%s\n", h, p
+    }' "$_hf_list" "$_hf_out.raw" > "$_hf_out.ok"
+  cut -f2- "$_hf_out.ok" > "$_hf_out.done"
+  cat "$_hf_out.ok" > "$_hf_out"
+  # Everything the batch did not answer, one by one: a backslash name, a file the batch could not read.
+  awk -v d="$_hf_out.done" 'FILENAME == d { ok[$0] = 1; next } NF && !($0 in ok)' "$_hf_out.done" "$_hf_list" \
+    > "$_hf_out.rest"
+  while IFS= read -r _hf_p; do
+    [ -n "$_hf_p" ] || continue
+    _hf_h=$(dsh_file_hash "$_hf_root/$_hf_p")
+    _hf_h=${_hf_h#\\}
+    case "$_hf_h" in ''|-) continue ;; esac
+    printf '%s\t%s\n' "$_hf_h" "$_hf_p" >> "$_hf_out"
+  done < "$_hf_out.rest"
+  rm -f "$_hf_out.z" "$_hf_out.raw" "$_hf_out.ok" "$_hf_out.done" "$_hf_out.rest" 2>/dev/null
+  return 0
+}
+
+# dsh_frozen_record_checks [root]: the installation rule for the record above, one `ok|FAIL` TAB
+# <message> row (check-harness maps it); exit 1 on FAIL. With any frozen row, the records must be
+# frozen themselves: turn-end trusts them as the human's, and a re-vendored project keeps its old
+# frozen-paths (install.sh never overwrites it), so the seed's row may be missing. No frozen rows ->
+# nothing is recorded or compared, so nothing to say.
+dsh_frozen_record_checks() {
+  _fr_root=${1:-$(gate_root)}
+  [ -n "$(dsh_frozen_paths "$_fr_root" 2>/dev/null)" ] || return 0
+  if [ -n "$(dsh_frozen_reason .dsh/.state/frozen/x.tsv "$_fr_root" 2>/dev/null)" ]; then
+    printf 'ok\tthe frozen-path hash records (.dsh/.state/frozen/**) are frozen\n'
+    return 0
+  fi
+  printf 'FAIL\tthe frozen-path hash records (.dsh/.state/frozen/**) are not frozen — add the row to .dsh/frozen-paths\n'
   return 1
 }
 

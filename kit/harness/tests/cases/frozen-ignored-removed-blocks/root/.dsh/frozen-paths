@@ -1,0 +1,2 @@
+local/**	the human's local notes, never committed
+.dsh/.state/frozen/**	the frozen-path hash record is the human's record of the frozen files at session start

@@ -1,0 +1,9 @@
+#!/bin/sh
+# A session that started under an engine older than the frozen-file record: a readable baseline whose
+# header has no ` frozen-record` marker, no record. A re-vendor mid-session must not block every later
+# turn: noted, never `frozen record missing`.
+printf 'local/\n.dsh/.state/\n' >> .git/info/exclude
+mkdir -p local .dsh/.state
+printf 'k\n' > local/k.txt
+printf '# DSH session baseline s1 2026-09-28T00:00:00Z\n' > .dsh/.state/baseline-s1.tsv
+printf x >> local/k.txt

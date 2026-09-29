@@ -1,0 +1,3 @@
+BLOCKED by tool-policy: engine/details is a FROZEN PATH
+an interpreter can write where the shell rules cannot see
+use the Read tool

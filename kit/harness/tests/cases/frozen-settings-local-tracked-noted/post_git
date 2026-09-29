@@ -1,0 +1,15 @@
+#!/bin/sh
+# Tracked (not ignored): committed clean, then rewritten mid-session, same as a real project that
+# does not gitignore .claude/settings.local.json. The file is created and force-added here, never
+# shipped as a fixture file under root/ -- a real .claude/settings.local.json on disk is exactly
+# what a common developer global gitignore (matching **/.claude/settings.local.json) would refuse
+# to `git add -A`, which would silently turn this "tracked" fixture into an untracked one instead
+# (measured on a machine with such a global ignore) and would also make `install.sh` itself report
+# it back as an "ignored" vendored-engine file once this suite's own fixtures are vendored.
+mkdir -p .claude
+printf '{}\n' > .claude/settings.local.json
+git add -f .claude/settings.local.json
+git -c user.email=t@t -c user.name=t commit -qm settings-local-json-tracked
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+printf '{"permissions":{"allow":["Bash(ls:*)"]}}\n' > .claude/settings.local.json

@@ -671,6 +671,21 @@ done <<EOF
 $kk_rows
 EOF
 
+# The git-ignored frozen-file record (spec 2026-09-28 §1 item 2): same shape again -- one lib.sh
+# function, unit-tested in lib-test.sh, mapped here.
+fr_rows=$(dsh_frozen_record_checks "$repo" 2>&1) || :
+while IFS="$tab" read -r fr_kind fr_msg; do
+  [ -n "$fr_kind" ] || continue
+  case "$fr_kind" in
+    ok) ok "$fr_msg" ;;
+    FAIL) bad "$fr_msg" ;;
+    note) note "$fr_msg" ;;
+    *) bad "dsh_frozen_record_checks printed a row this check does not understand: $fr_kind $fr_msg" ;;
+  esac
+done <<EOF
+$fr_rows
+EOF
+
 # ══ D. the repository's test integrity ═════════════════════════════════════════════════════════
 # F27/F44. The fixtures under .dsh/engine/tests/cases/*/root/ are inputs to the gate, and they have been
 # silently dropped from commits three separate times by ignore patterns that match a directory name

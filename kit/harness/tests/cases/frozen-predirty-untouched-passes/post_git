@@ -1,0 +1,6 @@
+#!/bin/sh
+# The human's in-flight work: the frozen file is dirty when the session starts (baseline recorded
+# through the real SessionStart hook), and the session never touches it. It must not block.
+printf '\n// the human\x27s in-flight work\n' >> engine/details/A.scala
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1

@@ -1,0 +1,6 @@
+#!/bin/sh
+# `.dsh/.state` NOT git-ignored and a baseline record the gate cannot read (state `unreadable`): this
+# session's own contract snapshot (as SessionStart writes it, untracked) has no comparable hash, so
+# it is the gate's own record and must not block.
+mkdir -p .dsh/.state/contracts
+printf '# DSH contract snapshot s1 2026-09-28T00:00:00Z\n' > .dsh/.state/contracts/s1.tsv

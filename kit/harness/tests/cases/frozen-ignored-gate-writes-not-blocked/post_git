@@ -1,0 +1,16 @@
+#!/bin/sh
+# git-ignored frozen files (spec 2026-09-28 §1 item 2): `local/` and `.dsh/.state/` are ignored through
+# .git/info/exclude -- a fixture cannot ship a .gitignore under root/ without it ignoring the fixture
+# files themselves in this repository.
+printf 'local/\n.dsh/.state/\n' >> .git/info/exclude
+mkdir -p local
+printf 'k\n' > local/k.txt
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+# The gate's own bookkeeping, frozen by the seed and git-ignored, present at SessionStart ...
+printf 'holdout\t1\t0\tabc\t2026-09-28T00:00:00Z\n' > .dsh/.state/receipts
+printf 'engine/details\tengine.details\tfmt,scalafix\n' > .dsh/.state/modules.tsv
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" >/dev/null || exit 1
+# ... and rewritten during the turn the way the gate itself rewrites them (a holdout receipt row, a
+# regenerated module map): Review Focus 1 -- never a post-hoc block.
+printf 'holdout\t2\t0\tdef\t2026-09-28T00:01:00Z\n' >> .dsh/.state/receipts
+printf 'engine/other\tengine.other\tfmt\n' >> .dsh/.state/modules.tsv

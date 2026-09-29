@@ -1,0 +1,6 @@
+{
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "gawk '{print $0 | \"cat > engine/details/A.scala\"}' in.txt"
+  }
+}

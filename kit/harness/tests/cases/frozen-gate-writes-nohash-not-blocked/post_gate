@@ -1,0 +1,16 @@
+#!/bin/sh
+# The runner's own invocation ran WITH a hasher and no baseline (state `tree`): asserted by expect.code
+# and here. Then the same turn-end with NO hasher (state `nohash`) must allow as well.
+! grep -q 'frozen path' "$GATE_OUT_FILE" || { echo "FAIL: tree state blocked on the gate's own snapshot"; exit 1; }
+case_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+engine=$(CDPATH= cd -- "$case_dir/../../.." && pwd)
+nb=$(. "$case_dir/nohash-path.sh")
+out=$(PATH="$nb" GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" turn-end < "$case_dir/payload.json" 2>&1)
+rc=$?
+# An allowing turn-end does not print the scope note, so the nohash state is proven by its cause:
+# the PATH it runs under has no sha256 tool (the precondition dsh_has_hasher reads).
+PATH="$nb" command -v shasum >/dev/null 2>&1 && { echo "FAIL: a hasher on the no-hash PATH"; exit 1; }
+PATH="$nb" command -v sha256sum >/dev/null 2>&1 && { echo "FAIL: a hasher on the no-hash PATH"; exit 1; }
+[ "$rc" = 0 ] || { echo "FAIL: nohash turn-end exited $rc: $out"; exit 1; }
+case "$out" in *'frozen path'*) echo "FAIL: nohash blocked on the gate's own snapshot"; exit 1 ;; esac
+echo "post_gate: tree and nohash both allowed"

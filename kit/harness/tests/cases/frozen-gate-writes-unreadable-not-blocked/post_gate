@@ -1,0 +1,4 @@
+#!/bin/sh
+# The state is `unreadable` by construction: the shipped baseline-s1.tsv has no baseline header.
+head -n 1 .dsh/.state/baseline-s1.tsv | grep -q '^# DSH session baseline ' && { echo "FAIL: the record is readable"; exit 1; }
+! grep -q 'frozen path' "$GATE_OUT_FILE"

@@ -1,0 +1,7 @@
+#!/bin/sh
+# app's turnEndTests must have run (it burns most of the small DSH_STOP_BUDGET); core's must not have
+# -- the note alone is not proof it was actually skipped, this is.
+if [ ! -f .dsh/te-calls.log ]; then echo "te-stub.sh was never called"; exit 1; fi
+if ! grep -q '^app$' .dsh/te-calls.log; then echo "app's turnEndTests did not run"; cat .dsh/te-calls.log; exit 1; fi
+if grep -q '^core$' .dsh/te-calls.log; then echo "core's turnEndTests ran past the budget"; cat .dsh/te-calls.log; exit 1; fi
+echo "app ran, core was not started"

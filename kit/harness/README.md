@@ -146,6 +146,25 @@ The engine's hooks read only the three optional keys. The six base keys are the 
 gate; the checks themselves call the Mill interface below by task name, which is why the engine supports Mill
 only. A contract without `holdout` is legal but weaker, and check-harness says so in a note.
 
+### `turnEndTests` time cap: `DSH_TESTS_CAP`
+
+Spec 2026-09-28 §3: `turnEndTests` used to run with no cap of its own, and Claude Code kills a Stop hook at its
+own 600 s timeout — a slow or hanging suite then ends the turn with NO verdict at all, not even a note. Each
+module's run now goes through `dsh_bounded_probe`, capped at `min(DSH_TESTS_CAP (default 300), what is left of
+DSH_STOP_BUDGET (default 540 s) since the hook started)` — one shared budget with the vericoding stage's own cap
+below it, so a slow module leaves less for every module after it. With 10 s or less of the budget left when a
+module's turn comes, it is not started at all. Either way the module is noted, never blocked — a run the hook did
+not have time for was not verified, but it also did not fail:
+
+| Condition | Note |
+|---|---|
+| no time left, or 10 s or less left, of the Stop-hook budget when the module's turn came | `turnEndTests: <module> not started — the Stop hook's budget` |
+| the run hit its `DSH_TESTS_CAP` (or budget-shortened) cap and was killed | `turnEndTests: <module> did not finish within <N> s — not verified` |
+
+`DSH_TESTS_CAP` accepts decimals only, leading zeros stripped, like every other knob here (`dsh_decimal`). The
+vericoding stage's own budget rule is unchanged: it runs after `turnEndTests`, on whatever the Stop hook's budget
+has left.
+
 ## The Mill interface
 
 The Mill interface is seven task names — an interface, not contract keys. The engine's hooks and scripts run the
@@ -314,6 +333,117 @@ name-matching guard cannot close):
 * **SessionStart health pays a full tree hash** of the vendored engine on every session start (about 4 s on
   about 2.6k files, measured), because the stamp note needs it.
 
+## Frozen paths: what is caught where
+
+Spec 2026-09-28 §§1–2 (roadmap item 9's follow-up): a frozen path is the human's in-flight work, and no agent may
+write one — but "no agent may write one" is a claim about several independent layers, not one mechanism, and each
+layer's own header states exactly what it can and cannot see. This table is the whole set, read top to bottom in
+the order a write is actually caught (earliest first); a route not caught by an earlier layer is either caught by a
+later one or is a documented blind spot below.
+
+| Layer | Runs | Verdict | What it catches |
+|---|---|---|---|
+| Text rule — operand-shaped writes (`deny_frozen_operand`) | `tool-policy` (PreToolUse) | deny | `rm`, `mv`, `ln`, `truncate`, `patch`, `git checkout\|restore\|rm\|mv\|apply`, `perl -i`, `find -delete` / `find -exec rm` naming a frozen path as an operand (a relative operand after a literal `cd`/`pushd` is resolved against that directory first). |
+| Text rule — semantic guard (redirections, `sed -i`-style writes) | `semantic-guard` (PreToolUse) | deny | the write shapes the operand rule's verb list does not cover — a shell redirection (`> <frozen>`, `>> <frozen>`) or an in-place stream edit. |
+| Text rule — interpreter / inline shell (`deny_frozen_interp`, spec §2) | `tool-policy` (PreToolUse) | deny | the command's own TEXT names a frozen path (or a directory prefix of a frozen `**` row), and the command word is an interpreter with any arguments (`python`/`python2`/`python3`/`perl`/`ruby`/`node`/`pypy`/`nodejs`/`php`, version suffix stripped), or `sh`/`bash`/`zsh`/`dash` with `-c` (a combined short-option cluster like `-lc` counts too), or `awk`/`gawk`/`mawk`/`nawk` whose program contains `system(`, or `print`/`printf` together with `>` or `\|` anywhere in the whole command. A BARE wrapper word with no option of its own (`env`, `command`, `exec`, `sudo`, `time`, `nohup`, `xargs`, including a path-qualified `/usr/bin/env`; `nice` too, though it is not one the shared parser itself skips) is transparent — the rule sees through it to the real interpreter — and so is a leading shell variable assignment (`PYTHONPATH=. python3 -c …`, `A=1 B=2 sh -c …`), handled locally in this rule. **The moment any of these wrappers takes its OWN option the rule stops seeing through it** (`sudo -u x …`, `sudo -E …`, `env -i …`, `nice -n 5 …` / `nice -n5 …`, `time -p …`, `xargs -I{} …` are all measured ALLOWED): see the blind-spot list below. **Reads are denied too** — the rule is text, not semantics, so it cannot tell a read from a write; the message points the agent at the Read tool instead. |
+| Post-hoc check — tracked/untracked frozen files (spec §1 item 1) | `turn-end` (Stop), first thing, before every other stage | block | every path `dsh_changed_paths` reports (git edits, deletions, new files, both names of a rename) that this SESSION changed (baseline-scoped: a path already dirty at SessionStart counts only if its hash moved since; new-since-baseline always counts) and a frozen row answers for. This is the route-independent layer: it does not care which of the text rules, if any, the write went through. It also catches a frozen path dirty at SessionStart that git no longer lists — reverted to a *different* content than the baseline recorded (an ungated `git checkout`/`git restore`) — in session-baseline mode only. |
+| Git-ignored frozen files (spec §1 item 2) | `baseline.sh` records at SessionStart; `turn-end` re-hashes at Stop | block / note | git cannot see a git-ignored file, so the check above never lists one. SessionStart hashes every existing git-ignored file a frozen row answers for into `.dsh/.state/frozen/<key>.tsv` (`<sha256> TAB <path>`; always written, header-only if none). At turn-end each recorded file is re-hashed: changed or missing content → **block** (`frozen path changed/removed this turn: <path>`); a file **added** under a frozen row since SessionStart → **block** (`frozen path added this turn: <path>`); the record itself absent → **block** (`frozen record missing: <path>`) only when this session's own baseline header ends ` frozen-record` (proof this session's SessionStart wrote one) — without that proof it is a **note**, never a block, because an older engine or an unwired SessionStart cannot be blamed for a record it never promised; `incomplete:` in the record's header, or no sha256 tool, → a **note** (`frozen ignored paths not compared`) — the rows it did record are still compared. |
+| The gate's own writes | `dsh_gate_written` (lib.sh), read by every layer above that walks changed/ignored paths | excluded | `.dsh/.state/receipts`, `modules.tsv` (+ its temp), `holdout.log`, `unverified.log`, `health` (+ its temp), `index-coverage` (+ its temp), `turn-end-*`, `baseline-*`, `contracts/*`, `frozen/*`, `feedback/*`, `instructions-missing`, `memo-testvals.*`, `semantic-fallback.log`, `green/*` — the gate's own bookkeeping under `.dsh/.state`, never read as an agent's write to a frozen path. A session's own `contracts/<key>.tsv` and `frozen/<key>.tsv` stay IN scope once a comparable baseline holds their hash (they are the human's record from that point on). Excluding these BY NAME is also a gap: an interpreter's WRITE to `.dsh/.state/receipts` or `.dsh/.state/modules.tsv` through a path it computes at run time is not distinguishable from the gate's own write, so when `.dsh/.state` is git-ignored (the common case) such a write is not detected by anything in this table. |
+| `.claude/settings.local.json` exemption (human decision, final-review fix pass) | `turn-end` (Stop), inside the frozen stage | note, not block | this one exact path is seed-frozen (`.claude/settings.local.json`) and usually git-ignored, but Claude Code itself rewrites it whenever the human picks "don't ask again" on a permission prompt — a write neither an agent's edit nor a stale baseline. A finding for exactly this path (tracked or git-ignored; changed, removed or added) is filed as a NAMED NOTE (`frozen path <how> this turn: .claude/settings.local.json (noted, not blocked)`) instead of a block; every OTHER finding in the same turn still blocks normally. **Cost:** an agent that itself rewrites this file through a route the text rules cannot see (an interpreter, a computed path) is also only noted, not blocked — the same blind spot as any other git-ignored frozen file, deliberately accepted here because the file is rewritten by Claude Code's own permission UI often enough that blocking it made every later turn unusable. The tool-policy text rules are unchanged: an agent's Write/Edit, or an interpreter/inline-shell text rule match, naming this path is still denied before it lands. |
+
+**No frozen rows at all** → nothing above is read, checked or recorded beyond a header-only git-ignored record; a
+frozen path cannot be violated by a project that has none.
+
+**Remedy, every block above (except the one exemption just above):** the agent cannot restore a frozen file —
+writing it is what the freeze denies. Stop and ask the human; `git diff HEAD -- <path>` (or `git status -- <path>`
+for an untracked one, or "git cannot show it, the file is git-ignored" for a `.dsh/.state` record) shows what
+changed. If the human restores the file, that clears the block. If the human instead KEEPS the change, the block
+does not clear at once:
+- for a **tracked** file that was CLEAN at SessionStart (including the human's own edit to
+  `.dsh/frozen-paths` itself, to unfreeze a path), it stays blocked until the human COMMITS it — a kept,
+  uncommitted change still differs from `HEAD`, which is what this check compares against;
+- for a **git-ignored** file, it stays blocked until a NEW SESSION starts — SessionStart is what takes a fresh
+  hash record of every git-ignored frozen file, and only that fresh record stops reading a kept change as new;
+- for a **tracked file that was already DIRTY at SessionStart** (the human's in-flight work), committing does
+  **not** clear it either, and neither does restoring the file to `HEAD` — this comparison is against the
+  file's content AT SESSION START (the SessionStart baseline row), never against `HEAD` (final-review fix pass,
+  I2 residual: an earlier version of this fix named "the human commits it" as the remedy for every tracked
+  file, which is wrong for this one). Once the further edit is committed, `git diff HEAD` can show nothing at
+  all even though the block persists. To clear it: restore the exact content the file had at SessionStart, or
+  start a new session — a new session takes a fresh baseline of whatever is dirty then.
+
+"The human restores or keeps it" (an earlier wording of this remedy) undersold the "keeps it" branch: kept does
+not mean cleared, and which condition clears it depends on whether the file was clean or already dirty when the
+session started. The existing turn-end attempt cap (two blocked attempts, then a logged release) applies to a
+frozen finding like any other block.
+
+### Documented blind spots and limits
+
+* **An interpreter with arbitrary code can rewrite both a git-ignored frozen file and its hash record.** The
+  record is frozen against Write/Edit and the text rules, not against an interpreter that computes its own path at
+  run time; only a sandbox closes this.
+* **Computed paths, and an interpreter run from a script file rather than inline, are not caught by either text
+  rule** (`deny_frozen_operand`'s and `deny_frozen_interp`'s own messages name this) — the post-hoc turn-end check
+  is the layer that answers for both.
+* **Wrapper spellings the interpreter rule does not see AT ALL:** `timeout`, `busybox`, `eval`, and a shell alias —
+  none of these is in the shared parser's wrapper list (`sudo`, `env`, `time`, `nohup`, `command`, `exec`, `xargs`,
+  `do`, `then`, `else`, `if`, `while`, `until`), so the command word the rule judges is the wrapper itself, not the
+  interpreter it runs.
+* **A wrapper the shared parser DOES know is only transparent BARE, with no option of its own** (measured; only a
+  bare `sudo python3 …`, with nothing between `sudo` and the interpreter, is caught): `sudo -u x python3 -c …`,
+  `sudo -E …`, `env -i …`, `nice -n 5 …` / `nice -n5 …`, `time -p …` and `xargs -I{} …` are all ALLOWED — the
+  parser's bare-word skip matches the wrapper NAME exactly, so its own option is read as a fresh, unrecognised
+  command word and the rule never looks past it to the interpreter. Closing this for every option shape of every
+  wrapper is out of scope for this rule; the post-hoc turn-end check is the layer that answers for a TRACKED
+  file either way (a git-ignored file written this way is the same blind spot as any interpreter-computed path,
+  above).
+* **`tee <frozen>` and `cp`/`mv`/`install`/`rsync` onto a frozen destination ARE denied** — by the semantic guard's
+  bash-action-path scan (`dsh_bash_action_paths`: `tee`'s every non-option operand, and `cp`/`mv`/`install`/
+  `rsync`'s destination operand), not by the interpreter rule or the operand rule. (An earlier draft of this note
+  said `tee` was not denied by either text rule; measured against the code, it is — by this third one.)
+* **The fallback baseline modes (`tree`, `nohash`, `unreadable`) cannot detect a revert of a pre-dirty frozen
+  file** — only the `session` baseline state carries a per-path hash to compare a reverted file's content against;
+  in every fallback mode there is nothing recorded to tell "reverted to the human's own content" from "reverted to
+  something else."
+* **A row added to `.dsh/frozen-paths` mid-session misses a pre-dirty non-Scala file it now covers**: the
+  SessionStart baseline recorded frozen dirty paths against the frozen list AS IT WAS at session start, so a
+  non-Scala file that was already dirty under the OLD list has no baseline hash row under the NEW one — turn-end
+  cannot tell "already dirty, untouched" from "changed this session" for it.
+* **After the attempt cap releases, other checks are skipped while the frozen finding persists.** The frozen stage
+  runs first and blocks straight through `block()`; when the cap is reached `block()` releases the turn via
+  `allow` immediately (measured: `allow` exits the script on the spot), so diff-scoped verification, the compile
+  chain, `turnEndTests` and vericoding never run that turn. The attempt counter resets on release, so the next
+  turn hits the same frozen finding first again — the sequence repeats for as long as the frozen change stays.
+* **A filename with an embedded newline under a git-ignored frozen directory is not protected** —
+  `dsh_frozen_ignored_files` enumerates such a directory with `find … -print`, one path per line, so a newline
+  inside a name breaks the per-line parsing.
+* **A `.DS_Store` or other OS write under a git-ignored frozen directory blocks, like any new file** — it is
+  caught by the "added since SessionStart" check, not exempted, so an agent (or the sandbox) that creates one
+  there blocks the turn exactly as an intentional write would.
+* **Deleting a PARENT directory of frozen rows is text the frozen-path checks never see as a frozen-path write**:
+  `rm -rf .dsh` or `shutil.rmtree('.dsh')` names `.dsh`, not any row under it, so no text rule matches. A TRACKED
+  file the deletion took with it still shows up at turn-end (`dsh_changed_paths` reports the deletion of every
+  file git tracked under the removed directory, and each one is checked against the frozen rows as before); a
+  git-ignored one is a genuine gap the same as any computed-path write above.
+* **`cd .dsh && python3 -c "open('contract','w')"` names no frozen path in the command's own text** — the
+  operand is `contract`, relative, spelled only after a `cd` the interpreter rule's text scan does not resolve
+  (unlike the operand rule, which does resolve a literal `cd` first). Turn-end still catches it for a TRACKED
+  file, the same as any other interpreter write the text rules miss.
+* **The interpreter text rule over-blocks** (the trade-off its own header states — text, not shell semantics):
+  * an `awk`/`gawk`/`mawk`/`nawk` invocation with `print` or `printf` plus a `>` or `|` **anywhere in the whole
+    command** — not necessarily in the same awk program, or even the same pipeline segment;
+  * a path under **another** directory that merely shares a frozen prefix row's spelling as a path token, e.g.
+    `vendor/engine/details/…` against a frozen `engine/details/**` row — the boundary check treats `/` as a
+    token boundary on both sides, not as "this IS the repository-rooted directory";
+  * a `sh`/`bash`/`zsh`/`dash` command whose own script takes a single-dash argument containing the letter `c`
+    (`sh myscript.sh -check`) — read as a combined `-c` cluster, though the script never runs inline code.
+* **Transitional note: a mid-session re-vendor leaves dirty non-Scala frozen files unrecognised until they are
+  committed.** A session started under the OLD engine (before this fix pass) has no baseline rows for a frozen
+  file that was already dirty and is not `.scala`/`.sc`/`.mill` — the SessionStart baseline this fix pass's
+  `turn-end` reads was taken by code that did not yet record it. Such a file then reads as "new since the
+  baseline" and blocks until the human commits it, even with no in-session write of its own. Re-vendor BETWEEN
+  sessions, not mid-session, so every session's SessionStart baseline matches the engine that reads it.
+
 ## Diff-scoped verification: `verify-diff.sh`
 
 `sh .dsh/engine/verify-diff.sh [--staged|--staged-worktree]` (spec 2026-09-24) is a cheap, deterministic
@@ -406,6 +536,9 @@ promotes to a block. The `<module>`, `<check>` and `N` parts of a title are fill
 | `purrism rewrite reverted in <module>` | turn-end | degradation | the rewrite was applied, the module then failed to compile, and every file of the module the rewrite changed got its original back; the first compile error follows. If the ordinary compile later in the chain passes, that was a purrism bug, not your code. |
 | `<check> (failed; names only files this turn did not touch — not blocking)` | turn-end | finding | a check in the compile chain failed, but every file its output names is one this turn did not touch — real breakage, attributed elsewhere, so it notes instead of blocking (F53). |
 | `turnEndTests: <module> (N draft failure(s) — noted)` | turn-end | finding | the module's turn-end tests failed only on DRAFT properties/tests, which note rather than block. |
+| `turnEndTests: <module> not started — the Stop hook's budget` | turn-end | degradation | either no time was left of `DSH_STOP_BUDGET` (default 540 s) when the module's turn came, or 10 s or less were left; either way its `turnEndTests` were not started this turn. See [`DSH_TESTS_CAP`](#turnendtests-time-cap-dsh_tests_cap). |
+| `turnEndTests: <module> did not finish within <N> s — not verified` | turn-end | degradation | the run was killed at the `<N>` s cap (`DSH_TESTS_CAP`, default 300, bounded by what was left of `DSH_STOP_BUDGET`) and never reached a verdict. Not counted as a failure. |
+| `frozen ignored paths not compared` | turn-end | degradation | the git-ignored frozen-file record (`.dsh/.state/frozen/<key>.tsv`) could not be fully compared this turn: no sha256 tool, the record itself is `incomplete:` (SessionStart could not hash every git-ignored frozen file), or the ignored-file list could not be re-enumerated to catch one ADDED since SessionStart. The rows it did record (or list) were still compared. See [Frozen paths: what is caught where](#frozen-paths-what-is-caught-where). |
 | `vendored engine does not match its stamp` | health | degradation | the vendored `.dsh/engine/` is missing its `STAMP`, no longer matches it, or cannot be hashed (the parenthesis says which). The gate still runs; `sh .dsh/engine/check-harness.sh` FAILs on the same condition. Remedy: re-run `install.sh` from a scala-llm-template checkout. |
 | `gate engine supports Mill builds only` | health, post-edit, turn-end | degradation | positive evidence of another build tool (`found: build.sbt` or `found: project.scala`, and no `build.mill` or `./mill`): the Mill checks stand down, named. At turn-end, diff-scoped verification has already run. See [Non-Mill projects](#non-mill-projects). |
 | `vericoding: <m> — <N> verification condition(s) unknown (solver timeout)` | turn-end | finding | Stainless could neither prove nor refute these VCs within its per-VC timeout; each is listed as `<file>:<l>:<c>  <fn>  <vc kind>  (timeout)`. The human decides whether to accept them. See [Vericoding](#vericoding-contracts-are-the-humans-stainless-checks-the-body). |

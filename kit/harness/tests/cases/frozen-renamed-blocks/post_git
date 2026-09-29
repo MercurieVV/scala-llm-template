@@ -1,0 +1,3 @@
+#!/bin/sh
+# A rename through an ungated route: both names are reported, the source as removed.
+git mv engine/details/A.scala engine/details/B.scala

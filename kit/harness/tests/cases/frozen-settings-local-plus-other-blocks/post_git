@@ -1,0 +1,13 @@
+#!/bin/sh
+# .claude/settings.local.json is created and force-added here, not shipped under root/ -- see the
+# comment in frozen-settings-local-tracked-noted/post_git for why (a common developer global
+# gitignore would otherwise silently drop it from `git add -A`, and from `install.sh`'s own vendoring
+# of this suite).
+mkdir -p .claude
+printf '{}\n' > .claude/settings.local.json
+git add -f .claude/settings.local.json
+git -c user.email=t@t -c user.name=t commit -qm settings-local-json-tracked
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+printf '{"permissions":{"allow":["Bash(ls:*)"]}}\n' > .claude/settings.local.json
+printf '\n// this session'"'"'s write through an ungated route\n' >> engine/details/A.scala

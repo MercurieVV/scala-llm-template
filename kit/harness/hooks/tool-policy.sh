@@ -163,6 +163,107 @@ MSG
   exit 2
 }
 
+# The interpreter/inline-shell text verdict (spec 2026-09-28 §2). `deny_frozen_operand` above names
+# this exact gap in its own OUTSIDE list -- "an interpreter that opens the file itself" -- because an
+# interpreter's write is not an operand any shell-level rule can see. This is text, not semantics: it
+# fires because the frozen path's SPELLING appears somewhere in the command text the interpreter or
+# inline shell will run, never because anything here parsed what the program actually does.
+deny_frozen_interp() { # <path as it appeared> <reason> <access>
+  _di_word=FROZEN; [ "${3:-}" = sealed ] && _di_word=SEALED
+  printf 'BLOCKED by tool-policy: %s is a %s PATH — the human is working on it right now.\n  reason: %s\n' \
+    "$(bound_bytes "${1:-}" 240)" "$_di_word" "$(bound_bytes "${2:-}" 300)" >&2
+  cat >&2 <<'MSG'
+This command runs an interpreter or an inline shell (python/python2/python3/perl/ruby/node with any
+arguments, sh/bash/zsh/dash with -c, or awk writing via `print >`/`printf >`/`system(`), and the
+command's own text names a frozen path — an interpreter can write where the shell rules cannot see,
+so this is refused before it runs, not after.
+To read the file, use the Read tool (allowed) — reading is not what this rule exists to stop. To
+change a frozen file, ask the human: the HUMAN removes the entry from .dsh/frozen-paths (committed)
+or .dsh/.state/frozen-paths (machine-local) first.
+NOT covered here (documented; the turn-end post-hoc check is the layer that answers for these): a
+path the interpreter computes at run time, and an interpreter run from a script file rather than
+inline.
+MSG
+  exit 2
+}
+
+# _it_boundary_match <needle>: exit 0 when <needle> occurs in $cmd as a PATH TOKEN -- not merely as
+# a substring of a longer name. Fix round 1, item 1 (measured): the original rule appended a
+# trailing `/` to a prefix row's spelling and searched for THAT, so a bare `engine/details` with no
+# trailing slash (`rm -rf engine/details`, `shutil.rmtree('engine/details')`) matched no candidate at
+# all and passed -- deleting the whole frozen tree. The fix is the same "word boundary" a text search
+# always needs: <needle> counts only when whatever comes before it (if anything) and whatever comes
+# after it (if anything) is NOT a path character -- so `engine/details_old` stays allowed (`_` is a
+# path character, in the same set a shell accepts unquoted in a bare word) while `engine/details`,
+# `engine/details/x`, `engine/details'` and `engine/details"` all count. The same rule now covers
+# EXACT rows too, at both ends (fix round 1, item 1's last sentence): a frozen exact path is a whole
+# name, never a fragment of a longer one either way -- so this single check replaces the two separate,
+# asymmetric loops the previous version had for `exact` and `prefix`, because with a boundary check a
+# `prefix` row's own directory name IS the token to look for (its own trailing slash was only ever
+# there to fake the boundary this function now checks properly).
+# The four alternatives are the standard case-pattern "whole token" idiom: needle alone (both ends are
+# the ends of $cmd), needle then a non-path character (right boundary only, needle starts at the very
+# start of $cmd), a non-path character then needle (left boundary only, needle runs to the very end),
+# and a non-path character on both sides. `"$1"` is always quoted, so it is matched LITERALLY, never
+# reinterpreted as a glob -- a frozen entry can never contain a glob metacharacter anyway
+# (dsh_frozen_paths rejects `*`/`?`/`[`), so this is belt and suspenders, not a requirement.
+_it_boundary_match() { # <needle>
+  case "$cmd" in
+    "$1"|"$1"[!A-Za-z0-9._-]*|*[!A-Za-z0-9._-]"$1"|*[!A-Za-z0-9._-]"$1"[!A-Za-z0-9._-]*) return 0 ;;
+  esac
+  return 1
+}
+
+# check_frozen_interp_text: scans the WHOLE command text ($cmd) for a frozen path's spelling, once
+# per hook call (`_it_scanned`), and denies on the first hit. A caller runs this only once it has
+# decided the CURRENT segment is an interpreter or inline-shell shape -- but the text scanned is
+# always $cmd in full, heredoc bodies included, because the spec's rule is "one interpreter segment
+# anywhere in the command makes a frozen name anywhere in the command deny it", not "in this segment".
+# Every spelling a frozen entry can appear under is tried: root-relative, `./`-prefixed, and absolute
+# through EITHER root spelling (dsh_repo_relpath resolves both, because /tmp and /private/tmp name
+# the same directory on macOS). `exact` and `prefix` rows are now the SAME check
+# (`_it_boundary_match`, see above): a bare `kernels.tsv` still does not match a frozen
+# `.dsh/policy/kernels.tsv` (the basename-only fixture is unaffected -- it never was about the
+# boundary, it is about the full path never appearing at all), and `engine/details_old` still does
+# not match a frozen `engine/details/**` (the boundary fixture, now for the RIGHT reason).
+check_frozen_interp_text() {
+  [ "$_it_scanned" = 0 ] || return 0
+  _it_scanned=1
+  _it_rows=$(dsh_frozen_paths "$(gate_root)" 2>/dev/null) || :
+  [ -n "$_it_rows" ] || return 0
+  _it_root=$(gate_root)
+  _it_root_phys=$(CDPATH= cd -- "$_it_root" 2>/dev/null && pwd -P) || _it_root_phys=$_it_root
+  _it_tab='	'
+  _it_ifs=$IFS
+  IFS='
+'
+  _it_hit_reason=''
+  _it_hit_access=''
+  _it_hit_path=''
+  for _it_row in $_it_rows; do
+    IFS=$_it_ifs
+    _it_racc=${_it_row%%"$_it_tab"*}
+    _it_rest=${_it_row#*"$_it_tab"}
+    _it_kind=${_it_rest%%"$_it_tab"*}
+    _it_rest=${_it_rest#*"$_it_tab"}
+    _it_p=${_it_rest%%"$_it_tab"*}
+    _it_creason=${_it_rest#*"$_it_tab"}
+    case "$_it_kind" in
+      exact|prefix)
+        for _it_sp in "$_it_p" "./$_it_p" "$_it_root/$_it_p" "$_it_root_phys/$_it_p"; do
+          if _it_boundary_match "$_it_sp"; then
+            _it_hit_reason=$_it_creason; _it_hit_access=$_it_racc; _it_hit_path=$_it_p; break
+          fi
+        done ;;
+    esac
+    [ -n "$_it_hit_reason" ] && break
+  done
+  IFS=$_it_ifs
+  if [ -n "$_it_hit_reason" ]; then
+    deny_frozen_interp "$_it_hit_path" "$_it_hit_reason" "$_it_hit_access"
+  fi
+}
+
 # The write side of the directory-change rule: this hook resolves a relative operand against the
 # repository root, so an operand that follows a `cd` this layer cannot resolve is undecided -- and
 # undecided is denied rather than guessed, because the guess is the permissive direction.
@@ -433,6 +534,10 @@ set -f
 _ifs=$IFS
 # The feedback rewrite, if the loop decides one; emitted only after every deny rule has run.
 _fb_rewrite=''
+# INTERPRETER TEXT RULE (spec 2026-09-28 §2): scanned at most once per hook call, on the first
+# qualifying segment -- the target is always the WHOLE command text ($cmd), never the segment that
+# tripped it, so a second qualifying segment would find nothing this one didn't already look at.
+_it_scanned=0
 IFS='
 '
 for _seg in $_segments; do
@@ -463,6 +568,128 @@ Fetch to a file, inspect it, then run it deliberately." ;;
     # names the same command word lands right after the wrappers it skipped.
     set -- $_part
     while [ $# -gt 0 ] && [ "$(command_position_words "$*")" = "$_word" ]; do shift; done
+
+    # INTERPRETER TEXT RULE (spec 2026-09-28 §2): is THIS part's command word an interpreter (any
+    # arguments) or an inline shell (`-c` among its words), or is it `awk`/`gawk`/`mawk`/`nawk`
+    # writing? Wrapper words the SHARED parser's own bare-word list skips (`sudo`, `env`, `time`,
+    # `nohup`, `command`, `exec`, `xargs`, …) are already invisible here -- `command_position_words`
+    # skipped them before `_word` was set, the same seam every other rule in this file reads through,
+    # so a BARE `env python3 -c …` (no flags of its own) is covered without a new parser. `nice` is
+    # NOT in that shared list (final-review fix pass, measured: `nice python3 -c …` with no flags is
+    # still covered below, by the recompute case just under this comment, but `nice` is not a wrapper
+    # `command_position_words` itself skips) -- and NONE of these wrappers is seen through once it
+    # takes its OWN option (`sudo -u x …`, `sudo -E …`, `env -i …`, `nice -n 5 …` / `nice -n5 …`,
+    # `time -p …`, `xargs -I{} …`): the shared parser's bare-word skip only matches an exact wrapper
+    # NAME in command position, so an option right after it is read as a fresh, unrecognised command
+    # word and this rule never looks past it. That is a documented gap (README), not fixed here --
+    # closing it for every option shape of every wrapper is a wider change than this rule's job.
+    #
+    # A PATH-QUALIFIED wrapper (fix round 1, item 5, measured: `/usr/bin/env python3 -c …` was
+    # allowed while bare `env python3 -c …` was denied) is the one case the shared parser's wrapper
+    # list does not see through: it matches wrapper NAMES exactly, so `/usr/bin/env` does not match
+    # `env` and is treated as the command itself, basename-stripped to `env`. The shift loop just
+    # above this comment already, as a side effect of always shifting at least once (its own first
+    # comparison is against the unchanged input), leaves `"$@"` positioned at `python3 -c …` either
+    # way -- so recomputing the word from `"$@"` when `_word` IS one of these wrapper basenames
+    # recovers the real interpreter without touching the shared parser or `_word` itself (kept LOCAL
+    # to this rule: no other rule in this file should start treating `/usr/bin/env git push --force`
+    # as `git`, which is a wider change than this fix round asks for).
+    _it_word=$_word
+    case "$_it_word" in
+      env|command|exec|nice|sudo|time|nohup|xargs)
+        if [ $# -gt 0 ]; then
+          _it_word2=$(command_position_words "$*")
+          [ -n "$_it_word2" ] && _it_word=$_it_word2
+        fi ;;
+    esac
+    # ASSIGNMENT-PREFIXED interpreter (final-review fix pass, I3a): `NAME=value cmd` is POSIX shell
+    # syntax for a one-shot environment override, and it is invisible to everything above -- the
+    # shared parser has no notion of assignment syntax (teaching it one would change every OTHER
+    # rule in this file that reads through it, e.g. `git`'s force-push check, a wider change than this
+    # rule asks for), so it reports the assignment word itself as the command word, and
+    # `PYTHONPATH=. python3 -c …` / `A=1 B=2 sh -c …` both read as an unrecognised word and passed
+    # (measured). Handled LOCALLY, the same way `/usr/bin/env` is just above: while the word looks
+    # like `NAME=value` (NAME matching the POSIX shell variable-name grammar,
+    # `[A-Za-z_][A-Za-z0-9_]*`), skip it and recompute the word from what is left, until the word is
+    # not itself an assignment or nothing remains. The shift loop above already leaves `"$@"`
+    # positioned right after `_it_word` either way, so each turn of this loop only needs to advance
+    # past however many further words the recomputed word itself spans (its own shift loop, same
+    # idiom), never re-deriving position from scratch.
+    while :; do
+      case "$_it_word" in
+        *=*) _it_name=${_it_word%%=*} ;;
+        *) break ;;
+      esac
+      case "$_it_name" in
+        [A-Za-z_]*)
+          _it_nrest=${_it_name#?}
+          case "$_it_nrest" in
+            *[!A-Za-z0-9_]*) break ;;
+          esac ;;
+        *) break ;;
+      esac
+      [ $# -gt 0 ] || break
+      _it_word2=$(command_position_words "$*")
+      [ -n "$_it_word2" ] || break
+      _it_word=$_it_word2
+      while [ $# -gt 0 ] && [ "$(command_position_words "$*")" = "$_it_word" ]; do shift; done
+    done
+    _it_interp=0
+    case "$_it_word" in
+      sh|bash|zsh|dash)
+        # A COMBINED short-option cluster (fix round 1, item 2, measured: `bash -lc`, `sh -ec` and
+        # `bash -xc` were all allowed) carries `-c` inside a cluster of other short flags, never as
+        # its own word. `--*` is excluded first (a long option never bundles this way) so it can
+        # never reach the broad `-c` cluster pattern below it. The pattern is a plain `-*c*`, not a
+        # `[A-Za-z]`-anchored one: a bracket-expression term is exactly ONE character, so
+        # `-[A-Za-z]*c[A-Za-z]*` (this file's first draft) requires a letter AFTER the `c` too and
+        # therefore never matches `-c` or `-lc` themselves -- measured while writing this fix.
+        for _it_a in "$@"; do
+          case "$_it_a" in
+            --*) ;;
+            -*c*) _it_interp=1; break ;;
+          esac
+        done ;;
+      awk|gawk|mawk|nawk)
+        # The awk trigger (fix round 1, item 3, measured: `awk 'BEGIN{print "x" > "…"}'` and
+        # `{print>"…"}` were both allowed) was too literal: it required the exact substrings
+        # `print >`/`printf >` with a space. `system(` alone is still sufficient (it can run
+        # anything); otherwise the program counts as writing when it contains `print` or `printf`
+        # AND, separately and anywhere in the text, `>` or `|` -- not necessarily adjacent, and not
+        # necessarily in that order, because `awk`'s own syntax does not require it (`> "f"` inside a
+        # different block, `printf("%s", x) > f`, `print | "cmd"`).
+        # Checked against $cmd, not $_part: the segment/part splitter above cuts on a literal `|`
+        # ANYWHERE in the line, quoting or not (this whole file is text, not shell semantics -- see
+        # its own header) -- so an awk program that uses `|` as ITS OWN operator
+        # (`print $0 | "cat > f"`) is itself split into two "parts" by that `|`, and the half
+        # holding `awk` would never see the `|` or whatever follows it in $_part. $cmd is whole and
+        # is also what `check_frozen_interp_text` scans for the frozen path, so a false trigger from
+        # an unrelated later segment (over-matching, not under-matching) is the same accepted
+        # trade-off the whole-command path scan already makes.
+        case "$cmd" in
+          *'system('*) _it_interp=1 ;;
+          *'print'*|*'printf'*)
+            case "$cmd" in
+              *'>'*|*'|'*) _it_interp=1 ;;
+            esac ;;
+        esac ;;
+      *)
+        # A version suffix on the basename is stripped before the comparison (`python3.12`,
+        # `python2.7`, `pypy3`) by peeling trailing digit/dot characters one at a time -- a plain
+        # `case … in python3.*)` cannot also match a bare `python3`. `pypy`, `nodejs` and `php` are
+        # added here (fix round 1, item 5) alongside the original five names.
+        _it_base=$_it_word
+        while :; do
+          case "$_it_base" in
+            *[0-9.]) _it_base=${_it_base%?} ;;
+            *) break ;;
+          esac
+        done
+        case "$_it_base" in
+          python|perl|ruby|node|pypy|nodejs|php) _it_interp=1 ;;
+        esac ;;
+    esac
+    [ "$_it_interp" = 1 ] && check_frozen_interp_text
 
     # History rewriting: the command word is `git`, its first argument is `push`, and a force
     # flag is among the arguments.

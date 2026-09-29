@@ -1,0 +1,3 @@
+local/**	the human's local notes, never committed
+.dsh/.state/contracts/**	the contract snapshot is the human's record of the contracts at session start
+.dsh/.state/frozen/**	the frozen-path hash record is the human's record of the frozen files at session start

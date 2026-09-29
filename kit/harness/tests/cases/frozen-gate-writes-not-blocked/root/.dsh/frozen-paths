@@ -1,0 +1,3 @@
+.dsh/.state/receipts	receipts are the gate's record; the human's
+.dsh/.state/modules.tsv	the coverage map is the build's answer
+.dsh/.state/unverified.log	the release log is the human's

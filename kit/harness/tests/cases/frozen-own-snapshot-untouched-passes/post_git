@@ -1,0 +1,6 @@
+#!/bin/sh
+# `.dsh/.state` NOT git-ignored: SessionStart writes this session's contract snapshot (untracked,
+# frozen) and the baseline records its hash. Untouched afterwards -> no block.
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+[ -f .dsh/.state/contracts/s1.tsv ] || { echo "no snapshot written"; exit 1; }

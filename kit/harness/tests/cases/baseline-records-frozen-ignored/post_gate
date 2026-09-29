@@ -1,0 +1,13 @@
+#!/bin/sh
+rec=.dsh/.state/frozen/s1.tsv
+[ -f "$rec" ] || { echo "FAIL: no frozen-ignored record at $rec"; ls -la .dsh/.state; exit 1; }
+head -n 1 "$rec" | grep -q '^# DSH frozen-ignored s1 [0-9T:Z-]*$' || { echo "FAIL: header"; head -n 1 "$rec"; exit 1; }
+if command -v shasum >/dev/null 2>&1; then want=$(printf 'k\n' | shasum -a 256 | awk '{print $1}'); else want=$(printf 'k\n' | sha256sum | awk '{print $1}'); fi
+grep -qx "$want	local/k.txt" "$rec" || { echo "FAIL: local/k.txt row missing or retaken"; cat "$rec"; exit 1; }
+# This session's own contract snapshot is written BEFORE the record and never rewritten: a legitimate row.
+grep -q '	\.dsh/\.state/contracts/s1\.tsv$' "$rec" || { echo "FAIL: own contract snapshot not recorded"; cat "$rec"; exit 1; }
+if grep -q '	\.dsh/\.state/frozen/' "$rec"; then echo "FAIL: the record lists a frozen record"; cat "$rec"; exit 1; fi
+if grep -q '	\.dsh/\.state/receipts$' "$rec"; then echo "FAIL: the gate's receipts recorded"; exit 1; fi
+[ "$(grep -vc '^#' "$rec")" = 2 ] || { echo "FAIL: unexpected rows"; cat "$rec"; exit 1; }
+ls .dsh/.state/frozen | grep -v '^s1\.tsv$' && { echo "FAIL: temp files left"; exit 1; }
+echo "post_gate: frozen-ignored record ok"

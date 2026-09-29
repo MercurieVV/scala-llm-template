@@ -84,6 +84,18 @@ both — see step 2b. Beyond the seeded entries (`.dsh/engine/**` and the harnes
 source path unless the human is mid-flight, which is the only thing a source freeze is for. For sbt and scala-cli the harness is not installed (the step
 is skipped by name): the tasks you wire in step 4 are the gate's contract, and step 3's baseline is what they print.
 
+**Re-vendoring a project already installed.** `install.sh` never overwrites an existing `.dsh/frozen-paths` (it is
+project state, seeded only where absent), so a project vendored before the git-ignored frozen-file record existed
+(`kit/harness/README.md`, "Frozen paths: what is caught where") is missing the row that freezes it — add it by
+hand, TAB-separated, exactly as the current seed carries it:
+
+```
+.dsh/.state/frozen/**	the frozen-path hash record is the human's record of the frozen files at session start
+```
+
+`sh .dsh/engine/check-harness.sh` FAILs (`the frozen-path hash records (.dsh/.state/frozen/**) are not frozen — add
+the row to .dsh/frozen-paths`) until this row is added, whenever the project has any frozen row at all.
+
 **Output: one commit for the install; no behaviour change.** The installer stages what it wrote (its last step is
 `git add .`). On a project already committed and clean, the staged set is the kit's files and you commit exactly
 those; on a fresh project the same run also writes the template's own state, so commit that as its own commit (or as

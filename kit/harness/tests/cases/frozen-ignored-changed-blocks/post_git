@@ -1,0 +1,11 @@
+#!/bin/sh
+# git-ignored frozen files (spec 2026-09-28 §1 item 2): `local/` and `.dsh/.state/` are ignored through
+# .git/info/exclude -- a fixture cannot ship a .gitignore under root/ without it ignoring the fixture
+# files themselves in this repository.
+printf 'local/\n.dsh/.state/\n' >> .git/info/exclude
+mkdir -p local
+printf 'k\n' > local/k.txt
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" >/dev/null || exit 1
+# Rewritten by a route no pre-call rule sees; git cannot see an ignored file at all.
+printf x >> local/k.txt

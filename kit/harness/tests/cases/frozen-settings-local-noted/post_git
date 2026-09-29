@@ -1,0 +1,10 @@
+#!/bin/sh
+# .claude/ is typically git-ignored for settings.local.json; ignore it via .git/info/exclude so a
+# root/.gitignore doesn't ignore the fixture's own shipped files in this repository.
+printf '.claude/\n.dsh/.state/\n' >> .git/info/exclude
+mkdir -p .claude
+printf '{"permissions":{}}\n' > .claude/settings.local.json
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" >/dev/null || exit 1
+# Claude Code rewrites this file when the human picks "don't ask again" on a permission prompt.
+printf '{"permissions":{"allow":["Bash(ls:*)"]}}\n' > .claude/settings.local.json

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Between the two SessionStarts the file changes: the second one must KEEP the first record.
+printf 'changed\n' >> local/k.txt

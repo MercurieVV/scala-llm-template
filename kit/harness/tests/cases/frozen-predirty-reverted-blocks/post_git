@@ -1,0 +1,8 @@
+#!/bin/sh
+# The human's uncommitted edit is recorded at SessionStart; an ungated route (a script's own
+# `git checkout`) then reverts the file to HEAD. git no longer lists it, but its hash moved from the
+# baseline's: the human's in-flight work is gone, and that is a write to a frozen path.
+printf '\n// the human\x27s in-flight work\n' >> engine/details/A.scala
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+git checkout -q -- engine/details/A.scala

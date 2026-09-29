@@ -1,0 +1,12 @@
+#!/bin/sh
+# `.dsh/.state` NOT git-ignored, and NO sha256 tool: SessionStart still writes this session's contract
+# snapshot (before its early exits) but records no baseline. With no comparable baseline the
+# snapshot's hash is not held anywhere, so the gate's own record must not read as a frozen write.
+case_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+engine=$(CDPATH= cd -- "$case_dir/../../.." && pwd)
+nb=$(. "$case_dir/nohash-path.sh")
+PATH="$nb" command -v shasum >/dev/null 2>&1 && { echo "hasher still on the no-hash PATH"; exit 1; }
+PATH="$nb" command -v sha256sum >/dev/null 2>&1 && { echo "hasher still on the no-hash PATH"; exit 1; }
+PATH="$nb" GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$case_dir/payload.json" || exit 1
+[ -f .dsh/.state/contracts/s1.tsv ] || { echo "no snapshot written"; exit 1; }
+[ ! -f .dsh/.state/baseline-s1.tsv ] || { echo "a baseline was written with no hasher"; exit 1; }

@@ -1,0 +1,7 @@
+#!/bin/sh
+# No frozen rows: the record is still written (so its absence later means deletion), header only.
+rec=.dsh/.state/frozen/s1.tsv
+[ -f "$rec" ] || { echo "FAIL: no record"; exit 1; }
+[ "$(wc -l < "$rec" | tr -d ' ')" = 1 ] || { echo "FAIL: not header-only"; cat "$rec"; exit 1; }
+head -n 1 "$rec" | grep -q '^# DSH frozen-ignored s1 [0-9T:Z-]*$' || { echo "FAIL: header"; cat "$rec"; exit 1; }
+echo "post_gate: header-only record"

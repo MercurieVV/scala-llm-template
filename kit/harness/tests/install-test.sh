@@ -144,6 +144,9 @@ cp "$engine/seed/frozen-paths" "$fz_tmp/.dsh/frozen-paths"
 is "seed frozen-paths: a session's contract snapshot is frozen" \
   "the contract snapshot is the human's record of the contracts at session start" \
   "$(dsh_frozen_reason "$(dsh_repo_relpath "$(GATE_ROOT="$fz_tmp" dsh_contract_file s1)" "$fz_tmp")" "$fz_tmp")"
+is "seed frozen-paths: a session's frozen-file hash record is frozen" \
+  "the frozen-path hash record is the human's record of the frozen files at session start" \
+  "$(dsh_frozen_reason "$(dsh_repo_relpath "$(GATE_ROOT="$fz_tmp" dsh_frozen_record_file s1)" "$fz_tmp")" "$fz_tmp")"
 is "seed frozen-paths: parses with no malformed entry" "rc=0" "$(dsh_frozen_paths "$fz_tmp" >/dev/null 2>&1; printf 'rc=%s' "$?")"
 rm -rf "$fz_tmp"
 

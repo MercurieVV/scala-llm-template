@@ -1,0 +1,13 @@
+#!/bin/sh
+# git-ignored frozen files: `local/` and `.dsh/.state/` ignored through .git/info/exclude (a root/.gitignore
+# would ignore the fixture files themselves in this repository).
+printf 'local/\n.dsh/.state/\n' >> .git/info/exclude
+mkdir -p local
+printf 'k\n' > local/k.txt
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" >/dev/null || exit 1
+# Session mode (a readable baseline, a hasher): this session's own contract snapshot is git-ignored,
+# frozen and recorded at SessionStart (written before the record, never rewritten), so a rewrite of it
+# is exactly the write the freeze exists to catch (spec §4).
+grep -q '	\.dsh/\.state/contracts/s1\.tsv$' .dsh/.state/frozen/s1.tsv || { echo "own snapshot not recorded"; exit 1; }
+printf 'x\n' >> .dsh/.state/contracts/s1.tsv

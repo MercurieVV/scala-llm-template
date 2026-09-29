@@ -318,14 +318,22 @@ expect_mutation mcp-uri-decode hooks/semantic-guard.sh \
   frozen-mcp-write-encoded-uri-denied -- frozen-mcp-write-denied
 
 # 4. the operand-shaped commands (tool-policy): rm/mv/ln/truncate/patch/git …/perl -i/find -delete.
+# `frozen-perl-inplace-denied` and `frozen-perl-read-ok` are NOT here (spec 2026-09-28 §2): every
+# `perl` invocation is now also judged by the interpreter text rule, which runs earlier in the same
+# loop and denies both regardless of this operand code, so neither fixture's verdict under this
+# mutation would prove anything about the operand rule any more. `frozen-perl-inplace-cd-denied` IS
+# here (fix round 1, item 4, restored): its frozen spelling is split across a `cd` the interpreter
+# text rule cannot see across (`cd engine && perl -i … details/A.scala` never puts `engine` and
+# `details` adjacent in $cmd), so ONLY this operand code's cd-base resolution decides it -- see 4c
+# below, which isolates the perl branch specifically.
 expect_mutation operands hooks/tool-policy.sh \
   's/^    if \[ -n "$_fz_kind" \]; then$/    if false; then/' \
   frozen-rm-denied frozen-mv-frozen-source-denied frozen-git-checkout-denied \
   frozen-git-restore-denied frozen-git-rm-denied frozen-git-mv-denied frozen-git-apply-denied \
   frozen-patch-denied frozen-truncate-denied frozen-ln-into-frozen-dir-denied \
-  frozen-perl-inplace-denied frozen-find-delete-denied frozen-find-exec-rm-denied \
-  frozen-rm-cd-relative-denied \
-  -- frozen-git-diff-read-ok frozen-perl-read-ok frozen-find-read-ok frozen-rm-outside-list-ok \
+  frozen-find-delete-denied frozen-find-exec-rm-denied \
+  frozen-rm-cd-relative-denied frozen-perl-inplace-cd-denied \
+  -- frozen-git-diff-read-ok frozen-find-read-ok frozen-rm-outside-list-ok \
      frozen-rm-cd-outside-allowed frozen-ln-target-read-allowed
 
 # 4b. the `git` arm: without it the revert reflexes stop being seen, and nothing else changes.
@@ -334,28 +342,38 @@ expect_mutation operands-git hooks/tool-policy.sh \
   frozen-git-checkout-denied frozen-git-restore-denied frozen-git-rm-denied frozen-git-mv-denied \
   frozen-git-apply-denied -- frozen-rm-denied frozen-truncate-denied frozen-git-diff-read-ok
 
-# 4c. the writing forms of perl and find (`-i`, `-delete`, `-exec`): their reading forms stay green.
+# 4c. the writing form of perl (`-i`) is STILL load-bearing (fix round 1, item 4: the claim that it
+# was fully superseded by the interpreter text rule was wrong, and this row was restored to prove
+# it) -- for the ordinary case (frozen spelling literal and adjacent in $cmd) the text rule denies it
+# regardless of this code, but `frozen-perl-inplace-cd-denied` uses a spelling split across a `cd`
+# (`cd engine && perl -i -pe 's/a/b/' details/A.scala`) that the text rule structurally cannot see:
+# `engine` and `details` are never adjacent in $cmd, only in the RESOLVED path this operand code's
+# cd-base logic builds. `frozen-perl-unrelated-allowed` (a `perl` read of a path that is never frozen,
+# `engine/other/B.scala`) is the control: neither the text rule nor this operand code has anything to
+# say about it, mutated or not.
 expect_mutation operands-perl-inplace hooks/tool-policy.sh \
   's/^      perl) for _arg in "$@"; do case "$_arg" in -i\*) _fz_kind=operand ;; esac; done ;;$/      perl) ;;/' \
-  frozen-perl-inplace-denied -- frozen-perl-read-ok
+  frozen-perl-inplace-cd-denied -- frozen-perl-unrelated-allowed
+
+# 4d. the writing forms of find (`-delete`, `-exec`): its reading form stays green.
 expect_mutation operands-find-forms hooks/tool-policy.sh \
   's/^      find) for _arg in "$@"; do case "$_arg" in -delete|-exec) _fz_kind=operand ;; esac; done ;;$/      find) ;;/' \
   frozen-find-delete-denied frozen-find-exec-rm-denied -- frozen-find-read-ok
 
-# 4d. `ln` writes its LAST operand: with the scope widened to every operand, a frozen path that is
+# 4e. `ln` writes its LAST operand: with the scope widened to every operand, a frozen path that is
 #     only the link TARGET (a read) is refused -- the over-block the control fixture catches.
 expect_mutation operands-ln-scope hooks/tool-policy.sh \
   's/\[ "\$_fz_scope" = last \]/[ "$_fz_scope" = 9 ]/' \
-  frozen-ln-target-read-allowed -- frozen-ln-into-frozen-dir-denied frozen-perl-read-ok
+  frozen-ln-target-read-allowed -- frozen-ln-into-frozen-dir-denied
 
-# 4e. git's own global options before the subcommand: without the `-c`/`-C` reading, the option (or
+# 4f. git's own global options before the subcommand: without the `-c`/`-C` reading, the option (or
 #     its value) is mistaken for the subcommand and the write is never seen.
 expect_mutation operands-git-global-options hooks/tool-policy.sh \
   's@^      -c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)@      --git-dir|--work-tree|--namespace|--exec-path|--config-env)@' \
   frozen-git-dashc-option-checkout-denied frozen-git-cdash-option-checkout-denied \
   -- frozen-git-checkout-denied frozen-git-diff-read-ok
 
-# 4f. the WHOLE-TREE rule (`git checkout -- .`, `git restore .`, `git clean`, `git stash`,
+# 4g. the WHOLE-TREE rule (`git checkout -- .`, `git restore .`, `git clean`, `git stash`,
 #     `git reset --hard` while a frozen path exists).
 expect_mutation wholesale-tree hooks/tool-policy.sh \
   's@\[ "\$_fz_whole" = 1 \]@[ "$_fz_whole" = 9 ]@' \

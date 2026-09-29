@@ -1,0 +1,4 @@
+#!/bin/sh
+# A route no pre-call text rule sees (an interpreter, a computed path): the committed frozen file is
+# rewritten in place. Only the turn-end post-hoc check can see it.
+printf x >> engine/details/A.scala

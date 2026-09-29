@@ -154,6 +154,18 @@ for case_dir in "$cases_dir"/*/; do
       env_args="$env_args $line"
     done < "$case_dir/env"
   fi
+  # A case that never mentions DSH_STOP_BUDGET gets a generous one pinned here, so the vericoding
+  # and turnEndTests time-cap stages' own budget maths do not depend on how fast THIS machine is: a
+  # slow or loaded box can burn more of the default 540 s - 10 s window than a fixture ever intended
+  # before its own stage runs, misreading the budget as exhausted (vericoding-unknown-notes, which
+  # asserts nothing about a cap, has been seen to miss its Stop budget this way under load). A case
+  # that DOES set DSH_STOP_BUDGET (the budget fixtures above) is testing that knob on purpose: the
+  # guard below only appends this pin when the case's own env never named it, so env(1) only ever
+  # sees the case's own value.
+  case "$env_args" in
+    *DSH_STOP_BUDGET=*) ;;
+    *) env_args="$env_args DSH_STOP_BUDGET=3600" ;;
+  esac
 
   # shellcheck disable=SC2086
   # The case's own env comes first: the runner's seams (GATE_ROOT, GATE_SH, PATH, MILL_STUB_LOG) are

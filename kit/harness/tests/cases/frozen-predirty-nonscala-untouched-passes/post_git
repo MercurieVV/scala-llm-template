@@ -1,0 +1,6 @@
+#!/bin/sh
+# A frozen NON-Scala file already dirty at SessionStart and never touched by the session: the
+# baseline must record it (touched files alone are .scala/.sc/.mill), or every turn would block.
+printf 'the human\x27s draft\n' >> docs/plan.md
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1

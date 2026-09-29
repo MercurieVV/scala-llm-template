@@ -1,0 +1,12 @@
+#!/bin/sh
+# git-ignored frozen files: `local/` and `.dsh/.state/` ignored through .git/info/exclude (a root/.gitignore
+# would ignore the fixture files themselves in this repository).
+printf 'local/\n.dsh/.state/\n' >> .git/info/exclude
+mkdir -p local
+printf 'k\n' > local/k.txt
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" >/dev/null || exit 1
+# A NEW git-ignored file under a frozen row, created mid-session: parity with a new tracked file under a
+# frozen directory (item 1). The record is complete and the baseline carries the marker, so turn-end
+# re-enumerates and blocks on the path the record does not know.
+printf 'override\n' > local/override.conf
