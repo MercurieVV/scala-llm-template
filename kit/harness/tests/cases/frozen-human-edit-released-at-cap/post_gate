@@ -1,0 +1,7 @@
+#!/bin/sh
+# The turn after the release: two fresh attempts again, so this one blocks with the same finding.
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+out=$(GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" turn-end < "$(dirname -- "$0")/payload.json" 2>&1)
+rc=$?
+[ "$rc" = 2 ] || { echo "next turn exited $rc, wanted 2"; exit 1; }
+printf '%s\n' "$out" | grep -q 'frozen path changed this turn: NOTES.md' || { echo "next turn lacks the frozen finding"; exit 1; }

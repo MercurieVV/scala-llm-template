@@ -1,0 +1,14 @@
+#!/bin/sh
+# Live check 2026-09-29: the HUMAN edits a frozen file mid-session (clean at SessionStart). The agent
+# cannot clear it, so the attempt cap must still bound the loop: attempts 1 and 2 block (exit 2), the
+# runner's own invocation is attempt 3 and must release (expect.code 0), and post_gate proves the next
+# turn blocks again (the counter was reset, the finding persists).
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+payload="$(dirname -- "$0")/payload.json"
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$payload" >/dev/null 2>&1 || exit 1
+printf 'draft\n// the human edits this mid-session\n' > NOTES.md
+for attempt in 1 2; do
+  GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" turn-end < "$payload" >/dev/null 2>&1
+  rc=$?
+  [ "$rc" = 2 ] || { echo "attempt $attempt exited $rc, wanted 2"; exit 1; }
+done
