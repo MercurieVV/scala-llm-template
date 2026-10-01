@@ -16,6 +16,8 @@
 # this branch was `dash -n` plus direct probes, and a copy whose hooks recorded their own interpreter
 # showed every invocation under `sh` in a dash run of this file.
 #
+# RUN_CASES=<glob> runs only the matching case directories (a TDD convenience; the full run is the gate).
+#
 # Optional extras, all additive to the two files above:
 #   run_twice          invoke the gate a second time with the same payload and environment, require
 #                      the same exit code, and fold the second run's output into the greps below.
@@ -85,7 +87,7 @@ fi
 # true of the runner and not of everything it claims to exercise.
 export GATE_SH="$shell_bin"
 
-for case_dir in "$cases_dir"/*/; do
+for case_dir in "$cases_dir"/${RUN_CASES:-*}/; do
   [ -d "$case_dir" ] || continue
   cases=$((cases + 1))
   name=$(basename "$case_dir")

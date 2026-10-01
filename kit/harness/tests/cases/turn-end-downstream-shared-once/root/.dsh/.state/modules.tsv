@@ -1,0 +1,3 @@
+core	core	tests	app
+lib	lib	tests	app
+app	app	tests	

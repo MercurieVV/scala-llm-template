@@ -49,7 +49,7 @@ if [ "$raw" = 1 ]; then cat "$log"; printf 'Raw output kept: %s lines — %s\n' 
 drafts=''
 map="$(state_dir)/modules.tsv"
 if [ -f "$map" ]; then
-  while IFS="$(printf '\t')" read -r mdir _mod _caps; do
+  while IFS="$(printf '\t')" read -r mdir _mod _caps _deps; do
     [ -n "$mdir" ] || continue
     case "$mdir" in .|'') ddir="$root/test-draft/src" ;; *) ddir="$root/$mdir/test-draft/src" ;; esac
     [ -d "$ddir" ] || continue

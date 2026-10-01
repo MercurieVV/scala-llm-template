@@ -258,6 +258,83 @@ touch -t 203001010000 "$map"
 check "an unowned path with a usable map answers -" "$scratch/docs/notes.md" "-"
 check_status "and exits 0" "$scratch/docs/notes.md" "0"
 
+# --- four-column maps (spec 2026-10-01 §2): field 4 lists a module's dependents with tests --------
+seed_map4() {
+  {
+    printf 'engine\tengine\tfmt,scalafix\tengine.shape,scope\n'
+    printf 'engine/shape\tengine.shape\tfmt,scalafix,tests\tscope\n'
+    printf 'scope\tscope\tfmt,tests\t\n'
+    printf 'bench\tbench\tfmt,scalafix,tests'
+  } > "$map"
+}
+seed_map4
+touch -t 202001010000 "$scratch/build.mill"
+touch -t 203001010000 "$map"
+
+check "a four-column row answers the lookup with id and capabilities only" "$scratch/engine/shape/src/Host.scala" "engine.shape${tab}fmt,scalafix,tests"
+check "an empty fourth column keeps the capabilities intact" "$scratch/scope/src/S.scala" "scope${tab}fmt,tests"
+
+capture_dep() { # capture_dep <id> [env…]
+  cid=$1; shift
+  errfile=$(mktemp)
+  out=$(env "$@" GATE_ROOT="$scratch" STUB_LOG="$log" "$shell_bin" "$dsh" --dependents "$cid" 2>"$errfile")
+  code=$?
+  err=$(cat "$errfile"); rm -f "$errfile"
+}
+capture_dep engine
+is "--dependents lists field 4, one per line" "$(printf 'engine.shape\nscope')" "$out"
+is "--dependents exits 0" "0" "$code"
+capture_dep scope
+is "--dependents on an empty field 4 prints nothing" "" "$out"
+is "--dependents on an empty field 4 exits 0" "0" "$code"
+capture_dep bench
+is "--dependents on a three-column last line without newline prints nothing" "" "$out"
+capture_dep nosuch
+is "--dependents on an unknown id prints nothing" "" "$out"
+is "--dependents on an unknown id exits 0" "0" "$code"
+capture_dep engine.sh
+is "--dependents compares whole ids, never a prefix" "" "$out"
+
+# Tab is IFS whitespace, so a `read` split merges consecutive tabs: `x<TAB>x<TAB><TAB>y` would read
+# caps="y" (the dependents). The lookup must split tab-exactly — this row shape is in live maps
+# (`backend/value<TAB>backend.value<TAB><TAB>app,plugin`).
+mkdir -p "$scratch/x/src"
+{
+  printf 'x\tx\t\ty\n'
+  printf 'scope\tscope\tfmt,tests\tbench,engine'
+} > "$map"; touch -t 203001010000 "$map"
+check "an empty-caps four-column row answers empty caps, never its dependents" "$scratch/x/src/A.scala" "x${tab}"
+check_status "an empty-caps four-column row exits 0" "$scratch/x/src/A.scala" "0"
+capture_dep scope
+is "--dependents on a four-column last line without newline lists its ids" "$(printf 'bench\nengine')" "$out"
+is "--dependents on a four-column last line without newline exits 0" "0" "$code"
+check "a four-column last line without newline still owns its path" "$scratch/scope/src/S.scala" "scope${tab}fmt,tests"
+
+printf 'engine\tengine\tfmt\tscope;rm\n' > "$map"; touch -t 203001010000 "$map"
+capture_dep engine
+is "--dependents on a malformed field 4 exits 3" "3" "$code"
+is "--dependents on a malformed field 4 prints nothing" "" "$out"
+case "$err" in *"module-map:"*) ok "--dependents on a malformed field 4 says why" ;; *) bad "--dependents on a malformed field 4 gave no reason: [$err]" ;; esac
+
+rm -f "$map"; touch -t 203001010000 "$scratch/build.mill"
+capture_dep engine STUB_EXIT=1
+is "--dependents with no map and a failing Mill exits 3" "3" "$code"
+
+# A refreshed map with four columns is installed; one with a bad field 4 is refused.
+cat > "$scratch/mill4" <<'STUB'
+#!/bin/sh
+printf 'mill %s\n' "$*" >> "$STUB_LOG"
+if [ "${STUB_BAD4:-0}" = 1 ]; then printf 'engine\tengine\tfmt\tscope;x\n'; exit 0; fi
+printf 'engine\tengine\tfmt,scalafix\tscope\n'
+printf 'scope\tscope\tfmt,tests\t\n'
+STUB
+cp "$scratch/mill" "$scratch/mill3"; cp "$scratch/mill4" "$scratch/mill"; chmod +x "$scratch/mill"
+check "a refreshed four-column map is installed" "$scratch/scope/src/S.scala" "scope${tab}fmt,tests"
+is "the installed map keeps field 4" "engine${tab}engine${tab}fmt,scalafix${tab}scope" "$(sed -n '1p' "$map")"
+rm -f "$map"; touch -t 203001010000 "$scratch/build.mill"
+cannot_decide "a refreshed map with a malformed field 4" "$scratch/scope/src/S.scala" STUB_BAD4=1
+cp "$scratch/mill3" "$scratch/mill"; chmod +x "$scratch/mill"
+
 rm -rf "$scratch" "$linkdir"
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"

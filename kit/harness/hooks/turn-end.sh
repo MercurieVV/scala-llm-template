@@ -674,6 +674,41 @@ The map at $st/modules.tsv is malformed; run ./mill --ticker false moduleMap by 
   printf '%s\t%s\n' "$module" "$path" >> "$tmpd/modfiles"
 done < "$tmpd/scala"
 
+# --- which modules depend on them (spec 2026-10-01 §3) ---------------------------------------------
+# For each touched module with at least one touched file outside its own `test/` (a test-only change
+# cannot break a dependent), the build's list of dependents (`module-map.sh --dependents`, the map's
+# fourth column). Union, minus the owners, sorted by id; each remembers the first touched module (by id)
+# that pulled it in. Read here, beside the owners' lookup, so a map that cannot answer fails closed
+# before any check runs — the same rule the owners' lookup follows.
+: > "$tmpd/ds"   # <dependent> TAB <touched module that pulled it in>
+LC_ALL=C sort "$tmpd/mods" | while IFS="$tab" read -r ds_m _ds_caps; do
+  [ -n "$ds_m" ] || continue
+  ds_dir=$(awk -F"$tab" -v m="$ds_m" '$2 == m { print $1; exit }' "$st/modules.tsv" 2>/dev/null)
+  ds_main=0
+  while IFS="$tab" read -r _m _f; do
+    [ "$_m" = "$ds_m" ] || continue
+    _rel=$_f
+    case "$ds_dir" in ''|.) ;; *) _rel=${_f#"$ds_dir"/} ;; esac
+    case "$_rel" in test/*) ;; *) ds_main=1; break ;; esac
+  done < "$tmpd/modfiles"
+  [ "$ds_main" = 1 ] || continue
+  if ! sh "$here/module-map.sh" --dependents "$ds_m" </dev/null > "$tmpd/ds-one" 2>"$tmpd/ds-err"; then
+    printf '%s\n' "$ds_m" > "$tmpd/ds-failed"; break
+  fi
+  while IFS= read -r ds_d; do
+    [ -n "$ds_d" ] || continue
+    awk -F"$tab" -v d="$ds_d" '$1 == d { f = 1 } END { exit !f }' "$tmpd/mods" && continue
+    awk -F"$tab" -v d="$ds_d" '$1 == d { f = 1 } END { exit !f }' "$tmpd/ds" && continue
+    printf '%s\t%s\n' "$ds_d" "$ds_m" >> "$tmpd/ds"
+  done < "$tmpd/ds-one"
+done
+if [ -s "$tmpd/ds-failed" ]; then
+  block "this turn cannot be checked — the module map could not list the modules that depend on $(cat "$tmpd/ds-failed"), so the tests this change can break cannot be chosen.
+$(cat "$tmpd/ds-err" 2>/dev/null)
+The build or its map is broken, and this gate fails closed: run ./mill --ticker false moduleMap by hand, fix what it reports, then end the turn again."
+fi
+LC_ALL=C sort -t "$tab" -k1,1 "$tmpd/ds" > "$tmpd/ds.sorted" && mv "$tmpd/ds.sorted" "$tmpd/ds"
+
 # A registered kernel file (.dsh/policy/kernels.tsv) that no longer exists: read here, before the
 # "nothing to run" exit, because a deleted file is not a touched file (`dsh_touched_files` drops a
 # vanished `.scala`), so a turn whose only change is deleting a kernel would otherwise end unexamined.
@@ -1019,15 +1054,21 @@ te_tests_cap=$(dsh_decimal "${DSH_TESTS_CAP:-}" 300)
 te_stop_budget=$(dsh_decimal "${DSH_STOP_BUDGET:-}" 540)
 te_budget_out=0
 te_stopped=0; te_left=0; te_greens=''; fb_noted=0
-while IFS="$tab" read -r te_mod te_caps; do
-  [ -n "$te_mod" ] || continue
-  case ",$te_caps," in *,tests,*) ;; *) continue ;; esac
-  te_cmd=$(dsh_contract_for_module turnEndTests "$te_mod" "$root") || continue
-  if [ "$te_stopped" = 1 ]; then te_left=$((te_left + 1)); continue; fi
+te_failed=''; te_left_ids=''
+# te_run <module> <origin>: one module's turnEndTests, under the shared cap and budget. <origin> is
+# empty for a touched module and the touched module that pulled it in for a dependent (spec 2026-10-01
+# §3): it is named in every heading as ` (downstream of <origin>)`, and a red dependent gets a remedy
+# line pointing back at the change. Sets te_stopped=1 and te_failed on a block; a module skipped because an
+# earlier one blocked is counted in te_left and named, in run order, in te_left_ids.
+te_run() {
+  te_mod=$1; te_origin=$2
+  te_from=''; [ -n "$te_origin" ] && te_from=" (downstream of $te_origin)"
+  te_cmd=$(dsh_contract_for_module turnEndTests "$te_mod" "$root") || return 0
+  if [ "$te_stopped" = 1 ]; then te_left=$((te_left + 1)); te_left_ids="$te_left_ids $te_mod"; return 0; fi
   if [ "$te_budget_out" = 1 ]; then
     te_left=$((te_left + 1))
-    vk_add "turnEndTests: $te_mod not started — the Stop hook's budget" "no time was left of the $te_stop_budget s Stop-hook budget when $te_mod's turn came, so its turnEndTests were not started. Not verified this turn; run it by hand, or end the turn again once other modules are green."
-    continue
+    vk_add "turnEndTests: $te_mod$te_from not started — the Stop hook's budget" "no time was left of the $te_stop_budget s Stop-hook budget when $te_mod's turn came, so its turnEndTests were not started. Not verified this turn; run it by hand, or end the turn again once other modules are green."
+    return 0
   fi
   te_now=$(date +%s 2>/dev/null) || te_now=''
   case "$te_start$te_now" in
@@ -1037,8 +1078,8 @@ while IFS="$tab" read -r te_mod te_caps; do
   if [ "$te_budget_left" -le 10 ]; then
     te_budget_out=1
     te_left=$((te_left + 1))
-    vk_add "turnEndTests: $te_mod not started — the Stop hook's budget" "$te_budget_left s of the $te_stop_budget s Stop-hook budget were left when $te_mod's turn came, so its turnEndTests were not started. Not verified this turn; run it by hand, or end the turn again once other modules are green."
-    continue
+    vk_add "turnEndTests: $te_mod$te_from not started — the Stop hook's budget" "$te_budget_left s of the $te_stop_budget s Stop-hook budget were left when $te_mod's turn came, so its turnEndTests were not started. Not verified this turn; run it by hand, or end the turn again once other modules are green."
+    return 0
   fi
   te_cap=$te_tests_cap
   [ "$te_budget_left" -lt "$te_cap" ] && te_cap=$te_budget_left
@@ -1050,22 +1091,32 @@ while IFS="$tab" read -r te_mod te_caps; do
     te_rc=$(cat "$tmpd/te-rc" 2>/dev/null)
     case "$te_rc" in ''|*[!0-9]*) te_rc=1 ;; esac
   else
-    vk_add "turnEndTests: $te_mod did not finish within $te_cap s — not verified" "the run was killed at the ${te_cap} s cap (DSH_TESTS_CAP, default 300, bounded by what was left of the Stop hook's own budget) and never reached a verdict. Not counted as a failure; run it by hand, or end the turn again."
-    continue
+    vk_add "turnEndTests: $te_mod$te_from did not finish within $te_cap s — not verified" "the run was killed at the ${te_cap} s cap (DSH_TESTS_CAP, default 300, bounded by what was left of the Stop hook's own budget) and never reached a verdict. Not counted as a failure; run it by hand, or end the turn again."
+    return 0
   fi
   if [ "$te_rc" = 0 ]; then te_greens="$te_greens
-turnEndTests: $te_mod green"; continue; fi
+turnEndTests: $te_mod$te_from green"; return 0; fi
+  te_remedy=''
+  [ -n "$te_origin" ] && te_remedy="
+\`$te_mod\`'s tests fail after your change to \`$te_origin\` — if they also fail without it, or encode behaviour you were asked to change (its tests are frozen), stop and tell the human; otherwise fix \`$te_origin\`; reproduce with \`./mill $te_mod.test\`"
   te_nondraft=$(printf '%s\n' "$te_out" | grep -Ec '^(PROPERTY|TEST|INFRA|UNREADABLE):')
   te_drafts=$(printf '%s\n' "$te_out" | grep -Ec '^DRAFT ')
   if [ "$te_nondraft" -gt 0 ]; then
     blocked=$((blocked + 1)); blockmods="$blockmods $te_mod"
-    section blocking "turnEndTests: $te_mod (failed)" "$te_out"; te_stopped=1
+    section blocking "turnEndTests: $te_mod$te_from (failed)" "$te_out$te_remedy"; te_stopped=1; te_failed=$te_mod
   elif [ "$te_drafts" -gt 0 ]; then
-    fb_noted=$((fb_noted + 1)); section note "turnEndTests: $te_mod ($te_drafts draft failure(s) — noted)" "$te_out"
+    fb_noted=$((fb_noted + 1)); section note "turnEndTests: $te_mod$te_from ($te_drafts draft failure(s) — noted)" "$te_out"
   else
     blocked=$((blocked + 1)); blockmods="$blockmods $te_mod"
-    section blocking "turnEndTests: $te_mod failed (exit $te_rc) with no failure records — see the log" "$te_out"; te_stopped=1
+    section blocking "turnEndTests: $te_mod$te_from failed (exit $te_rc) with no failure records — see the log" "$te_out$te_remedy"; te_stopped=1; te_failed=$te_mod
   fi
+  return 0
+}
+
+while IFS="$tab" read -r te_mod te_caps; do
+  [ -n "$te_mod" ] || continue
+  case ",$te_caps," in *,tests,*) ;; *) continue ;; esac
+  te_run "$te_mod" ''
 done < "$tmpd/mods"
 [ "$te_left" -gt 0 ] && report="$report
 $te_left modules not run — fix this one first"
@@ -1074,9 +1125,11 @@ $te_left modules not run — fix this one first"
 # Runs for a module only when this turn touched one of its files listed in .dsh/policy/kernels.tsv, and
 # only after that module's own checks AND its turnEndTests above passed: a module already in `blockmods`
 # is not handed to Stainless (a kernel that does not compile would only yield noise; a red test is the
-# verdict already) — that is said, by name. It runs LAST (final review F2): its time budget charges
-# everything the hook spent before it, so Stainless gets only what the checks and the tests left, and
-# turnEndTests is never started after a Stainless run that used the budget up.
+# verdict already) — that is said, by name. It runs after the owners' checks and turnEndTests (final
+# review F2): its time budget charges everything the hook spent before it, so Stainless gets only what
+# the checks and the tests left, and a touched module's turnEndTests are never started after a Stainless
+# run that used the budget up. Only the downstream stage follows it (final-review ruling F3): dependents
+# run on what Stainless left, and are noted "not started" when it left ten seconds or less.
 #
 # 1. The contract guard: `contract_clauses` on the touched kernel files, diffed against the snapshot
 #    SessionStart took (`dsh_contract_file`). A changed clause shape or a removed clause blocks —
@@ -1310,6 +1363,42 @@ $vk_m: implement the ??? body so ./mill $vk_m.stainlessVerify --targets $vk_targ
 The solver could not decide these within its timeout: neither proven nor refuted. Not blocking (spec 2026-09-27 §3); the human decides whether to accept them."
   fi
 done < "$tmpd/vk-mods"
+
+# --- downstream turnEndTests (spec 2026-10-01 §3) ---------------------------------------------------
+# The touched modules' dependents (collected beside the owners' lookup above), through the same te_run:
+# same cap, same budget, same verdict rule, a block counts toward the attempt cap. Only when nothing has
+# blocked so far — a red owner (its checks, its turnEndTests) or a vericoding block is the thing to fix
+# first, and a dependent run then would blame the change wrongly and burn the budget. It runs AFTER the
+# vericoding stage (final-review ruling F3, deviating from spec §3's "before"): Stainless keeps its share
+# of DSH_STOP_BUDGET on a kernel edit, and vericoding's inputs do not change (dependents are untouched
+# modules, so they own no touched kernel). te_run charges what is left of the budget; with ten seconds
+# or less left a dependent is "not started", a named note.
+if [ -s "$tmpd/ds" ]; then
+  ds_n=$(awk 'END { print NR }' "$tmpd/ds")
+  if [ "$blocked" -gt 0 ]; then
+    ds_first=$te_failed
+    if [ -z "$ds_first" ]; then
+      ds_first=${blockmods# }
+      case "$ds_first" in
+        'the build script'*) ds_first='the build script' ;;
+        *) ds_first=${ds_first%% *} ;;
+      esac
+    fi
+    [ -n "$ds_first" ] || ds_first='an earlier check'
+    report="$report
+downstream turnEndTests not run — $ds_first failed first ($ds_n modules waiting)"
+  else
+    te_left=0; te_left_ids=''
+    while IFS="$tab" read -r ds_d ds_m; do
+      [ -n "$ds_d" ] || continue
+      ds_caps=$(awk -F"$tab" -v m="$ds_d" '$2 == m { print $3; exit }' "$st/modules.tsv" 2>/dev/null)
+      case ",$ds_caps," in *,tests,*) ;; *) continue ;; esac
+      te_run "$ds_d" "$ds_m"
+    done < "$tmpd/ds"
+    [ "$te_left" -gt 0 ] && report="$report
+$te_left downstream modules not run — fix this one first${te_left_ids:+:$te_left_ids}"
+  fi
+fi
 
 # --- the verdict --------------------------------------------------------------------------------
 if [ "$blocked" -gt 0 ]; then

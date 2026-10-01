@@ -1,0 +1,2 @@
+#!/bin/sh
+[ "$(grep -c '^app$' .dsh/te-calls.log)" = 1 ]

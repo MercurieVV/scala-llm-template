@@ -140,7 +140,7 @@ substitutes `<module>`). The seed:
 | `roots` | `.` | the same |
 | `holdout` *(optional)* | — | `tool-policy` (refuses the agent running the sealed suite) and `turn-end` (runs it, reports names only) |
 | `fastTests` *(optional)* | — | `post-edit`: per module, on any edit inside a `tests`-capable module; noted, never blocking |
-| `turnEndTests` *(optional)* | — | `turn-end`: per module, blocking |
+| `turnEndTests` *(optional)* | — | `turn-end`: per module, blocking — for each touched module and, from spec 2026-10-01, for each touched module's dependents (the map's fourth column) |
 
 The engine's hooks read only the three optional keys. The six base keys are the project's declaration of its
 gate; the checks themselves call the Mill interface below by task name, which is why the engine supports Mill
@@ -162,8 +162,14 @@ not have time for was not verified, but it also did not fail:
 | the run hit its `DSH_TESTS_CAP` (or budget-shortened) cap and was killed | `turnEndTests: <module> did not finish within <N> s — not verified` |
 
 `DSH_TESTS_CAP` accepts decimals only, leading zeros stripped, like every other knob here (`dsh_decimal`). The
-vericoding stage's own budget rule is unchanged: it runs after `turnEndTests`, on whatever the Stop hook's budget
-has left.
+vericoding stage's own budget rule is unchanged: it runs after the touched modules' `turnEndTests`, on whatever the
+Stop hook's budget has left.
+
+Dependents (spec 2026-10-01) share the same cap and the same budget, and run last — after the touched modules and
+after the vericoding stage (final-review ruling F3, so Stainless keeps its share of the budget on a kernel edit): a
+slow owner or a long Stainless run leaves less for the dependents, and each dependent's note reads
+`turnEndTests: <D> (downstream of <M>) …`. They run only when nothing has blocked by then — a touched module's
+checks, its `turnEndTests` or the vericoding stage.
 
 ## The Mill interface
 
@@ -174,7 +180,7 @@ tasks, run by a human, a git hook or the contract's command lines — no hook ru
 
 | task | run by |
 |---|---|
-| `moduleMap` | `module-map.sh` (→ `.dsh/.state/modules.tsv`) |
+| `moduleMap` | `module-map.sh` (→ `.dsh/.state/modules.tsv`: rows `<dir>` TAB `<id>` TAB `<capabilities>` [TAB `<dependents>`]; the optional fourth field, written by `Gate.moduleMapRows` from Mill's module graph, is a comma-separated, possibly empty list of the module ids whose `test` suite depends on this module, read by `module-map.sh --dependents <id>`) |
 | `<module>.fixRanges --rangesFile <path>` | turn-end's rewrite stage |
 | `<module>.fixStrict` | post-edit, turn-end |
 | `<module>.compile` | post-edit, turn-end |
@@ -538,6 +544,13 @@ promotes to a block. The `<module>`, `<check>` and `N` parts of a title are fill
 | `turnEndTests: <module> (N draft failure(s) — noted)` | turn-end | finding | the module's turn-end tests failed only on DRAFT properties/tests, which note rather than block. |
 | `turnEndTests: <module> not started — the Stop hook's budget` | turn-end | degradation | either no time was left of `DSH_STOP_BUDGET` (default 540 s) when the module's turn came, or 10 s or less were left; either way its `turnEndTests` were not started this turn. See [`DSH_TESTS_CAP`](#turnendtests-time-cap-dsh_tests_cap). |
 | `turnEndTests: <module> did not finish within <N> s — not verified` | turn-end | degradation | the run was killed at the `<N>` s cap (`DSH_TESTS_CAP`, default 300, bounded by what was left of `DSH_STOP_BUDGET`) and never reached a verdict. Not counted as a failure. |
+| `turnEndTests: <D> (downstream of <M>) (failed)` | turn-end | finding (blocks — a blocking section, listed here beside its notes) | `<D>` was not touched, but it depends on the touched module `<M>`, and its `turnEndTests` failed on a non-draft record. Blocks, and counts toward the attempt cap. The body ends with `` `<D>`'s tests fail after your change to `<M>` — if they also fail without it, or encode behaviour you were asked to change (its tests are frozen), stop and tell the human; otherwise fix `<M>`; reproduce with `./mill <D>.test` ``. Run only when nothing has blocked by then (a touched module's checks, its `turnEndTests`, the vericoding stage), after the vericoding stage, and only for a touched module with at least one touched file outside its `test/`. |
+| `turnEndTests: <D> (downstream of <M>) green` | turn-end | — (a green line, listed here beside its notes) | a dependent's `turnEndTests` passed. Listed with the other greens. |
+| `turnEndTests: <D> (downstream of <M>) (N draft failure(s) — noted)` | turn-end | finding | a dependent's `turnEndTests` failed only on DRAFT properties/tests; noted, never blocking. |
+| `turnEndTests: <D> (downstream of <M>) not started — the Stop hook's budget` | turn-end | degradation | as for a touched module: 10 s or less of `DSH_STOP_BUDGET` was left when the dependent's turn came. Dependents share the owners' cap and budget, after them. |
+| `turnEndTests: <D> (downstream of <M>) did not finish within <N> s — not verified` | turn-end | degradation | as for a touched module: the dependent's run was killed at its `DSH_TESTS_CAP` (or budget-shortened) cap. Not counted as a failure. |
+| `downstream turnEndTests not run — <owner> failed first (<n> modules waiting)` | turn-end | degradation | something blocked before the dependents' turn — a touched module's checks (`compile`, `checkFormat`, `fix`, …), its own `turnEndTests`, or the vericoding stage — so none of the `<n>` dependents were run: fix that first. `<owner>` is the module whose `turnEndTests` blocked, else the first module in the block's list. A report line, not a `--- … ---` section. |
+| `<n> downstream modules not run — fix this one first: <id> …` | turn-end | degradation | a dependent's `turnEndTests` blocked, and the `<n>` dependents after it were not run; their ids follow, in run order. A report line, not a `--- … ---` section. |
 | `frozen ignored paths not compared` | turn-end | degradation | the git-ignored frozen-file record (`.dsh/.state/frozen/<key>.tsv`) could not be fully compared this turn: no sha256 tool, the record itself is `incomplete:` (SessionStart could not hash every git-ignored frozen file), or the ignored-file list could not be re-enumerated to catch one ADDED since SessionStart. The rows it did record (or list) were still compared. See [Frozen paths: what is caught where](#frozen-paths-what-is-caught-where). |
 | `vendored engine does not match its stamp` | health | degradation | the vendored `.dsh/engine/` is missing its `STAMP`, no longer matches it, or cannot be hashed (the parenthesis says which). The gate still runs; `sh .dsh/engine/check-harness.sh` FAILs on the same condition. Remedy: re-run `install.sh` from a scala-llm-template checkout. |
 | `gate engine supports Mill builds only` | health, post-edit, turn-end | degradation | positive evidence of another build tool (`found: build.sbt` or `found: project.scala`, and no `build.mill` or `./mill`): the Mill checks stand down, named. At turn-end, diff-scoped verification has already run. See [Non-Mill projects](#non-mill-projects). |

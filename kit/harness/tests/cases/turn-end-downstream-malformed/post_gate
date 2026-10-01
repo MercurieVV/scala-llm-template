@@ -1,0 +1,3 @@
+#!/bin/sh
+# the map could not answer --dependents, so the gate blocked before any check ran: no turnEndTests at all
+[ ! -s .dsh/te-calls.log ]

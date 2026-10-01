@@ -1,0 +1,2 @@
+#!/bin/sh
+printf '\n// touched\n' >> core/src/K.scala

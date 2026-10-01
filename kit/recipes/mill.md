@@ -361,7 +361,18 @@ and §3's plumbing).
 A `GateLayer` module that does not also mix in `ArchitectureShapeModule` gets no rule added for it, so its
 scalafix config must name at least one rule: with §4's `rules = []` alone, `<module>.fix --check` fails with
 `No rules requested to run`, and so do `preCommit` and turn-end. `moduleMap` prints a row for every compilable
-module, so §1's `scalafixRules` appears with no capabilities beside `core`'s `fmt,scalafix`.
+module, so §1's `scalafixRules` appears with no capabilities beside `core`'s `fmt,scalafix`. Each row carries a
+fourth column: the module's dependents with tests — the sorted, comma-separated ids of the other modules with the
+`tests` capability whose `<id>.test` compiles against it (possibly empty; both rows here have none), whose suites
+turn-end also runs when the module is touched. A suite that must not gate other modules' turns (nondeterministic or
+slow) is left out of every dependents list by passing `downstreamExcluded = Seq(<module>)` to `Gate.moduleMapRows`;
+its own row and `tests` capability are unchanged.
+
+Upgrading a project to the four-column map: re-vendor the engine (`sh <template>/kit/harness/install.sh <project>`)
+BEFORE copying the new `buildKit/Gate.mill` — an older engine's `map_clean` refuses four-column rows, so a new
+`Gate.mill` under an old engine blocks every edit. The cached map (`.dsh/.state/modules.tsv`) is regenerated only
+when `build.mill` is newer than it: after editing `buildKit/Gate.mill` or a `package.mill` alone, delete
+`.dsh/.state/modules.tsv` (or `touch build.mill`) so the next lookup rebuilds it.
 
 `build.mill` imports `build.buildKit.{Gate, GateLayer}` as above. Inside a **sibling** `buildKit/*.mill` file (a
 project's own layer trait, e.g. skreeep2's `buildKit/Layer.mill`), a plain `GateLayer` import can hit a Scala 3

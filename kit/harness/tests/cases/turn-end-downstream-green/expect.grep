@@ -1,0 +1,2 @@
+turnEndTests: core green
+turnEndTests: app (downstream of core) green

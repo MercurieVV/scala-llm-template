@@ -1,0 +1,2 @@
+#!/bin/sh
+[ "$(grep -c '^core.api$' .dsh/te-calls.log)" = 1 ]

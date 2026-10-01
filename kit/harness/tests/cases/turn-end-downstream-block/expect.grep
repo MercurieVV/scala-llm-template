@@ -1,0 +1,2 @@
+turnEndTests: app (downstream of core) (failed)
+`app`'s tests fail after your change to `core` — if they also fail without it, or encode behaviour you were asked to change (its tests are frozen), stop and tell the human; otherwise fix `core`; reproduce with `./mill app.test`

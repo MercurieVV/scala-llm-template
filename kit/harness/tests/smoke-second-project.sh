@@ -99,8 +99,9 @@ is "moduleMap: exit" 0 "$code"
 [ "$code" = 0 ] || tail -20 "$bin/moduleMap.err"
 # §1's scalafixRules is a JavaModule outside the four lists, so Gate.moduleMapRows gives it a row with no
 # capabilities (every compilable module is mapped); core has fmt and scalafix, and no tests (no test module).
-is "moduleMap: core row, no tests capability" "$(printf 'core\tcore\tfmt,scalafix')" "$(printf '%s\n' "$mm" | awk -F'\t' '$1 == "core"')"
-is "moduleMap: exactly core and scalafixRules" "$(printf 'core\tcore\tfmt,scalafix\nscalafixRules\tscalafixRules\t')" "$mm"
+# The fourth column (dependents with tests) is empty for both: no module here has a test suite.
+is "moduleMap: core row, no tests capability, no dependents" "$(printf 'core\tcore\tfmt,scalafix\t')" "$(printf '%s\n' "$mm" | awk -F'\t' '$1 == "core"')"
+is "moduleMap: exactly core and scalafixRules" "$(printf 'core\tcore\tfmt,scalafix\t\nscalafixRules\tscalafixRules\t\t')" "$mm"
 
 # --- 5. health --------------------------------------------------------------------------------------------------
 # Mill takes several tasks only with `+` between them: without it the second name is an argument to the first.

@@ -1199,6 +1199,24 @@ sed -i.bak 's/^holdout\tholdout\t$/holdout\tholdout\tfmt,tests/' "$hcroot/.dsh/.
 case "$(hc "$hcroot")" in *"FAIL"*"preCommit"*) is "holdout-checks: rule 6 fails when holdout is in preCommit's aggregates" ok ok ;; *) is "holdout-checks: rule 6 fails when holdout is in preCommit's aggregates" ok "$(hc "$hcroot")" ;; esac
 sed -i.bak 's/^holdout\tholdout\tfmt,tests$/holdout\tholdout\t/' "$hcroot/.dsh/.state/modules.tsv"
 
+# four-column map (spec 2026-10-01 §2): field 4 (dependents) must never leak into the capabilities
+hc3_out=$(hc "$hcroot")
+printf 'engine\tengine\tfmt,scalafix,tests\twiring\nwiring\twiring\tfmt,tests\t\nholdout\tholdout\t\t\n' > "$hcroot/.dsh/.state/modules.tsv"
+is "holdout checks: a four-column map gives the same verdict as three columns" \
+  "$hc3_out" "$(hc "$hcroot")"
+# ...and with engine's test root unfrozen, the four-column row must still be seen as tests-capable
+sed -i.bak '/^engine\/test/d' "$hcroot/.dsh/frozen-paths"
+case "$(hc "$hcroot")" in *"FAIL"*"engine"*) is "holdout checks: a four-column row keeps its tests capability" ok ok ;; *) is "holdout checks: a four-column row keeps its tests capability" ok "$(hc "$hcroot")" ;; esac
+printf 'engine/test/**\ttests are the human'"'"'s spec\n' >> "$hcroot/.dsh/frozen-paths"
+# ...and an empty-caps row whose dependents field holds `tests`: a whitespace-collapsing `read` would
+# shift field 4 into caps and demand a freeze for a compile-only module (x/test is not frozen).
+printf 'engine\tengine\tfmt,scalafix,tests\nwiring\twiring\tfmt,tests\nholdout\tholdout\t\nx\tx\t\n' > "$hcroot/.dsh/.state/modules.tsv"
+hc3x_out=$(hc "$hcroot")
+printf 'engine\tengine\tfmt,scalafix,tests\twiring\nwiring\twiring\tfmt,tests\t\nholdout\tholdout\t\t\nx\tx\t\ttests\n' > "$hcroot/.dsh/.state/modules.tsv"
+is "holdout checks: a four-column empty-caps row gives the same verdict as three columns" \
+  "$hc3x_out" "$(hc "$hcroot")"
+printf 'engine\tengine\tfmt,scalafix,tests\nwiring\twiring\tfmt,tests\nholdout\tholdout\t\n' > "$hcroot/.dsh/.state/modules.tsv"
+
 # rule 1: the final unterminated row must still be checked (no trailing newline drops it via `read`)
 noeol=$(mktemp -d); mkdir -p "$noeol/.dsh/.state"
 printf 'engine\tengine\tfmt,tests' > "$noeol/.dsh/.state/modules.tsv"
@@ -1211,6 +1229,20 @@ out1=$(hc "$hcroot")
 case "$out1" in *"note"*"no coverage map"*) is "holdout-checks: rule 1 notes an absent coverage map" ok ok ;; *) is "holdout-checks: rule 1 notes an absent coverage map" ok "$out1" ;; esac
 mv "$hcroot/.dsh/.state/modules.tsv.hidden" "$hcroot/.dsh/.state/modules.tsv"
 rm -rf "$hcroot"
+
+# --- dependents column: dsh_dependents_column_check ------------------------------------------------
+dcc() { /bin/sh -c '. "$1/lib.sh"; dsh_dependents_column_check "$2"; printf "rc=%s\n" "$?"' _ "$engine" "$1"; }
+dcroot=$(mktemp -d); mkdir -p "$dcroot/.dsh/.state"
+is "dependents column: no map → nothing to say" "rc=0" "$(dcc "$dcroot")"
+printf 'core\tcore\ttests\napp\tapp\ttests\n' > "$dcroot/.dsh/.state/modules.tsv"
+is "dependents column: three-column map → a note naming the fix" \
+  "$(printf 'note\tdownstream tests disabled — the module map has no dependents column; update buildKit/Gate.mill (moduleMapRows) and re-run ./mill moduleMap\nrc=0')" \
+  "$(dcc "$dcroot")"
+printf 'core\tcore\ttests\tapp\napp\tapp\ttests\t\n' > "$dcroot/.dsh/.state/modules.tsv"
+is "dependents column: four-column map → ok" \
+  "$(printf 'ok\tthe module map lists each module'"'"'s dependents, so turn-end runs their tests\nrc=0')" \
+  "$(dcc "$dcroot")"
+rm -rf "$dcroot"
 
 # --- feedback: dsh_feedback_parse ------------------------------------------------------------------
 fp() { /bin/sh -c '. "$1/lib.sh"; dsh_feedback_parse "${2:-auto}"' _ "$engine" "${1:-}"; }

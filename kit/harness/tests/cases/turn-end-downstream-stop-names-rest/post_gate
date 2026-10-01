@@ -1,0 +1,2 @@
+#!/bin/sh
+! grep -q '^lib$' .dsh/te-calls.log

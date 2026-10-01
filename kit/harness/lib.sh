@@ -2863,7 +2863,15 @@ dsh_holdout_checks() {
   # which always terminates its last line -- and the loop stays in THIS shell (it sets _hc_unfrozen).
   _hc_unfrozen=''
   if [ -f "$_hc_map" ]; then
-    while IFS="$_hc_tab" read -r _hc_dir _hc_mod _hc_caps; do
+    # split tab-exactly: `IFS=tab read` merges consecutive tabs, so an empty-caps four-column row
+    # (`x<TAB>x<TAB><TAB>deps`) would read its dependents as the capabilities.
+    while IFS= read -r _hc_row; do
+      _hc_dir=${_hc_row%%"$_hc_tab"*}
+      _hc_rest=${_hc_row#*"$_hc_tab"}
+      [ "$_hc_rest" != "$_hc_row" ] || continue
+      _hc_mod=${_hc_rest%%"$_hc_tab"*}
+      _hc_caps=''
+      case "$_hc_rest" in *"$_hc_tab"*) _hc_caps=${_hc_rest#*"$_hc_tab"}; _hc_caps=${_hc_caps%%"$_hc_tab"*} ;; esac
       [ -n "$_hc_mod" ] || continue
       case ",$_hc_caps," in *,tests,*) ;; *) continue ;; esac
       _hc_probe="$_hc_dir/test/.probe"; [ "$_hc_dir" = . ] && _hc_probe="test/.probe"
@@ -2922,6 +2930,23 @@ EOF
     esac
   fi
   [ "$_hc_bad" = 0 ]
+}
+
+# --- the module map's dependents column (spec 2026-10-01 §4) -------------------------------------------
+# dsh_dependents_column_check [root]: one `ok|note` TAB <message> row; always exit 0. No map yet → no
+# row (other checks already say how to build it). A map where no row has a fourth field → a note: the
+# project's Gate.mill predates the dependents column, so turn-end runs only the touched modules' tests —
+# today's behaviour, not a broken gate, hence not a FAIL.
+dsh_dependents_column_check() {
+  _dc_root=${1:-$(gate_root)}
+  _dc_map="$_dc_root/.dsh/.state/modules.tsv"
+  [ -s "$_dc_map" ] || return 0
+  if awk -F'\t' 'NF >= 4 { f = 1 } END { exit !f }' "$_dc_map"; then
+    printf 'ok\tthe module map lists each module'"'"'s dependents, so turn-end runs their tests\n'
+  else
+    printf 'note\tdownstream tests disabled — the module map has no dependents column; update buildKit/Gate.mill (moduleMapRows) and re-run ./mill moduleMap\n'
+  fi
+  return 0
 }
 
 # --- feedback: the installation rules ------------------------------------------------------------

@@ -142,11 +142,18 @@ trait GateLayer extends ScalafixModule {
 object Gate {
   def moduleId(module: Module): String = module.moduleSegments.parts.mkString(".")
 
-  /** `<dir>\t<module id>\t<capabilities>` per module, sorted — the format `.dsh/engine/module-map.sh` reads. The rows
-    * come from walking the module tree, so a module added to the build cannot silently drop out of the map. A module
-    * `isFormattable` accepts gets a row; so does any other `JavaModule` that is not a `TestModule`. Capabilities:
-    * `fmt` (in `main`), `scalafix` (in `scalafix`), `tests` (a direct child `TestModule` named `test` that is in
-    * `main ++ testCompile`, so `<id>.test.compile` resolves).
+  private def allModules(root: Module): Seq[Module] =
+    root.moduleDirectChildren.toSeq.flatMap(c => c +: allModules(c))
+
+  /** `<dir>\t<module id>\t<capabilities>\t<dependents>` per module, sorted — the format `.dsh/engine/module-map.sh`
+    * reads. The rows come from walking the module tree, so a module added to the build cannot silently drop out of the
+    * map. A module `isFormattable` accepts gets a row; so does any other `JavaModule` that is not a `TestModule`.
+    * Capabilities: `fmt` (in `main`), `scalafix` (in `scalafix`), `tests` (a direct child `TestModule` named `test` that
+    * is in `main ++ testCompile`, so `<id>.test.compile` resolves). Dependents: the sorted, comma-separated ids of the
+    * other modules with the `tests` capability whose `<id>.test` compiles against this module (Mill's transitive
+    * `moduleDeps` + `compileModuleDeps`), possibly empty — the suites turn-end also runs when this module is touched.
+    * A module in `downstreamExcluded` is never listed as a dependent (its own row and `tests` capability are
+    * unchanged): for suites that must not gate other modules' turns, such as nondeterministic or slow ones.
     */
   def moduleMapRows(
       root: Module,
@@ -154,25 +161,36 @@ object Gate {
       isFormattable: Module => Boolean,
       main: Seq[Module],
       scalafix: Seq[Module],
-      testCompile: Seq[Module]
+      testCompile: Seq[Module],
+      downstreamExcluded: Seq[Module] = Nil
   ): Seq[String] = {
     val fmtIds      = main.map(moduleId).toSet
     val scalafixIds = scalafix.map(moduleId).toSet
     val testIds     = (main ++ testCompile).map(moduleId).toSet
+    val excludedIds = downstreamExcluded.map(moduleId).toSet
+
+    def testChild(module: Module): Option[JavaModule] =
+      module.moduleDirectChildren.collectFirst {
+        case test: (TestModule & JavaModule)
+            if test.moduleSegments.parts.lastOption.contains("test") && testIds.contains(moduleId(test)) => test
+      }
+
+    // Every module with the `tests` capability, paired with the ids its test suite compiles against
+    // (Mill's own transitive moduleDeps + compileModuleDeps of `<id>.test`, which includes `<id>` itself).
+    lazy val suites: Seq[(String, Set[String])] =
+      allModules(root).flatMap(m => testChild(m).map(t => moduleId(m) -> t.transitiveModuleCompileModuleDeps.map(moduleId).toSet))
+
+    def dependents(module: Module): String = {
+      val id = moduleId(module)
+      suites.collect { case (d, deps) if d != id && !excludedIds.contains(d) && deps.contains(id) => d }.sorted.mkString(",")
+    }
 
     def row(module: Module): String = {
       val capabilities =
         (if (fmtIds.contains(moduleId(module))) Seq("fmt") else Nil) ++
           (if (scalafixIds.contains(moduleId(module))) Seq("scalafix") else Nil) ++
-          (if (
-             module.moduleDirectChildren.exists {
-               case test: TestModule =>
-                 test.moduleSegments.parts.lastOption.contains("test") && testIds.contains(moduleId(test))
-               case _ => false
-             }
-           ) Seq("tests")
-           else Nil)
-      s"${module.moduleDir.relativeTo(repoRoot)}\t${moduleId(module)}\t${capabilities.mkString(",")}"
+          (if (testChild(module).isDefined) Seq("tests") else Nil)
+      s"${module.moduleDir.relativeTo(repoRoot)}\t${moduleId(module)}\t${capabilities.mkString(",")}\t${dependents(module)}"
     }
 
     def rowsOf(module: Module): Seq[String] =

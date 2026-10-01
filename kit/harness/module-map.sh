@@ -41,9 +41,12 @@
 # refresh below passes it, and why the map it installs is validated before it is installed.
 #
 # Usage: sh .dsh/engine/module-map.sh <absolute source path>
+#        sh .dsh/engine/module-map.sh --dependents <module id>   (field 4: one dependent id per line)
 # POSIX sh only: no arrays, no `local`, no `set -e`.
 set -u
 . "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/lib.sh"
+dep_query=''
+if [ "${1:-}" = "--dependents" ]; then dep_query=${2:-}; set -- "${2:-}"; fi
 
 root=$(gate_root)
 # `pwd -P` on both sides: `pwd` is logical in dash and in bash, so a caller who spells the root (or
@@ -55,21 +58,25 @@ mkdir -p "$st" 2>/dev/null
 map="$st/modules.tsv"
 cannot_decide=''
 
-# Is $1 a map this script can use? Exactly three fields per row — `<module dir>`, `<module id>`,
-# `<capabilities>` — and nothing else: a row that is not that owns no path, and a row that lost its
-# third column states nothing about the checks the module has, so installing either would silently
-# stop checking a module's files. The capability field may be empty (compile-only) but must be
-# present; the accepted shapes are the empty string and every comma-separated subset of `fmt`,
-# `scalafix`, `tests` in that order. It is also the guard against Mill's ticker, which prefixes every
-# line of a task's stdout with `<n>] `, and against any other truncated or partial output.
+# Is $1 a map this script can use? Three or four fields per row — `<module dir>`, `<module id>`,
+# `<capabilities>` and, from spec 2026-10-01, `<dependents>` — and nothing else: a row that is not
+# that owns no path, and a row that lost its third column states nothing about the checks the module
+# has, so installing either would silently stop checking a module's files. The capability field may
+# be empty (compile-only) but must be present; the accepted shapes are the empty string and every
+# comma-separated subset of `fmt`, `scalafix`, `tests` in that order. It is also the guard against
+# Mill's ticker, which prefixes every line of a task's stdout with `<n>] `, and against any other
+# truncated or partial output. The fourth field, when present, is a comma-separated list of module
+# ids (possibly empty): the modules whose `test` suite depends on this one, which turn-end also runs.
 map_clean() {
   awk -v dir_re='^[A-Za-z0-9._/-]+$' -v mod_re='^[A-Za-z0-9._-]+$' \
-    -v caps_re='^(fmt|tests|fmt,tests|scalafix|scalafix,tests|fmt,scalafix|fmt,scalafix,tests)?$' '
+    -v caps_re='^(fmt|tests|fmt,tests|scalafix|scalafix,tests|fmt,scalafix|fmt,scalafix,tests)?$' \
+    -v deps_re='^([A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*)?$' '
     {
       n = split($0, fields, "\t")
-      if (n != 3) bad = 1
+      if (n != 3 && n != 4) bad = 1
       else if (fields[1] !~ dir_re || fields[2] !~ mod_re) bad = 1
       else if (fields[3] !~ caps_re) bad = 1
+      else if (n == 4 && fields[4] !~ deps_re) bad = 1
     }
     END { exit !(NR > 0 && !bad) }
   ' "$1"
@@ -101,6 +108,31 @@ fi
   exit 3
 }
 
+# --dependents <id> (spec 2026-10-01 §2): the row's fourth field, one id per line. A three-column row, an
+# empty field or an id with no row print nothing (exit 0); a malformed field 4 cannot decide (exit 3) —
+# turn-end must block on that, never read it as "no dependents". Output is captured and printed only
+# after the row validated, so a malformed row never leaks a partial list.
+if [ -n "$dep_query" ]; then
+  dq_out=$(awk -F'\t' -v m="$dep_query" -v deps_re='^([A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*)?$' '
+    $2 == m {
+      if (NF >= 4) {
+        if ($4 !~ deps_re || NF > 4) { bad = 1; exit }
+        n = split($4, d, ",")
+        for (i = 1; i <= n; i++) print d[i]
+      }
+      exit
+    }
+    END { exit bad ? 3 : 0 }
+  ' "$map")
+  dq_code=$?
+  if [ "$dq_code" != 0 ]; then
+    printf '%s\n' "module-map: cannot list the dependents of '$dep_query' — its row in $map has a malformed fourth column" >&2
+    exit 3
+  fi
+  [ -z "$dq_out" ] || printf '%s\n' "$dq_out"
+  exit 0
+fi
+
 [ "$#" -ge 1 ] && [ -n "${1:-}" ] || { printf '%s\n' '-'; exit 0; }
 target_dir=$(CDPATH= cd -- "$(dirname -- "$1")" 2>/dev/null && pwd -P) || { printf '%s\n' '-'; exit 0; }
 target="$target_dir/$(basename -- "$1")"
@@ -110,7 +142,17 @@ target="$target_dir/$(basename -- "$1")"
 best_len=0
 best_mod=''
 best_caps=''
-while IFS="$(printf '\t')" read -r dir module caps; do
+# Fields are split tab-exactly: tab is IFS whitespace, so `IFS=tab read a b c` merges consecutive tabs
+# and an empty-caps four-column row (`x<TAB>x<TAB><TAB>y`) would read its dependents as the caps. The
+# `|| [ -n ... ]` keeps a last row that has no trailing newline.
+tab=$(printf '\t')
+while IFS= read -r row || [ -n "$row" ]; do
+  dir=${row%%"$tab"*}
+  rest=${row#*"$tab"}
+  [ "$rest" != "$row" ] || continue
+  module=${rest%%"$tab"*}
+  caps=''
+  case "$rest" in *"$tab"*) caps=${rest#*"$tab"}; caps=${caps%%"$tab"*} ;; esac
   [ -n "${dir:-}" ] || continue
   [ -n "${module:-}" ] || continue
   case "$dir" in

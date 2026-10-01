@@ -1,0 +1,3 @@
+#!/bin/sh
+printf '\n// touched\n' >> core/src/K.scala
+printf '\n// touched\n' >> app/src/A.scala

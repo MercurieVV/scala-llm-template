@@ -1,0 +1,4 @@
+#!/bin/sh
+# core failed its checkFormat (it has no tests capability, so no turnEndTests of its own ran); the
+# dependent app must not have been started.
+[ ! -f .dsh/te-calls.log ] || ! grep -q '^app$' .dsh/te-calls.log

@@ -61,6 +61,8 @@ out=$(run -- sh stub.sh ./mill app.test); is "wrapper: the real draft still tags
 # with a coverage map, only the listed module dirs' test-draft/src count: a stray draft outside them does not
 printf 'core\tcore\ttests\n' > "$scratch/.dsh/.state/modules.tsv"
 out=$(run -- sh stub.sh ./mill app.test); is "wrapper: modules.tsv restricts draft roots (app not listed)" "PROPERTY: PhraseProps.strikes are strictly increasing" "$(printf '%s\n' "$out" | sed -n 2p)"
+printf 'core\tcore\ttests\tapp\n' > "$scratch/.dsh/.state/modules.tsv"
+out=$(run -- sh stub.sh ./mill app.test); is "wrapper: a four-column modules.tsv restricts draft roots the same way" "PROPERTY: PhraseProps.strikes are strictly increasing" "$(printf '%s\n' "$out" | sed -n 2p)"
 printf 'app\tapp\ttests\n' > "$scratch/.dsh/.state/modules.tsv"
 out=$(run -- sh stub.sh ./mill app.test); is "wrapper: modules.tsv lists app — draft tagged" "DRAFT PROPERTY: PhraseProps.strikes are strictly increasing" "$(printf '%s\n' "$out" | sed -n 2p)"
 rm -f "$scratch/.dsh/.state/modules.tsv" "$scratch/app/test-draft/src/x/PhraseProps.scala"

@@ -611,6 +611,19 @@ done <<EOF
 $hc_rows
 EOF
 
+# The module map's dependents column (spec 2026-10-01 §4): same row shape as the holdout rows above.
+dc_rows=$(dsh_dependents_column_check "$repo" 2>&1) || :
+while IFS="$tab" read -r dc_kind dc_msg; do
+  [ -n "$dc_kind" ] || continue
+  case "$dc_kind" in
+    ok) ok "$dc_msg" ;;
+    note) note "$dc_msg" ;;
+    *) bad "dsh_dependents_column_check printed a row this check does not understand: $dc_kind $dc_msg" ;;
+  esac
+done <<EOF
+$dc_rows
+EOF
+
 # The property-feedback installation rules (spec 2026-09-20-property-feedback-loop-design §3): same
 # shape as the holdout rows above -- one lib.sh function, unit-tested in lib-test.sh, mapped here.
 fc_rows=$(dsh_feedback_checks "$repo" "$engine" 2>&1) || :
