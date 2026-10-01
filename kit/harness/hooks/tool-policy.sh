@@ -14,7 +14,8 @@
 # `prePush`, `show holdout.test.sources`): the gate runs that suite at turn-end and reports names only.
 # Text, not shell semantics, but wrappers are seen through WITH their own options (`timeout 600 …`, `env FOO=1 …`,
 # `nice -n 5 …`, `sudo -u root …`), and the code given to `eval` / `sh -c` is judged as a command of its own; a
-# command the shell computes at run time (`sh -c "$CMD"`) is refused. A substitution in argument position
+# command the shell computes at run time (`sh -c "$CMD"`) is refused. A shell script file it runs is read and
+# held to the sealed rules (see SCRIPT FILES below). A substitution in argument position
 # (`echo $(git push --force)`) is still not detected, so this is one layer of four, not a sandbox.
 set -u
 . "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/lib.sh"
@@ -211,7 +212,7 @@ change a frozen file, ask the human: the HUMAN removes the entry from .dsh/froze
 or .dsh/.state/frozen-paths (machine-local) first.
 NOT covered here (documented; the turn-end post-hoc check is the layer that answers for these): a
 path the interpreter computes at run time, and an interpreter run from a script file rather than
-inline.
+inline (a SHELL script's text is read, but only for the sealed rules).
 MSG
   exit 2
 }
@@ -237,7 +238,7 @@ MSG
 # reinterpreted as a glob -- a frozen entry can never contain a glob metacharacter anyway
 # (dsh_frozen_paths rejects `*`/`?`/`[`), so this is belt and suspenders, not a requirement.
 _it_boundary_match() { # <needle>
-  case "$cmd" in
+  case "$_it_text" in
     "$1"|"$1"[!A-Za-z0-9._-]*|*[!A-Za-z0-9._-]"$1"|*[!A-Za-z0-9._-]"$1"[!A-Za-z0-9._-]*) return 0 ;;
   esac
   return 1
@@ -255,9 +256,16 @@ _it_boundary_match() { # <needle>
 # `.dsh/policy/kernels.tsv` (the basename-only fixture is unaffected -- it never was about the
 # boundary, it is about the full path never appearing at all), and `engine/details_old` still does
 # not match a frozen `engine/details/**` (the boundary fixture, now for the RIGHT reason).
-check_frozen_interp_text() {
-  [ "$_it_scanned" = 0 ] || return 0
-  _it_scanned=1
+check_frozen_interp_text() { # [sealed]: with `sealed`, only sealed rows, and the once-per-call flag is left alone
+  _it_only=${1:-}
+  # The text scanned: the command line with its inline code (`$cmd`), or — with `sealed` — the text
+  # of the script files it runs (`$_st_all`), for sealed rows only.
+  _it_text=$cmd
+  [ "$_it_only" = sealed ] && _it_text=$_st_all
+  if [ -z "$_it_only" ]; then
+    [ "$_it_scanned" = 0 ] || return 0
+    _it_scanned=1
+  fi
   _it_rows=$(dsh_frozen_paths "$(gate_root)" 2>/dev/null) || :
   [ -n "$_it_rows" ] || return 0
   _it_root=$(gate_root)
@@ -277,6 +285,7 @@ check_frozen_interp_text() {
     _it_rest=${_it_rest#*"$_it_tab"}
     _it_p=${_it_rest%%"$_it_tab"*}
     _it_creason=${_it_rest#*"$_it_tab"}
+    [ "$_it_only" = sealed ] && [ "$_it_racc" != sealed ] && continue
     case "$_it_kind" in
       exact|prefix)
         for _it_sp in "$_it_p" "./$_it_p" "$_it_root/$_it_p" "$_it_root_phys/$_it_p"; do
@@ -377,21 +386,252 @@ inline_code_of() { # <text>: prints the code each `eval` / `<shell> -c` segment 
   done
   IFS=$_ic_ifs
 }
+# SCRIPT FILES (spec: the script-file bypass): `sh run.sh`, `bash -e run.sh`, `. ./run.sh`, `source
+# run.sh` and a command word that is a path (`./run.sh`, `/abs/run.sh`) run text from a FILE, so a
+# two-line script holding `./mill holdout.test` reached the sealed suite while the same text inline was
+# refused (measured in skreeep2: all six forms exited 0). The seal is the one rule with no second layer
+# (the turn-end post-hoc check answers for writes, not for a run or a read), so the file's text is read
+# and held to the SEALED rules: a word that selects the sealed suite (`deny_holdout_run`'s selectors,
+# whatever command word carries it, so `M=./mill; $M holdout.test` too) and a sealed path's spelling.
+# Scripts it runs are read in turn, three levels, like inline code. Its text does NOT join the line the
+# other rules read: measured over skreeep2's 18 tracked scripts, those rules (computed command words,
+# frozen spellings in interpreter text, an undecidable `cd` before an operand) refused 3 of them on
+# words a real shell reads as arguments, strings and loop variables.
+#   * a script that does not exist yet is not read: if this same command writes it, the writing text
+#     is already on the line and judged;
+#   * a file a frozen or sealed row names is the human's (the agent cannot have written it), and the
+#     vendored engine under .dsh/engine/ is frozen by the seed, so neither is read;
+#   * a path command that is not text (a NUL byte in its first 4 KB, an ELF/Mach-O header) is not a
+#     script and is not read — a compiled program is outside this layer, as python's own files are;
+#   * on the command line, a script path computed at run time (`sh "$f"`) or behind an undecidable
+#     `cd` is refused; inside a script it is skipped (a loop over files) or read root-relative;
+#   * a script this hook cannot read, or one over 64 KB, cannot be judged and is refused.
+script_paths_of() { # <text>: prints `<form> TAB <data>` per pipe part that runs a script
+  # Forms: `shell` / `path` (a script file, as written), `inline` (text a shell reads from `echo` /
+  # `printf` through a pipe — judged like `sh -c` text), `deny` (a shell fed from somewhere this layer
+  # cannot read: `xargs sh`, a pipe from any other command).
+  _sp_segs=$(printf '%s' "$1" | sed -e "s/&&/\\${_nl}/g" -e "s/||/\\${_nl}/g" -e "s/;/\\${_nl}/g" \
+    -e "s/&\([[:space:]]\)/\\${_nl}\1/g" -e "s/&$/\\${_nl}/")
+  _sp_ifs=$IFS
+  IFS=$_nl
+  for _sp_seg in $_sp_segs; do
+    _sp_prev=''
+    for _sp_part in $(printf '%s' "$_sp_seg" | tr '|' '\n'); do
+      IFS=$_sp_ifs
+      _sp_word=$(command_position_words "$_sp_part")
+      if [ -z "$_sp_word" ]; then _sp_prev=$_sp_part; IFS=$_nl; continue; fi
+      set -- $_sp_part
+      _sp_tok=''
+      _sp_xargs=0
+      while [ $# -gt 0 ]; do
+        [ "$1" = xargs ] && _sp_xargs=1
+        _sp_bare=$(printf '%s' "$1" | tr -d "\"'(){}")
+        case "$_sp_bare" in
+          "$_sp_word"|*/"$_sp_word")
+            if [ "$(command_position_words "$*")" = "$_sp_word" ]; then _sp_tok=$1; shift; break; fi ;;
+        esac
+        shift
+      done
+      case "$_sp_word" in
+        sh|bash|zsh|dash|ksh|ash|mksh)
+          _sp_c=0
+          while [ $# -gt 0 ]; do
+            case "$1" in
+              -o|+o|-O|+O|--rcfile|--init-file) shift; [ $# -gt 0 ] && shift ;;
+              --) shift; break ;;
+              --*) shift ;;
+              -*c*) _sp_c=1; break ;;
+              -*|+*) shift ;;
+              *) break ;;
+            esac
+          done
+          if [ "$_sp_c" = 1 ]; then
+            :
+          elif [ $# -gt 0 ] && [ "${1#<}" = "$1" ]; then
+            printf 'shell\t%s\n' "$1"
+          elif [ "$_sp_xargs" = 1 ]; then
+            printf 'deny\t`xargs %s` takes the scripts it runs from its input, which this layer cannot read\n' "$_sp_word"
+          elif [ $# -gt 0 ]; then
+            # A redirect: `<<` is a heredoc, whose body is already lines of this command; `< f`/`<f`
+            # names the script.
+            case "$1" in
+              '<<'*) ;;
+              '<') [ $# -gt 1 ] && printf 'shell\t%s\n' "$2" ;;
+              '<'*) printf 'shell\t%s\n' "${1#<}" ;;
+            esac
+          elif [ -n "$_sp_prev" ]; then
+            _sp_pw=$(command_position_words "$_sp_prev")
+            set -- $_sp_prev
+            while [ $# -gt 0 ]; do
+              _sp_bare=$(printf '%s' "$1" | tr -d "\"'(){}")
+              case "$_sp_bare" in "$_sp_pw"|*/"$_sp_pw") shift; break ;; esac
+              shift
+            done
+            case "$_sp_pw" in
+              cat)
+                for _sp_a in "$@"; do
+                  case "$_sp_a" in -*|'<'*|'>'*) ;; *) printf 'shell\t%s\n' "$_sp_a" ;; esac
+                done ;;
+              echo|printf)
+                _sp_text=$(printf '%s' "$*" | tr -d '\042\047' | awk '{ gsub(/\\n/, "\034"); print }')
+                printf 'inline\t%s\n' "$_sp_text" ;;
+              # A download into a shell has its own, older rule below, with its own message.
+              curl|wget|fetch) ;;
+              *) printf 'deny\ta shell reading its script from `%s` through a pipe, which this layer cannot read\n' "$_sp_pw" ;;
+            esac
+          fi ;;
+        .|source) [ $# -gt 0 ] && printf 'shell\t%s\n' "$1" ;;
+        *) case "$_sp_tok" in */*) printf 'path\t%s\n' "$_sp_tok" ;; esac ;;
+      esac
+      _sp_prev=$_sp_part
+      IFS=$_nl
+    done
+  done
+  IFS=$_sp_ifs
+}
+deny_script() { # <path as written> <why>
+  deny "BLOCKED by tool-policy: this gate cannot judge the script this command runs ($(bound_bytes "${1:-}" 200)): ${2:-}.
+The gate reads a script file's text and judges it like the command line itself; a script it cannot read cannot be judged. Run the commands directly, or make the script readable and under 64 KB."
+}
+# script_text_of <text>: the text of every script file <text> runs, quotes dropped; denies where the
+# rule above says so. Runs in the MAIN shell (it may exit), never in a command substitution.
+script_text_of() {
+  _st_out=''
+  _st_inl=''
+  _st_list=$(script_paths_of "$1")
+  [ -n "$_st_list" ] || return 0
+  _st_root=$(gate_root)
+  _st_ifs=$IFS
+  IFS=$_nl
+  for _st_row in $_st_list; do
+    IFS=$_st_ifs
+    _st_form=${_st_row%%"	"*}
+    case "$_st_form" in
+      inline)
+        _st_inl="$_st_inl$(printf '%s' "${_st_row#*"	"}" | tr '\034' '\n')$_nl"
+        continue ;;
+      deny)
+        # On the command line only, like the other undecidable forms; inside a script it is skipped.
+        [ "${2:-0}" = 0 ] || continue
+        case "$_ic_dash" in *f*) ;; *) set +f ;; esac
+        deny_script "a shell's input" "${_st_row#*"	"}" ;;
+    esac
+    _st_p=$(printf '%s' "${_st_row#*"	"}" | tr -d "\"'(){}")
+    [ -n "$_st_p" ] || continue
+    case "$_st_p" in
+      *'$'*|*'`'*)
+        # Inside a script (`sh "$f"` over a loop) this is ordinary and not followed; on the command line
+        # it is the agent's own indirection, refused like `sh -c "$CMD"`.
+        [ "${2:-0}" = 0 ] || continue
+        case "$_ic_dash" in *f*) ;; *) set +f ;; esac
+        deny "BLOCKED by tool-policy: this gate cannot judge the command an interpreter would run here — its name is computed at run time ($(bound_bytes "$_st_p" 120)).
+Write the script path out literally, so the gate can read the script." ;;
+      /*) _st_abs=$_st_p ;;
+      *)
+        # The `cd` that counts is the one in the text that runs the script: the command line itself, or
+        # the script that calls this one. On the command line an undecidable `cd` refuses, as for a
+        # frozen operand; inside a script (`cd "$tmp"`) the root-relative path is read as a best effort.
+        if printf '%s' "$1" 2>/dev/null | grep -Eq '(^|[|;&(`]|[[:space:]])(cd|pushd)([[:space:]]|$)'; then
+          _st_base=$(dsh_bash_cd_base "$(dsh_bash_action_paths "$1")" "$_st_root")
+          case "$?" in
+            0) _st_abs=$_st_root/$_st_base/$_st_p ;;
+            1|3) _st_abs=$_st_root/$_st_p ;;
+            *) if [ "${2:-0}" = 0 ]; then
+                 case "$_ic_dash" in *f*) ;; *) set +f ;; esac
+                 deny_script "$_st_p" "the line changes directory, so where the relative path points cannot be decided"
+               fi
+               _st_abs=$_st_root/$_st_p ;;
+          esac
+        else
+          _st_abs=$_st_root/$_st_p
+        fi ;;
+    esac
+    # Missing: on the command line it is refused — the text that writes it in the same command
+    # (`printf '…' > s.sh && sh s.sh`) is an ARGUMENT, which no rule here reads (found by the live
+    # check). Inside a script a missing path is skipped.
+    if [ ! -e "$_st_abs" ] && [ ! -L "$_st_abs" ]; then
+      # A missing script cannot start, so it is refused only when this same line WRITES it
+      # (`printf … > s.sh && sh s.sh`, `… && chmod +x s.sh && ./s.sh`): its name as a redirect
+      # target or as an operand of a command that creates or copies a file.
+      _st_name=${_st_p#./}
+      _st_re=$(printf '%s' "$_st_name" | sed 's/[][\\.*^$/+?(){}|]/\\&/g')
+      _st_wr=0
+      printf '%s\n' "$1" 2>/dev/null | grep -Eq "(>|>>)[[:space:]]*(\\./)?$_st_re([^A-Za-z0-9._/-]|\$)|(^|[^A-Za-z0-9_])(chmod|cp|mv|tee|install|ln|touch|curl|wget)[^;&|]*[[:space:]](\\./)?$_st_re([^A-Za-z0-9._/-]|\$)" && _st_wr=1
+      if [ "${2:-0}" = 0 ] && [ "$_st_wr" = 1 ]; then
+        case "$_ic_dash" in *f*) ;; *) set +f ;; esac
+        deny_script "$_st_p" "it does not exist yet — write it in a separate call first, so the gate can read it before it runs"
+      fi
+      continue
+    fi
+    [ -f "$_st_abs" ] || continue
+    case "$(dsh_repo_relpath "$_st_abs" "$_st_root")" in
+      .dsh/engine/*) continue ;;
+    esac
+    dsh_frozen_access "$_st_abs" "$_st_root" >/dev/null 2>&1 && continue
+    if [ "$_st_form" = path ]; then
+      _st_head=$(head -c 4 "$_st_abs" 2>/dev/null | LC_ALL=C tr -d '\000' | LC_ALL=C od -An -c 2>/dev/null | tr -d ' ')
+      case "$_st_head" in
+        '#!'*) ;;
+        *) [ "$(head -c 4096 "$_st_abs" 2>/dev/null | wc -c)" = "$(head -c 4096 "$_st_abs" 2>/dev/null | LC_ALL=C tr -d '\000' | wc -c)" ] || continue
+           case "$_st_head" in 177ELF*|*\317\372*|*\316\372*) continue ;; esac ;;
+      esac
+    fi
+    case "$_ic_dash" in *f*) ;; *) set +f ;; esac
+    [ -r "$_st_abs" ] || deny_script "$_st_p" "the file exists but cannot be read"
+    _st_size=$(wc -c < "$_st_abs" 2>/dev/null | tr -d ' ')
+    case "$_st_size" in ''|*[!0-9]*) deny_script "$_st_p" "its size cannot be read" ;; esac
+    [ "$_st_size" -le 65536 ] || deny_script "$_st_p" "it is $_st_size bytes, over the 64 KB this gate reads"
+    _st_txt=$(cat "$_st_abs" 2>/dev/null) || deny_script "$_st_p" "reading it failed"
+    set -f
+    _st_any=1
+    # As the command line is read: a trailing backslash joins the next line, and a whole-line comment
+    # runs nothing, so neither is judged as a command of its own.
+    _st_out="$_st_out$(printf '%s\n' "$_st_txt" | awk '/^[[:space:]]*#/ { next } { if (sub(/\\$/, "")) { j = j $0; next } print j $0; j = "" } END { if (j != "") print j }' | tr -d '\042\047')$_nl"
+  done
+  IFS=$_st_ifs
+}
+_st_any=0
+_st_all=''
 _ic_dash=$-
 set -f
+# Two lineages, three levels each. INLINE: the command line and the code lifted out of its `eval` /
+# `sh -c`, held to the computed-command rule. SCRIPT: the text of script files, and the inline code
+# found inside that text, held to the sealed-suite word rule instead — measured over skreeep2's 18
+# tracked scripts, the word reading this file does (no quote or `$( )` parsing) refused 3 of them under
+# the computed-command rule, for words that are arguments, assignments and multi-line strings.
 _ic_more=$cmd
+_sc_more=''
 _ic_depth=0
 while [ "$_ic_depth" -lt 3 ]; do
-  _ic_more=$(inline_code_of "$_ic_more")
-  [ -n "$_ic_more" ] || break
-  _ic_cw=$(command_position_words "$_ic_more")
-  case "$_ic_cw" in
-    *'$'*|*'`'*)
-      case "$_ic_dash" in *f*) ;; *) set +f ;; esac
-      deny "BLOCKED by tool-policy: this gate cannot judge the command an interpreter would run here — its name is computed at run time ($(bound_bytes "$(printf '%s' "$_ic_cw" | tr '\n' ' ')" 120)).
+  _ic_src=$_ic_more
+  _sc_src=$_sc_more
+  _ic_more=''
+  _sc_more=''
+  if [ -n "$_ic_src" ]; then
+    script_text_of "$_ic_src" "$_ic_depth"
+    _sc_more=$_st_out
+    _ic_more=$(inline_code_of "$_ic_src")
+    # Text a shell reads from `echo`/`printf` through a pipe is inline code of this lineage.
+    [ -n "$_st_inl" ] && _ic_more="$_ic_more${_ic_more:+$_nl}$_st_inl"
+  fi
+  if [ -n "$_ic_more" ]; then
+    _ic_cw=$(command_position_words "$_ic_more")
+    case "$_ic_cw" in
+      *'$'*|*'`'*)
+        case "$_ic_dash" in *f*) ;; *) set +f ;; esac
+        deny "BLOCKED by tool-policy: this gate cannot judge the command an interpreter would run here — its name is computed at run time ($(bound_bytes "$(printf '%s' "$_ic_cw" | tr '\n' ' ')" 120)).
 Write the command out literally (no \`eval\`, no \`sh -c\` around a variable or a substitution), so the gate can read it." ;;
-  esac
-  cmd="$cmd$_ic_more$_nl"
+    esac
+  fi
+  if [ -n "$_sc_src" ]; then
+    script_text_of "$_sc_src" 1
+    _sc_more="$_sc_more$_st_out$(inline_code_of "$_sc_src")${_st_inl:+$_nl$_st_inl}"
+  fi
+  _st_all="$_st_all$_sc_more"
+  [ -n "$_ic_more$_sc_more" ] || break
+  # Inline code joins the line every rule below reads; a script's text does not (it is held in
+  # `_st_all` for the two sealed rules only — see above).
+  [ -n "$_ic_more" ] && cmd="$cmd$_ic_more$_nl"
   _ic_depth=$((_ic_depth + 1))
 done
 case "$_ic_dash" in *f*) ;; *) set +f ;; esac
@@ -609,6 +849,16 @@ MSG
   exit 2
 }
 
+# A script file's text (read above) naming the sealed suite: any WORD of it that is a refused selector
+# (`<target>`, `<target>.*`, the aggregates) refuses the run, whatever command word carries it — a
+# script can reach Mill through a variable (`M=./mill; $M holdout.test`) that the word rules below
+# cannot follow. Text, deny direction: a script that only mentions the module by that word is refused too.
+if [ -n "$_st_all" ] && [ -n "$_ho_target" ]; then
+  _sw_hit=$(printf '%s\n' "$_st_all" | tr -s ' \t()[]{}<>;&|=,' '\n\n\n\n\n\n\n\n\n\n\n\n\n' | awk -v t="$_ho_target" '
+    $0 == t || index($0, t ".") == 1 || $0 ~ /^_\.test/ || $0 ~ /^__\.(test|testForked|testCached|compile|testOnly)/ || $0 == "prePush" { print; exit }')
+  [ -n "$_sw_hit" ] && deny_holdout_run "$_sw_hit (in a script this command runs)"
+fi
+
 # The three rules below judge words, never the raw line. They read the command in the shape
 # `command_position_words` splits it into: a segment (one per line here) is a chain, and the
 # pipes inside a segment cut that chain into parts. Segments break where the helper breaks them
@@ -634,6 +884,11 @@ _fb_rewrite=''
 # qualifying segment -- the target is always the WHOLE command text ($cmd), never the segment that
 # tripped it, so a second qualifying segment would find nothing this one didn't already look at.
 _it_scanned=0
+# A script file this hook read runs as a shell over that text: its SEALED-path spellings are refused as
+# in `sh -c '…'` (a script that only `cat`s a sealed file). Frozen rows are not: a script that names a
+# frozen path to read or run it (skreeep2's own `sh .dsh/engine/tests/run.sh`) is not a write, and the
+# turn-end post-hoc check answers for any write a script makes.
+[ "$_st_any" = 1 ] && check_frozen_interp_text sealed
 IFS='
 '
 for _seg in $_segments; do

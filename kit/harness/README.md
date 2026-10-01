@@ -409,8 +409,23 @@ frozen finding like any other block.
   of those wrappers (`nice -n 5 eval '…'`, `timeout 5 sh -c '…'`) — is appended to
   the line and judged by every rule as a command of its own (nested up to three levels). A command word the shell
   computes at run time inside that code (`sh -c "$CMD"`, `eval "$(cat run.sh)"`, a backquote) is refused, since
-  text cannot judge it. Still outside this layer: a shell alias or function, and a script file the interpreter runs
-  (the post-hoc turn-end check answers for a TRACKED file either way).
+  text cannot judge it. Still outside this layer: a shell alias or function, and a script file run by an interpreter
+  other than a shell — `python3 x.py`, `node x.js` (the post-hoc turn-end check answers for a TRACKED file either way).
+* **A shell script file is read and held to the SEALED rules** (the script-file fix): `sh|bash|zsh|dash|ksh <file>`
+  (the shell's own options skipped), `. <file>`, `source <file>` and a path in command position (`./run.sh`,
+  `/abs/run.sh`, behind any wrapper). A word of its text that selects the sealed suite (`holdout.test`,
+  `__.test`, `prePush`, … — whatever command word carries it, so `M=./mill; $M holdout.test` too) or a sealed path's
+  spelling is refused, and the scripts it runs are read in turn (three levels). Its text is NOT judged by the other
+  rules: measured over skreeep2's 18 tracked scripts, those rules refused 3 of them on arguments, strings and loop
+  variables, and the writes a script makes are the post-hoc turn-end check's. Not read: a script that does not exist
+  inside a script, one a frozen or sealed row names, the vendored engine, and a binary. A shell's INPUT counts too:
+  `sh < f` reads `f`, `cat f | sh` reads `f`, and `echo …`/`printf …` piped into a shell is judged like `sh -c` text.
+  Refused on the command line (inside a script these are skipped): a script that does not exist yet and that this
+  same line writes (`printf '…' > s.sh && sh s.sh`, `… && chmod +x s.sh && ./s.sh` — the writing text is an argument
+  no rule reads; a missing script the line does not write simply fails to start), a shell fed through a pipe from
+  any command other than `cat`/`echo`/`printf` (a download into a shell keeps its own rule) or by `xargs`, a script path computed at run time
+  (`sh "$f"`) or behind an undecidable `cd`. Refused anywhere: a script that cannot be read or is over 64 KB. Found by a
+  live gated check: the first version missed `sh < f`, `cat f | sh`, `xargs sh` and a script written on the same line.
 * **`tee <frozen>` and `cp`/`mv`/`install`/`rsync` onto a frozen destination ARE denied** — by the semantic guard's
   bash-action-path scan (`dsh_bash_action_paths`: `tee`'s every non-option operand, and `cp`/`mv`/`install`/
   `rsync`'s destination operand), not by the interpreter rule or the operand rule. (An earlier draft of this note

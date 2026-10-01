@@ -1,0 +1,1 @@
+{"tool_name": "bash", "tool_input": {"command": "sh $SCRATCH_ROOT/run.sh"}}

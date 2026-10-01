@@ -1,0 +1,3 @@
+sealed	holdout/**	holdout suite: run by the gate at turn-end, never read or edited by the agent
+sealed	.dsh/.state/holdout.log	full holdout output is the human's; the agent gets names only
+engine/test/**	tests are the human's spec; ask in chat to unfreeze a file
