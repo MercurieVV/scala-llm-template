@@ -42,6 +42,10 @@ passed=0
 failed=0
 ok() { passed=$((passed + 1)); printf 'ok   %s\n' "$1"; }
 bad() { failed=$((failed + 1)); printf 'FAIL %s\n' "$1"; }
+# skip: a row whose subject is not in this tree -- the project-owned suites under .dsh/tests exist only
+# in a vendored project, so a template run names the row it cannot run instead of failing it.
+skipped=0
+skip() { skipped=$((skipped + 1)); printf "skip %s\n" "$1"; }
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/dsh-frozen-mutations.XXXXXX") || exit 1
 trap 'rm -rf "$work"' 0
@@ -50,7 +54,10 @@ tree="$work/tree"
 # build_tree <dest> <case...>: a scratch project in the vendored layout -- the project's `.dsh/`
 # state when there is one, and the engine (the gate, the hooks, lib.sh, the suites and the runner)
 # at `.dsh/engine/` -- plus exactly the fixture cases a row needs. The copied `.dsh/.state` is
-# dropped: a per-machine cache must not decide a copied run.
+# dropped: a per-machine cache must not decide a copied run. Run from the template (no project
+# around the engine), the project state is the seed install.sh would write -- without it the tree
+# had no hooks.json, cc-settings.json or frozen-paths, and the wiring and check-harness rows failed
+# on every template run for want of the files they mutate.
 build_tree() {
   _bt_dest=$1
   shift
@@ -59,6 +66,8 @@ build_tree() {
   if [ -n "$proj_dsh" ]; then
     cp -R "$proj_dsh/." "$_bt_dest/.dsh/" 2>/dev/null
     rm -rf "$_bt_dest/.dsh/engine"
+  elif [ -d "$engine/seed" ]; then
+    cp -R "$engine/seed/." "$_bt_dest/.dsh/" 2>/dev/null
   fi
   mkdir -p "$_bt_dest/.dsh/engine"
   cp -R "$engine/." "$_bt_dest/.dsh/engine/" 2>/dev/null
@@ -173,6 +182,10 @@ expect_wiring_mutation() { # <name> <file in the copy> <jq program> <needle> <de
   _wm_jq=$3
   _wm_needle=$4
   _wm_what=$5
+  if [ -z "$proj_dsh" ] || [ ! -f "$proj_dsh/tests/wiring-test.sh" ]; then
+    skip "$_wm_name: the wiring suite is project-owned (.dsh/tests/wiring-test.sh) and absent here -- a vendored project runs this row"
+    return 0
+  fi
   if ! build_tree "$tree"; then
     bad "$_wm_name: could not build the scratch tree"
     return 1
@@ -516,7 +529,9 @@ if ! harness_tree_optin; then
   bad "check-harness-full-flag: could not build the scratch tree"
 else
   sh "$tree/.dsh/engine/check-harness.sh" --project "$tree" >"$work/harness-default.log" 2>&1
-  if grep -q "^note suite $opt_in_suite: SKIPPED" "$work/harness-default.log" 2>/dev/null; then
+  if [ ! -f "$tree/$proj_tests_rel/$opt_in_suite" ]; then
+    skip "check-harness-full-flag: $opt_in_suite is project-owned (.dsh/tests) and absent here, so there is no skip note to assert -- a vendored project runs this half"
+  elif grep -q "^note suite $opt_in_suite: SKIPPED" "$work/harness-default.log" 2>/dev/null; then
     ok "check-harness-full-flag: the default run prints a note naming the skipped suite and the flag ($(grep -m1 "^note suite $opt_in_suite" "$work/harness-default.log" | cut -c1-90)…)"
   else
     bad "check-harness-full-flag: the default run did not print the skip note for $opt_in_suite"
@@ -552,5 +567,5 @@ else
   fi
 fi
 
-printf '\n%s passed, %s failed\n' "$passed" "$failed"
+printf '\n%s passed, %s failed, %s skipped\n' "$passed" "$failed" "$skipped"
 [ "$failed" -eq 0 ]
