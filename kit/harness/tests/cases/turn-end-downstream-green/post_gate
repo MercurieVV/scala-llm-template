@@ -1,0 +1,3 @@
+#!/bin/sh
+# a turn whose turnEndTests ran: it must not end by saying tests are not run.
+! grep -q "Tests are NOT run by this gate" "$GATE_OUT_FILE" && ! grep -qx "Fix now:" "$GATE_OUT_FILE"

@@ -347,7 +347,16 @@ inline_code_of() { # <text>: prints the code each `eval` / `<shell> -c` segment 
     _ic_word=$(command_position_words "$_ic_seg")
     [ -n "$_ic_word" ] || continue
     set -- $_ic_seg
-    while [ $# -gt 0 ] && [ "$(command_position_words "$*")" = "$_ic_word" ]; do shift; done
+    # Step past the wrappers AND their own options (`nice -n 5`, `timeout 5`, `sudo -u x`) to the
+    # interpreter word itself: stopping at the first word whose command position differs left
+    # `nice -n 5 eval '…'` lifted as `-n 5 eval …`, whose command word is `-n` (measured live).
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        "$_ic_word"|*/"$_ic_word")
+          if [ "$(command_position_words "$*")" = "$_ic_word" ]; then shift; break; fi ;;
+      esac
+      shift
+    done
     case "$_ic_word" in
       eval) ;;
       sh|bash|zsh|dash|ksh|ash|mksh)

@@ -28,6 +28,10 @@ done
 [ $# -gt 0 ] || { printf 'feedback.sh: no command after --\n' >&2; exit 64; }
 if [ -z "$selector" ]; then for w in "$@"; do case "$w" in *.test*|*.compile|*.fix|*.fixStrict) selector=$w ;; esac; done; fi
 [ -n "$selector" ] || selector=$1
+# A clean compile prints no scalac marker for `auto` to detect, so it fell through to the test
+# adapter and read as `UNREADABLE` (measured live on `./mill core.compile`); the selector already
+# says it is a compile.
+if [ "$adapter" = auto ]; then case "$selector" in *.compile) adapter=scalac ;; esac; fi
 dir="$(state_dir)/feedback"; mkdir -p "$dir" 2>/dev/null
 stamp=$(date -u '+%Y-%m-%dT%H-%M-%SZ'); log="$dir/$stamp.log"; n=1
 while [ -e "$log" ]; do log="$dir/$stamp-$n.log"; n=$((n + 1)); done

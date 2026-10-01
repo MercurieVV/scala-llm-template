@@ -394,7 +394,8 @@ frozen finding like any other block.
 * **Wrappers are seen through with their own options** (the wrapper-bypass fix): `env [-i] [-u NAME] [NAME=value]…`,
   `timeout [-s SIG] [-k DUR] DURATION`, `nice [-n N]`, `time [-p]`, `sudo [-u USER] [-E]…`, `nohup`, `exec [-a NAME]`,
   `stdbuf -oL`, `ionice`, `xargs` with its value-taking options, `busybox <applet>`, chains of them, and a leading
-  `NAME=value` assignment. The code given to `eval '…'` or a shell with `-c` (`sh -c`, `bash -lc`, …) is appended to
+  `NAME=value` assignment. The code given to `eval '…'` or a shell with `-c` (`sh -c`, `bash -lc`, …) — bare or behind any
+  of those wrappers (`nice -n 5 eval '…'`, `timeout 5 sh -c '…'`) — is appended to
   the line and judged by every rule as a command of its own (nested up to three levels). A command word the shell
   computes at run time inside that code (`sh -c "$CMD"`, `eval "$(cat run.sh)"`, a backquote) is refused, since
   text cannot judge it. Still outside this layer: a shell alias or function, and a script file the interpreter runs
@@ -563,7 +564,8 @@ promotes to a block. The `<module>`, `<check>` and `N` parts of a title are fill
 `fixRanges`, can end with `COULD NOT RESTORE the original of <files> … — restore it by hand.`: a restore that failed is
 named inside the note, never dropped. Two lines turn-end prints are not NOTEs and so are not in the
 table: the `Session baseline: …` / `No SessionStart baseline …` line that says which scoping rule
-produced the verdict, and the `Tests are NOT run by this gate` line.
+produced the verdict, and the closing tests line — `Tests are NOT run by this gate` when no
+turnEndTests ran, `Of the tests, only the turnEndTests reported above ran here (<modules>)` when some did.
 
 **The prose check's real limit — read this before assuming more than it does.** The spec first
 imagined prose verification as its own thing; in practice `resolve_references` answers only about

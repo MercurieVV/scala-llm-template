@@ -105,5 +105,14 @@ is "wrapper: the raw log holds the raw line" 1 "$(grep -c 'scalafix found 2 diag
 out=$(run -- sh diag-stub.sh ./mill core.fixStrict 2>&1)
 is "wrapper: selector inferred from a .fixStrict word" "FEEDBACK: 0 errors, 2 warnings (core.fixStrict)" "$(printf '%s\n' "$out" | sed -n 1p)"
 is "wrapper: no raw diagnostic line leaks" 0 "$(printf '%s\n' "$out" | grep -c '^\[WARNING\]')"
+# a CLEAN compile carries no scalac marker for auto-detection to find; its selector says it is a
+# compile, so it reads as 0 errors, not as an unreadable test run (measured live: `./mill core.compile`)
+printf '%s\n' '#!/bin/sh' 'printf "compiling 1 Scala source to out/core/compile.dest/classes ...\ndone compiling\n"' > "$scratch/compile-stub.sh"
+out=$(run --selector core.compile -- sh compile-stub.sh 2>&1); rc=$?
+is "wrapper: a clean compile exits 0" 0 "$rc"
+is "wrapper: a clean compile reads as 0 errors" "FEEDBACK: 0 errors, 0 warnings (core.compile)" "$(printf '%s\n' "$out" | sed -n 1p)"
+is "wrapper: a clean compile is not unreadable" 0 "$(printf '%s\n' "$out" | grep -c '^UNREADABLE')"
+out=$(run -- sh compile-stub.sh ./mill -j 1 --ticker false core.compile 2>&1)
+is "wrapper: a clean compile, selector inferred" "FEEDBACK: 0 errors, 0 warnings (core.compile)" "$(printf '%s\n' "$out" | sed -n 1p)"
 rm -rf "$scratch"
 printf '\n%s passed, %s failed\n' "$passed" "$failed"; [ "$failed" -eq 0 ]

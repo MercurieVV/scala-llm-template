@@ -213,6 +213,16 @@ baseline_note() {
 
 # A blocking verdict, whatever raised it: the cap first, then the counter, then the denial. Keeping
 # this in one place is what makes the cap hold even for a denial raised before any check ran.
+# tests_line: the closing line on what this gate did NOT verify. Since turnEndTests (spec 2026-09-20 §2)
+# a turn can be blocked BY a test run, so "Tests are NOT run" is said only when none ran (`te_ran`,
+# filled by te_run below; unset before that stage, so the fail-closed blocks keep the old line).
+tests_line() {
+  if [ -n "${te_ran:-}" ]; then
+    printf '%s' "Of the tests, only the turnEndTests reported above ran here (${te_ran# }) — ./mill prePush compiles and runs the full suite."
+  else
+    printf '%s' "Tests are NOT run by this gate — ./mill prePush compiles and runs them."
+  fi
+}
 block() { # block <the whole message>; its first line is the headline the unverified log records
   _body=$(bound_bytes "$1" "$max_report_bytes")
   # A pending diff-scoped note (`vd_note`) must reach the agent on EVERY exit, not just the allowing
@@ -254,9 +264,9 @@ $_note"
   # F60, guaranteed for every block message — including the four fail-closed ones raised before any
   # check ran, which used to go out without it.
   case "$_body" in
-    *'Tests are NOT run by this gate'*) ;;
+    *'./mill prePush compiles and runs'*) ;;
     *) _body="$_body
-Tests are NOT run by this gate — ./mill prePush compiles and runs them." ;;
+$(tests_line)" ;;
   esac
   if [ "$count" -ge "$max_attempts" ]; then
     _log="$(date -u '+%Y-%m-%dT%H:%M:%SZ') turn-end: unverified completion — $_head"
@@ -282,7 +292,7 @@ The counter is reset, so the next turn gets two fresh attempts before this happe
 $_body
 
 $_log
-Tests are NOT run by this gate — ./mill prePush compiles and runs them."
+$(tests_line)"
 }
 
 cd "$root" 2>/dev/null || block "the turn-end gate cannot check this turn — the gate root $root cannot be entered, so this turn's touched files cannot be read from git.
@@ -1054,7 +1064,7 @@ te_tests_cap=$(dsh_decimal "${DSH_TESTS_CAP:-}" 300)
 te_stop_budget=$(dsh_decimal "${DSH_STOP_BUDGET:-}" 540)
 te_budget_out=0
 te_stopped=0; te_left=0; te_greens=''; fb_noted=0
-te_failed=''; te_left_ids=''
+te_failed=''; te_left_ids=''; te_ran=''
 # te_run <module> <origin>: one module's turnEndTests, under the shared cap and budget. <origin> is
 # empty for a touched module and the touched module that pulled it in for a dependent (spec 2026-10-01
 # §3): it is named in every heading as ` (downstream of <origin>)`, and a red dependent gets a remedy
@@ -1090,6 +1100,7 @@ te_run() {
     te_out=$(cat "$tmpd/te-out" 2>/dev/null)
     te_rc=$(cat "$tmpd/te-rc" 2>/dev/null)
     case "$te_rc" in ''|*[!0-9]*) te_rc=1 ;; esac
+    te_ran="$te_ran $te_mod"
   else
     vk_add "turnEndTests: $te_mod$te_from did not finish within $te_cap s — not verified" "the run was killed at the ${te_cap} s cap (DSH_TESTS_CAP, default 300, bounded by what was left of the Stop hook's own budget) and never reached a verdict. Not counted as a failure; run it by hand, or end the turn again."
     return 0
@@ -1404,8 +1415,8 @@ fi
 if [ "$blocked" -gt 0 ]; then
   block "this turn left failing the commit gate:$blockmods
 $report
-
-Fix now:$remedies
+${remedies:+
+Fix now:$remedies}
 Then re-read the changed files (annotated_source) before editing them again; this gate runs again when the turn ends."
 fi
 
@@ -1478,8 +1489,9 @@ if [ -n "$holdout_cmd" ]; then
   printf 'holdout\t%s\t%s\t%s\n' "$holdout_counts" "$holdout_head" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$st/receipts" 2>/dev/null || :
   add_line "$holdout_report"
   add_line "The holdout suite is sealed: the gate ran it, you read only the names above; the full output is the human's (.dsh/.state/holdout.log)."
-  add_line "Unit tests are NOT run by this gate — ./mill prePush compiles and runs them. A green turn-end means the checks above passed, never that the suite did."
+  if [ -n "$te_ran" ]; then add_line "$(tests_line) A green turn-end means the checks above passed, never that the full suite did."
+  else add_line "Unit tests are NOT run by this gate — ./mill prePush compiles and runs them. A green turn-end means the checks above passed, never that the suite did."; fi
 else
-  add_line "Tests are NOT run by this gate — ./mill prePush compiles and runs them. A green turn-end means the checks above passed, never that the suite did."
+  add_line "$(tests_line) A green turn-end means the checks above passed, never that the$([ -n "$te_ran" ] && printf ' full') suite did."
 fi
 allow "$msg"

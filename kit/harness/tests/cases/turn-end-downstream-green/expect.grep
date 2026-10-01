@@ -1,2 +1,3 @@
 turnEndTests: core green
 turnEndTests: app (downstream of core) green
+Of the tests, only the turnEndTests reported above ran here (core app)

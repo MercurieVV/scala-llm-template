@@ -1,0 +1,4 @@
+#!/bin/sh
+# the block was RAISED by a test run: it must not end by saying tests are not run, and a
+# downstream failure files no remedy of its own, so no empty "Fix now:" header
+! grep -q "Tests are NOT run by this gate" "$GATE_OUT_FILE" && ! grep -qx "Fix now:" "$GATE_OUT_FILE"
