@@ -12,8 +12,10 @@
 # without naming it.
 # It also denies running the SEALED holdout suite through Mill (`./mill holdout.test`, `__.test`,
 # `prePush`, `show holdout.test.sources`): the gate runs that suite at turn-end and reports names only.
-# Text, not shell semantics: `bash -c 'sbt …'`, a substitution (`echo $(git push --force)`) and a wrapper's own
-# options (`git -c foo=bar push --force`, `sudo -u root sbt …`) are not detected, so this is one layer of four, not a sandbox.
+# Text, not shell semantics, but wrappers are seen through WITH their own options (`timeout 600 …`, `env FOO=1 …`,
+# `nice -n 5 …`, `sudo -u root …`), and the code given to `eval` / `sh -c` is judged as a command of its own; a
+# command the shell computes at run time (`sh -c "$CMD"`) is refused. A substitution in argument position
+# (`echo $(git push --force)`) is still not detected, so this is one layer of four, not a sandbox.
 set -u
 . "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/lib.sh"
 
@@ -45,9 +47,36 @@ command_position_words() {
   for _cpw_segment in $_cpw_segments; do
     IFS=$_cpw_ifs
     set -- $_cpw_segment
+    # A wrapper is skipped together with ITS OWN options (spec: the wrapper bypass): `env FOO=1`,
+    # `env -i`/`-u NAME`, `timeout [-s SIG] [-k DUR] DURATION`, `nice -n 5`, `time -p`, `sudo -u root`,
+    # `stdbuf -oL`, `exec -a NAME`, `busybox <applet>`, and chains of them. Before this, only the bare
+    # wrapper NAME was skipped, so its first option became the "command" and `timeout 600 ./mill
+    # holdout.test` reached the sealed suite. A leading `NAME=value` assignment is skipped the same way.
+    # Options that take a separate value are listed per wrapper; any other `-…` word is a flag or an
+    # option with its value attached (`-n5`, `-oL`, `--signal=KILL`). `command -v`/`-V` only LOOKS a
+    # command up, so the walk stops there and the word reported is the option, not the name looked up.
     while [ $# -gt 0 ]; do
       case "$1" in
-        sudo|env|time|nohup|command|exec|xargs|do|then|else|if|while|until|'{'|'(') shift ;;
+        [A-Za-z_]*=*)
+          case "${1%%=*}" in *[!A-Za-z0-9_]*) break ;; esac
+          shift ;;
+        sudo|env|time|nohup|command|exec|xargs|nice|timeout|stdbuf|ionice|busybox)
+          _cpw_w=$1
+          shift
+          while [ $# -gt 0 ]; do
+            case "$_cpw_w:$1" in
+              *:--) shift; break ;;
+              command:-v|command:-V) break 2 ;;
+              sudo:-[ughpCrtUD]|env:-[uCS]|time:-[of]|nice:-n|timeout:-[sk]|stdbuf:-[ioe]|xargs:-[IinPLsdEaJR]|exec:-a|ionice:-[cnp])
+                shift
+                [ $# -gt 0 ] && shift ;;
+              *:-*) shift ;;
+              *) break ;;
+            esac
+          done
+          # timeout's own positional argument, the DURATION, comes before the command it runs.
+          if [ "$_cpw_w" = timeout ] && [ $# -gt 0 ]; then shift; fi ;;
+        do|then|else|if|while|until|'{'|'(') shift ;;
         *) break ;;
       esac
     done
@@ -299,6 +328,64 @@ done <<POLICY_END
 $cmd
 POLICY_END
 cmd=$_joined
+
+# CODE GIVEN TO AN INTERPRETER AS TEXT (spec: the wrapper bypass): `eval '…'` and a shell given `-c`
+# (`sh -c '…'`, `bash -lc '…'`, any flag cluster holding `c`) run text this file would otherwise see
+# only as an argument, so `sh -c "./mill holdout.test"` reached the sealed suite. That text is lifted
+# out and APPENDED to the line as further lines, so every rule below judges it as a command of its
+# own; quote characters are dropped from it (deny direction only: more text judged, never less), and
+# the lift repeats for nested forms, up to three levels. Text whose command word the shell computes
+# at run time (`sh -c "$CMD"`, `eval "$(cat run.sh)"`, a backquote) cannot be judged as text at all,
+# so it is refused rather than allowed.
+inline_code_of() { # <text>: prints the code each `eval` / `<shell> -c` segment runs, one per line
+  _ic_segs=$(printf '%s' "$1" | sed -e "s/&&/\\${_nl}/g" -e "s/||/\\${_nl}/g" -e "s/;/\\${_nl}/g" \
+    -e "s/|/\\${_nl}/g" -e "s/&\([[:space:]]\)/\\${_nl}\1/g" -e "s/&$/\\${_nl}/")
+  _ic_ifs=$IFS
+  IFS=$_nl
+  for _ic_seg in $_ic_segs; do
+    IFS=$_ic_ifs
+    _ic_word=$(command_position_words "$_ic_seg")
+    [ -n "$_ic_word" ] || continue
+    set -- $_ic_seg
+    while [ $# -gt 0 ] && [ "$(command_position_words "$*")" = "$_ic_word" ]; do shift; done
+    case "$_ic_word" in
+      eval) ;;
+      sh|bash|zsh|dash|ksh|ash|mksh)
+        _ic_c=0
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --*) shift ;;
+            -*c*) shift; _ic_c=1; break ;;
+            -*) shift ;;
+            *) break ;;
+          esac
+        done
+        [ "$_ic_c" = 1 ] || continue ;;
+      *) continue ;;
+    esac
+    [ $# -gt 0 ] || continue
+    printf '%s\n' "$*" | tr -d "\"'"
+  done
+  IFS=$_ic_ifs
+}
+_ic_dash=$-
+set -f
+_ic_more=$cmd
+_ic_depth=0
+while [ "$_ic_depth" -lt 3 ]; do
+  _ic_more=$(inline_code_of "$_ic_more")
+  [ -n "$_ic_more" ] || break
+  _ic_cw=$(command_position_words "$_ic_more")
+  case "$_ic_cw" in
+    *'$'*|*'`'*)
+      case "$_ic_dash" in *f*) ;; *) set +f ;; esac
+      deny "BLOCKED by tool-policy: this gate cannot judge the command an interpreter would run here — its name is computed at run time ($(bound_bytes "$(printf '%s' "$_ic_cw" | tr '\n' ' ')" 120)).
+Write the command out literally (no \`eval\`, no \`sh -c\` around a variable or a substitution), so the gate can read it." ;;
+  esac
+  cmd="$cmd$_ic_more$_nl"
+  _ic_depth=$((_ic_depth + 1))
+done
+case "$_ic_dash" in *f*) ;; *) set +f ;; esac
 
 # FROZEN PATHS: where a `cd`/`pushd` on this line sends a relative operand. Asked ONCE per call, and
 # only for a line that has a `cd` at all -- the awk walk is not worth paying for `ls`, and a line
@@ -574,15 +661,10 @@ Fetch to a file, inspect it, then run it deliberately." ;;
     # writing? Wrapper words the SHARED parser's own bare-word list skips (`sudo`, `env`, `time`,
     # `nohup`, `command`, `exec`, `xargs`, …) are already invisible here -- `command_position_words`
     # skipped them before `_word` was set, the same seam every other rule in this file reads through,
-    # so a BARE `env python3 -c …` (no flags of its own) is covered without a new parser. `nice` is
-    # NOT in that shared list (final-review fix pass, measured: `nice python3 -c …` with no flags is
-    # still covered below, by the recompute case just under this comment, but `nice` is not a wrapper
-    # `command_position_words` itself skips) -- and NONE of these wrappers is seen through once it
-    # takes its OWN option (`sudo -u x …`, `sudo -E …`, `env -i …`, `nice -n 5 …` / `nice -n5 …`,
-    # `time -p …`, `xargs -I{} …`): the shared parser's bare-word skip only matches an exact wrapper
-    # NAME in command position, so an option right after it is read as a fresh, unrecognised command
-    # word and this rule never looks past it. That is a documented gap (README), not fixed here --
-    # closing it for every option shape of every wrapper is a wider change than this rule's job.
+    # so `env python3 -c …` is covered without a new parser -- and since the wrapper-bypass fix that
+    # parser also skips each wrapper's OWN options (`sudo -u x …`, `sudo -E …`, `env -i …`, `nice -n 5 …`
+    # / `nice -n5 …`, `time -p …`, `xargs -I{} …`, `timeout 5 …`, `busybox <applet>`), so those are seen
+    # through here too (measured: all denied for a frozen target).
     #
     # A PATH-QUALIFIED wrapper (fix round 1, item 5, measured: `/usr/bin/env python3 -c …` was
     # allowed while bare `env python3 -c …` was denied) is the one case the shared parser's wrapper

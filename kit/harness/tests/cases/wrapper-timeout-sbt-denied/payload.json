@@ -1,0 +1,1 @@
+{"tool_name": "bash", "tool_input": {"command": "timeout 5 sbt test"}}

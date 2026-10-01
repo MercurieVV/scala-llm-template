@@ -1,0 +1,1 @@
+{"tool_name": "bash", "tool_input": {"command": "env FOO=1 ls"}}

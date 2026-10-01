@@ -1,0 +1,1 @@
+{"tool_name": "bash", "tool_input": {"command": "timeout -s KILL -k 5 600 ./mill holdout.test"}}

@@ -1,0 +1,1 @@
+{"tool_name": "bash", "tool_input": {"command": "env -i PATH=/usr/bin ./mill holdout.test"}}

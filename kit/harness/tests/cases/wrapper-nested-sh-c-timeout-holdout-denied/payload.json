@@ -1,0 +1,1 @@
+{"tool_name": "bash", "tool_input": {"command": "sh -c \"timeout 5 ./mill holdout.test\""}}
