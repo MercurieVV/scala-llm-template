@@ -139,6 +139,10 @@ sys.exit(0 if isinstance(d, dict) else 1)' >/dev/null 2>&1 || {
 # gate's own message, so the reason the agent reads starts with shell noise (measured: 59 bytes of it
 # on a 480 KB report, gone with the redirect). `head -n` and `head -c` both close early by design.
 bound_marker='… truncated'
+# The bytes of an INCOMPLETE UTF-8 sequence at the end of a cut: a 2-byte lead alone, a 3-byte lead with at
+# most one continuation byte, a 4-byte lead with at most two (C-locale byte ranges, built with printf).
+_bb_c=$(printf '\200-\277')
+_bb_partial="([$(printf '\300-\337')]|[$(printf '\340-\357')][$_bb_c]?|[$(printf '\360-\367')][$_bb_c]{0,2})"
 bound_bytes() { # <text> <max bytes>
   _b=$(printf '%s' "$1" | wc -c | tr -d ' ')
   if [ "$_b" -le "$2" ]; then
@@ -146,7 +150,11 @@ bound_bytes() { # <text> <max bytes>
   else
     _lim=$(($2 - 16))
     [ "$_lim" -gt 0 ] || _lim=0
-    printf '%s' "$1" 2>/dev/null | head -c "$_lim"
+    # `head -c` can stop inside a multibyte character; an incomplete sequence at the very end of the cut
+    # is dropped (C locale, so sed sees bytes; the `$` address touches the last line only), so the cut
+    # stays valid UTF-8 and only gets shorter. Command substitution keeps sed's added newline out.
+    _cut=$(printf '%s' "$1" 2>/dev/null | head -c "$_lim" | LC_ALL=C sed -E "\$ s/$_bb_partial\$//")
+    printf '%s' "$_cut"
     printf ' %s\n' "$bound_marker"
   fi
 }

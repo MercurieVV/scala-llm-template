@@ -136,6 +136,27 @@ else
   bad "bound_bytes keeps the cut text inside the bound: got $cut_size bytes"
 fi
 
+# A cut that lands inside a multibyte character must not leave half of it behind: 40 two-byte `ä`, bound 37,
+# keeps 21 bytes, which would end in the first byte of the 11th `ä`. The partial character is dropped, so
+# the text keeps 10 whole ones; the output stays valid UTF-8 and inside the bound.
+umlauts=$(awk 'BEGIN { while (i++ < 40) printf "\303\244" }')
+want=$(awk 'BEGIN { while (i++ < 10) printf "\303\244" }')" … truncated"
+cut=$(bound "$umlauts" 37)
+is "bound_bytes never splits a multibyte character" "$want" "$cut"
+cut_size=$(bytes "$cut")
+if [ "$cut_size" -le 37 ]; then
+  ok "bound_bytes keeps a multibyte cut inside the bound ($cut_size <= 37 bytes)"
+else
+  bad "bound_bytes keeps a multibyte cut inside the bound: got $cut_size bytes"
+fi
+# A cut that lands exactly on a character boundary keeps every whole character (bound 36 keeps 20 bytes).
+want=$(awk 'BEGIN { while (i++ < 10) printf "\303\244" }')" … truncated"
+is "bound_bytes keeps whole multibyte characters at a clean boundary" "$want" "$(bound "$umlauts" 36)"
+# A cut whose last line is not the one holding the partial character: only the END of the text is trimmed.
+mixed=$(printf 'ä\nab'; awk 'BEGIN { while (i++ < 40) printf "x" }')
+want=$(printf 'ä\nab'; awk 'BEGIN { while (i++ < 16) printf "x" }')" … truncated"
+is "bound_bytes trims only the end of the text" "$want" "$(bound "$mixed" 37)"
+
 multiline=$(printf 'first\nsecond\nthird')
 is "bound_bytes does not cut by line" "$multiline" "$(bound "$multiline" 4000)"
 

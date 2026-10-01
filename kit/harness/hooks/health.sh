@@ -41,8 +41,12 @@
 # the safe direction for a probe that can only ever make a session stricter. A verdict from an
 # earlier session would remain in place until this probe overwrites it.
 #
-# `notes` is bounded (F47): at most 10 FAIL lines and at most 2000 characters, then a
-# `… truncated` marker, and at most 300 characters of it reach the context line. Session context
+# `notes` is bounded (F47): at most 10 FAIL lines and at most 2000 BYTES, then a
+# `… truncated` marker, and at most 300 bytes of it reach the context line. Bytes, not characters:
+# `${#x}` counts bytes under dash and characters under bash, and `cut -c` counts characters on macOS
+# but bytes on GNU, so a character cap measured that way held under one shell and overshot under the
+# other. lib.sh's `bound_bytes` (wc -c / head -c) gives the same answer everywhere, and a byte cap
+# also bounds the characters. Session context
 # is a shared resource and doctor is a foreign program.
 set -u
 . "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/lib.sh"
@@ -102,8 +106,8 @@ dcode=0
 # printed at all (that line ends in `-- fix: <what to do>` instead).
 doctor=""
 max_note_lines=10
-max_note_chars=2000
-max_line_note_chars=300
+max_note_bytes=2000
+max_line_note_bytes=300
 truncated_marker='… truncated'
 
 if [ ! -f "$launcher" ] || [ ! -x "$launcher" ]; then
@@ -163,14 +167,12 @@ else
   # raw output into this variable -- newline and carriage return -- so `notes=` cannot become a
   # fifth line or a hidden `reason=`.
   notes=$(printf '%s' "$notes" | tr -d '\n\015')
-  # The character cap, with the marker kept inside the budget so the field itself stays bounded.
-  if [ "${#notes}" -gt "$max_note_chars" ]; then
-    notes_truncated=1
-    notes=$(printf '%s' "$notes" | cut -c "1-$((max_note_chars - ${#truncated_marker} - 1))")
-  fi
+  # The line cap's marker first, then the byte cap over the whole field: `bound_bytes` keeps its own
+  # marker inside the budget, so the field stays bounded and stays marked whichever cap bit.
   if [ "$notes_truncated" = 1 ]; then
     notes="$notes $truncated_marker"
   fi
+  notes=$(bound_bytes "$notes" "$max_note_bytes")
   healthy=1
 fi
 
@@ -188,11 +190,7 @@ fi
 
 # The same notes, cut again for the context line: the file keeps the durable record, the line
 # gets a fixed share of a shared resource.
-notes_line=$notes
-if [ "${#notes_line}" -gt "$max_line_note_chars" ]; then
-  notes_line=$(printf '%s' "$notes_line" | cut -c "1-$((max_line_note_chars - ${#truncated_marker} - 1))")
-  notes_line="$notes_line $truncated_marker"
-fi
+notes_line=$(bound_bytes "$notes" "$max_line_note_bytes")
 
 # --- the cached verdict the gates read ----------------------------------------------------
 # Written through a temp file in the same directory and renamed, because every per-call guard

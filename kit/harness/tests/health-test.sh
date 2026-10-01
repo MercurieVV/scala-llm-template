@@ -50,6 +50,9 @@ lacks() { # lacks <name> <needle> <haystack>
     *) ok "$1" ;;
   esac
 }
+# The caps are in BYTES (health.sh, via lib.sh's bound_bytes): `${#x}` counts bytes under dash and
+# characters under bash, so measuring with it made the same output pass under sh and fail under dash.
+byte_len() { printf '%s' "$1" | wc -c | tr -d ' '; }
 at_most() { # at_most <name> <limit> <length>
   if [ "$3" -le "$2" ]; then
     ok "$1 ($3 <= $2)"
@@ -144,7 +147,7 @@ line_bound() { # line_bound <root> -- the largest healthy context line the hook 
 bounded_context_line() { # bounded_context_line <name> <root> -- what the hook controls, bounded
   bc_name=$1
   bc_portion=$(notes_portion "$out")
-  at_most "$bc_name: the notes echoed on the context line are capped" "$note_cap" "${#bc_portion}"
+  at_most "$bc_name: the notes echoed on the context line are capped" "$note_cap" "$(byte_len "$bc_portion")"
   has "$bc_name: the echoed notes carry the truncation marker" "truncated" "$bc_portion"
   # The line's own length: the root and the index (which contains the root) and the launcher path
   # are the machine's, the notes are the hook's, and the rest is this file's literal budget. An
@@ -280,7 +283,7 @@ is "many FAILs: still healthy=1" "1" "$healthy"
 reason_iff_healthy "many FAILs" "many FAILs"
 is "many FAILs: reason stays empty" "" "$reason"
 has "many FAILs: notes is marked truncated" "truncated" "$notes"
-at_most "many FAILs: notes is capped" 2000 "${#notes}"
+at_most "many FAILs: notes is capped" 2000 "$(byte_len "$notes")"
 bounded_context_line "many FAILs" "$i"
 
 # --- the context line's bound is a function of the paths, not of the machine's TMPDIR -------
