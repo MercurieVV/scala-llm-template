@@ -1,0 +1,2 @@
+core.compile
+core lost core/src/A.scala

@@ -1,0 +1,11 @@
+#!/bin/sh
+# core.compile fails the way scalac does when a file it needed is gone: the error names the file that
+# USES the deleted one, which this turn did not touch.
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+case "$*" in
+  *core.compile*)
+    if [ -n "${STUB_GREEN:-}" ]; then exit 0; fi
+    printf '[error] %s/core/src/B.scala:3:13\n[error] Not found: type A\n[error] core.compile Compilation failed\n' "$(pwd)"
+    exit 1 ;;
+esac
+exit 0

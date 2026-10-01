@@ -1,0 +1,5 @@
+#!/bin/sh
+# The file was already gone when the session started: not this session's change.
+rm core/src/A.scala
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1

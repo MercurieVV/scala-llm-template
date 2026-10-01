@@ -1,0 +1,2 @@
+#!/bin/sh
+git mv core/src/A.scala app/src/A.scala

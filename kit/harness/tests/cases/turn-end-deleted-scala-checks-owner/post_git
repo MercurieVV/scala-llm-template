@@ -1,0 +1,4 @@
+#!/bin/sh
+# A deleted source file is a change to the module that owned it: its compile runs (the stub fails it,
+# naming no file), so the turn blocks rather than ending unexamined.
+rm -f engine/details/src/A.scala

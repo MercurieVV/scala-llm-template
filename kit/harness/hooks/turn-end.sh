@@ -10,8 +10,10 @@
 # `.dsh/engine/hooks/baseline.sh`, which snapshots it at SessionStart. A path that was already dirty in that
 # snapshot is checked only when its content changed since (hash comparison), a path that is new since
 # it is always checked, and a path that was clean then and is dirty now is absent from the record and
-# is therefore checked too (F61). Without a baseline for the session — the hook is not wired, or the
-# session predates it — the gate falls back to the tree-based rule and says so in every message it
+# is therefore checked too (F61). A `.scala`/`.sc` file the session DELETED is not a touched file (it is
+# gone), but the module that owned it is checked as if it were, and an error anywhere in that module
+# blocks — see "source files this turn deleted" below. Without a baseline for the session — the hook
+# is not wired, or the session predates it — the gate falls back to the tree-based rule and says so in every message it
 # prints, so the reader knows the gate is then broader than the session.
 #
 # That scoping is what makes the gate usable in a checkout that carries in-flight work: this
@@ -349,6 +351,45 @@ while IFS= read -r path; do
   if [ "$rootp" != "$root" ]; then printf '%s\n' "$root/$path" >> "$tmpd/spell"; fi
 done < "$tmpd/touched"
 
+# --- source files this turn deleted --------------------------------------------------------------
+# `dsh_touched_files` keeps only `.scala`/`.sc` files that still exist, so a deleted source file is not
+# a touched file, and a turn whose only change was a deletion used to end with no check at all
+# (measured in skreeep2: deleting a `core` file that dependents imported ended the turn with exit 0
+# and no output, while `./mill app.compile` failed with "Not found: type RelativeTime"). Here every
+# `.scala`/`.sc` path git reports as changed that no longer exists — a plain or staged delete, and the
+# vanished name of a rename or move — is a deletion. Its owning module joins the touched modules below,
+# so its own checks run and its dependents' turnEndTests after them; and the module's DIRECTORY joins
+# the spellings attribution reads, because the errors a deletion causes name the files that used the
+# deleted one, which this turn did not touch — without it they would be notes. That also attributes
+# pre-existing breakage elsewhere in the same module to this turn: erring toward the block, as
+# everywhere here. This session's rule holds: a path already deleted at SessionStart (baseline.sh
+# records it as `-`) and still deleted is not this session's change.
+: > "$tmpd/deleted"
+: > "$tmpd/deleted-based"
+dsh_changed_paths "$root" "$tmpd/changed-all"
+if [ "$?" != 0 ]; then
+  block "this turn cannot be checked — the working tree could not be read, so the gate cannot tell which source files this turn deleted.
+$dsh_touched_reason
+Fix git (or the repository) and end the turn again; this gate fails closed rather than reading a failed read as a clean tree."
+fi
+while IFS= read -r path; do
+  case "$path" in *.scala|*.sc) ;; *) continue ;; esac
+  if [ -e "$path" ] || [ -L "$path" ]; then continue; fi
+  if [ "$baseline_state" = session ]; then
+    baseline_hash=$(dsh_baseline_hash "$baseline" "$path")
+    if [ -n "$baseline_hash" ]; then
+      seen_base=$((seen_base + 1))
+      printf '%s\n' "$path" >> "$tmpd/deleted-based"
+      if [ "$baseline_hash" = "$(dsh_file_hash "$path")" ]; then
+        skipped=$((skipped + 1))
+        continue
+      fi
+    fi
+  fi
+  printf '%s\n' "$path" >> "$tmpd/deleted"
+done < "$tmpd/changed-all"
+dl_lost=''  # one "<module> lost <path>" line per deletion a module owns, filled by the module lookup
+
 # --- frozen paths this session changed: the post-hoc check (spec 2026-09-28 §1) ------------------
 # The pre-call hooks deny the writes to a frozen path they can recognise in a command's TEXT; a write
 # they cannot see (an interpreter given inline code, a path the shell computes, a script's own `cd`)
@@ -455,6 +496,7 @@ You cannot restore it — writing a frozen path is what the freeze denies. $fz_r
         # counts cover the frozen rows of other extensions through here.
         fz_count=1
         grep -qxF -- "$path" "$tmpd/touched" 2>/dev/null && fz_count=0
+        grep -qxF -- "$path" "$tmpd/deleted-based" 2>/dev/null && fz_count=0
         [ "$fz_count" = 1 ] && seen_base=$((seen_base + 1))
         if [ "$baseline_hash" = "$(dsh_file_hash "$path")" ]; then
           [ "$fz_count" = 1 ] && skipped=$((skipped + 1))
@@ -659,7 +701,8 @@ fi
 
 # --- which modules own them, and what each row grants -----------------------------------------
 : > "$tmpd/mods"      # <module> TAB <capabilities>
-: > "$tmpd/modfiles"  # <module> TAB <root-relative path>, one line per touched file
+: > "$tmpd/modfiles"  # <module> TAB <root-relative path>, one line per touched or deleted file
+cat "$tmpd/scala" "$tmpd/deleted" > "$tmpd/mapin"
 seen=''
 while IFS= read -r path; do
   [ -n "$path" ] || continue
@@ -682,7 +725,20 @@ The map at $st/modules.tsv is malformed; run ./mill --ticker false moduleMap by 
     *) seen="$seen $module"; printf '%s\t%s\n' "$module" "$caps" >> "$tmpd/mods" ;;
   esac
   printf '%s\t%s\n' "$module" "$path" >> "$tmpd/modfiles"
-done < "$tmpd/scala"
+  if grep -qxF -- "$path" "$tmpd/deleted"; then
+    # A deletion: every file under the module's directory is attributable to this turn (see above).
+    dl_dir=$(awk -F"$tab" -v m="$module" '$2 == m { print $1; exit }' "$st/modules.tsv" 2>/dev/null)
+    case "$dl_dir" in
+      ''|.) dl_pre='' ;;
+      *) dl_pre="$dl_dir/" ;;
+    esac
+    [ -n "$dl_pre" ] && printf '%s\n' "$dl_pre" >> "$tmpd/spell"
+    printf '%s\n' "$rootp/$dl_pre" >> "$tmpd/spell"
+    if [ "$rootp" != "$root" ]; then printf '%s\n' "$root/$dl_pre" >> "$tmpd/spell"; fi
+    dl_lost="${dl_lost:+$dl_lost
+}$module lost $path"
+  fi
+done < "$tmpd/mapin"
 
 # --- which modules depend on them (spec 2026-10-01 §3) ---------------------------------------------
 # For each touched module with at least one touched file outside its own `test/` (a test-only change
@@ -1022,6 +1078,9 @@ while IFS="$tab" read -r module caps; do
   fi
   if [ "$blocked" -gt "$before" ]; then
     blockmods="$blockmods $module"
+    # A module that lost a file this turn: the usual remedy alone points at the wrong files.
+    dl_mine=$(printf '%s\n' "$dl_lost" | sed -n "s|^$module lost ||p" | tr '\n' ' ')
+    [ -n "$dl_mine" ] && remedy="$remedy; this turn deleted ${dl_mine% } — restore it (git restore --source=HEAD --staged --worktree -- <path>) or update the code that used it"
     remedies="$remedies
 $module: $remedy"
   fi
@@ -1413,7 +1472,9 @@ fi
 
 # --- the verdict --------------------------------------------------------------------------------
 if [ "$blocked" -gt 0 ]; then
-  block "this turn left failing the commit gate:$blockmods
+  block "this turn left failing the commit gate:$blockmods${dl_lost:+
+Source files this turn deleted (an error anywhere in a module that lost a file is attributed to this turn):
+$dl_lost}
 $report
 ${remedies:+
 Fix now:$remedies}
@@ -1435,6 +1496,8 @@ if [ -n "$ran" ]; then
   add_line "DSH turn-end: no blocking findings for the files this turn touched."
   add_line "Ran, in this order: $ran"
 fi
+[ -n "$dl_lost" ] && add_line "Source files this turn deleted, and the modules checked for it:
+$dl_lost"
 [ -n "$probeline" ] && add_line "$probeline"
 [ -n "$vd_note" ] && add_line "$vd_note"
 [ -n "$rw_note" ] && add_line "$rw_note"

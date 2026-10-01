@@ -1,0 +1,2 @@
+#!/bin/sh
+! grep -q 'core.compile' "${MILL_STUB_LOG:-/dev/null}" 2>/dev/null && ! grep -q ' lost ' "$GATE_OUT_FILE"

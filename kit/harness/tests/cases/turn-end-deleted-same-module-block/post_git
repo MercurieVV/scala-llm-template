@@ -1,0 +1,2 @@
+#!/bin/sh
+rm core/src/A.scala

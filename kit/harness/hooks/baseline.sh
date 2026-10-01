@@ -277,29 +277,39 @@ while IFS= read -r path; do
   rows=$((rows + 1))
 done < "$tmpd/touched"
 
-# Dirty FROZEN paths of every other extension too (spec 2026-09-28 §1): turn-end's post-hoc check
-# blocks on any frozen path this session changed, and "already dirty at SessionStart, unchanged
-# since" can only be told apart from "changed this session" by a row here. The touched set is
-# `.scala`/`.sc`/`.mill` only, so without these rows the human's dirty `README.md` under a freeze
-# would block every turn. No frozen rows -> no second read. A read that fails here records nothing
-# at all (the same verdict as a failed first read): a baseline missing these rows would make
-# turn-end block the human's own pre-existing work, which is a wrong statement about the session.
+# Two more kinds of row come from the unfiltered changed-path read (`dsh_changed_paths`):
+#
+# * Dirty FROZEN paths of every other extension (spec 2026-09-28 §1): turn-end's post-hoc check
+#   blocks on any frozen path this session changed, and "already dirty at SessionStart, unchanged
+#   since" can only be told apart from "changed this session" by a row here. The touched set is
+#   `.scala`/`.sc`/`.mill` only, so without these rows the human's dirty `README.md` under a freeze
+#   would block every turn.
+# * DELETED `.scala`/`.sc` paths, hash `-`: turn-end checks the module that owns a source file this
+#   session deleted, and a file the human had already deleted before the session must not count as
+#   this session's deletion. The touched set keeps only files that exist, so it has no row for them.
+#
+# A read that fails here records nothing at all (the same verdict as a failed first read): a baseline
+# missing these rows would make turn-end block the human's own pre-existing work, which is a wrong
+# statement about the session.
 fz_rows=$(dsh_frozen_paths "$root" 2>/dev/null) || :
-if [ -n "$fz_rows" ]; then
-  dsh_changed_paths "$root" "$tmpd/changed"
-  changed_code=$?
-  if [ "$changed_code" != 0 ]; then
-    ballow "DSH baseline: nothing was recorded — the working tree could not be read for the frozen paths ($dsh_touched_reason). The turn-end gate will fall back to the tree-based rule and say so; it fails closed on that read itself."
-  fi
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    grep -qxF -- "$path" "$tmpd/touched" 2>/dev/null && continue
-    dsh_gate_written "$path" "$sid" && continue
-    dsh_frozen_match any "$path" "$fz_rows" || continue
-    printf '%s\t%s\n' "$(dsh_file_hash "$root/$path")" "$path" >> "$tmpd/new"
-    rows=$((rows + 1))
-  done < "$tmpd/changed"
+dsh_changed_paths "$root" "$tmpd/changed"
+changed_code=$?
+if [ "$changed_code" != 0 ]; then
+  ballow "DSH baseline: nothing was recorded — the working tree could not be read for the deleted and frozen paths ($dsh_touched_reason). The turn-end gate will fall back to the tree-based rule and say so; it fails closed on that read itself."
 fi
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  grep -qxF -- "$path" "$tmpd/touched" 2>/dev/null && continue
+  dsh_gate_written "$path" "$sid" && continue
+  bl_keep=0
+  case "$path" in
+    *.scala|*.sc) if [ ! -e "$root/$path" ] && [ ! -L "$root/$path" ]; then bl_keep=1; fi ;;
+  esac
+  if [ "$bl_keep" = 0 ] && [ -n "$fz_rows" ] && dsh_frozen_match any "$path" "$fz_rows"; then bl_keep=1; fi
+  [ "$bl_keep" = 1 ] || continue
+  printf '%s\t%s\n' "$(dsh_file_hash "$root/$path")" "$path" >> "$tmpd/new"
+  rows=$((rows + 1))
+done < "$tmpd/changed"
 
 if mv -f "$tmpd/new" "$baseline" 2>/dev/null; then
   ballow "DSH baseline: recorded $rows pre-existing dirty path(s) for session $sid at $baseline. The turn-end gate will check a path that was already dirty only when its content changes from here, and any path that becomes dirty from a clean start."

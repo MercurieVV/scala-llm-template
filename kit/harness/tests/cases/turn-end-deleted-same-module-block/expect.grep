@@ -1,0 +1,3 @@
+core.compile
+core lost core/src/A.scala
+this turn deleted core/src/A.scala — restore it
