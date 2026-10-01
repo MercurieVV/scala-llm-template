@@ -1537,16 +1537,44 @@ holdout_cmd=$(dsh_contract_get holdout "$root" 2>/dev/null) || holdout_cmd=''
 if [ -n "$holdout_cmd" ]; then
   mkdir -p "$st" 2>/dev/null
   holdout_log="$st/holdout.log"
-  ( cd "$root" && sh -c "$holdout_cmd" ) >"$holdout_log" 2>&1
-  holdout_exit=$?
-  holdout_report=$(dsh_weaver_failures <"$holdout_log")
-  holdout_counts=$(printf '%s\n' "$holdout_report" | sed -n '1s/^holdout: \([0-9]*\) passed, \([0-9]*\) failed$/\1	\2/p')
-  [ -n "$holdout_counts" ] || holdout_counts="-	-"
-  # A run that did not complete (compile error, crash, a missing tool) leaves no result to read; the
-  # exit status is the one fact this side may pass on -- the text stays in the sealed log. A weaver
-  # run with failures ALSO exits non-zero, so the exit is reported only when the filter read nothing.
-  if [ "$holdout_exit" != 0 ] && [ "$holdout_report" = "holdout: result unreadable" ]; then
-    holdout_report="holdout: did not complete (exit $holdout_exit) — see the human's .dsh/.state/holdout.log"
+  # Time cap: the same rule as turnEndTests and the vericoding stage — `min(DSH_HOLDOUT_CAP (default
+  # 120), what is left of DSH_STOP_BUDGET (default 540) since the hook started)`. Uncapped, a holdout
+  # exercising agent code that never terminates ran past the budget (measured: `sleep 40` under a 20 s
+  # budget ended the hook after 40 s), and past the Stop hook's 600 s timeout the turn ends with no
+  # verdict at all. skreeep2's real holdout takes 6 s cold, 1 s warm, so the cap costs a healthy run
+  # nothing. With 10 s or less left it is not started. Either way it stays a signal, never a block.
+  ho_cap=$(dsh_decimal "${DSH_HOLDOUT_CAP:-}" 120)
+  ho_budget=$(dsh_decimal "${DSH_STOP_BUDGET:-}" 540)
+  ho_now=$(date +%s 2>/dev/null) || ho_now=''
+  case "$te_start$ho_now" in
+    *[!0-9]*|'') ho_left=$ho_budget ;;
+    *) ho_left=$((ho_budget - (ho_now - te_start))) ;;
+  esac
+  [ "$ho_left" -lt "$ho_cap" ] && ho_cap=$ho_left
+  holdout_report=''
+  if [ "$ho_left" -le 10 ]; then
+    holdout_report="holdout: not started — the Stop hook's budget ($ho_left s of the $ho_budget s were left); not verified this turn"
+  else
+    rm -f "$tmpd/ho-rc"
+    if dsh_bounded_probe "$ho_cap" "$holdout_log" "$tmpd/ho-err" \
+         sh -c 'cd "$1" && sh -c "$2" 2>&1; printf "%s" "$?" > "$3"' _ "$root" "$holdout_cmd" "$tmpd/ho-rc"; then
+      holdout_exit=$(cat "$tmpd/ho-rc" 2>/dev/null)
+      [ -n "$holdout_exit" ] || holdout_exit=1
+    else
+      holdout_report="holdout: did not finish within $ho_cap s — not verified (DSH_HOLDOUT_CAP, default 120, bounded by what was left of DSH_STOP_BUDGET); the partial output is the human's .dsh/.state/holdout.log"
+    fi
+  fi
+  holdout_counts="-	-"
+  if [ -z "$holdout_report" ]; then
+    holdout_report=$(dsh_weaver_failures <"$holdout_log")
+    holdout_counts=$(printf '%s\n' "$holdout_report" | sed -n '1s/^holdout: \([0-9]*\) passed, \([0-9]*\) failed$/\1	\2/p')
+    [ -n "$holdout_counts" ] || holdout_counts="-	-"
+    # A run that did not complete (compile error, crash, a missing tool) leaves no result to read; the
+    # exit status is the one fact this side may pass on -- the text stays in the sealed log. A weaver
+    # run with failures ALSO exits non-zero, so the exit is reported only when the filter read nothing.
+    if [ "$holdout_exit" != 0 ] && [ "$holdout_report" = "holdout: result unreadable" ]; then
+      holdout_report="holdout: did not complete (exit $holdout_exit) — see the human's .dsh/.state/holdout.log"
+    fi
   fi
   holdout_head=$(git -C "$root" rev-parse --short HEAD 2>/dev/null || printf -- -)
   printf 'holdout\t%s\t%s\t%s\n' "$holdout_counts" "$holdout_head" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$st/receipts" 2>/dev/null || :

@@ -146,7 +146,7 @@ The engine's hooks read only the three optional keys. The six base keys are the 
 gate; the checks themselves call the Mill interface below by task name, which is why the engine supports Mill
 only. A contract without `holdout` is legal but weaker, and check-harness says so in a note.
 
-### `turnEndTests` time cap: `DSH_TESTS_CAP`
+### `turnEndTests` and holdout time caps: `DSH_TESTS_CAP`, `DSH_HOLDOUT_CAP`
 
 Spec 2026-09-28 §3: `turnEndTests` used to run with no cap of its own, and Claude Code kills a Stop hook at its
 own 600 s timeout — a slow or hanging suite then ends the turn with NO verdict at all, not even a note. Each
@@ -170,6 +170,17 @@ after the vericoding stage (final-review ruling F3, so Stainless keeps its share
 slow owner or a long Stainless run leaves less for the dependents, and each dependent's note reads
 `turnEndTests: <D> (downstream of <M>) …`. They run only when nothing has blocked by then — a touched module's
 checks, its `turnEndTests` or the vericoding stage.
+
+The sealed holdout suite (the contract's `holdout` command) runs last of all, on a green turn only, under the same
+rule: capped at `min(DSH_HOLDOUT_CAP (default 120), what is left of DSH_STOP_BUDGET)`, not started with 10 s or
+less left. Uncapped, a holdout exercising agent code that never terminates ran the hook past its budget (measured:
+`sleep 40` under a 20 s budget held the hook for 40 s). It stays a signal, never a block; its receipt row records
+`-` counts:
+
+| Condition | Line |
+|---|---|
+| 10 s or less of the Stop-hook budget left | `holdout: not started — the Stop hook's budget (<n> s of the <budget> s were left); not verified this turn` |
+| the run hit its `DSH_HOLDOUT_CAP` (or budget-shortened) cap and was killed | `holdout: did not finish within <N> s — not verified …` (the partial output stays in the sealed `.dsh/.state/holdout.log`) |
 
 ## The Mill interface
 

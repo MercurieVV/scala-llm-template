@@ -1,0 +1,4 @@
+#!/bin/sh
+[ ! -e .dsh/holdout-ran ] || { echo "FAIL: holdout was started"; exit 1; }
+grep -q '^holdout	-	-	' .dsh/.state/receipts || { echo "FAIL: receipt missing"; cat .dsh/.state/receipts; exit 1; }
+echo "post_gate: not started and recorded"
