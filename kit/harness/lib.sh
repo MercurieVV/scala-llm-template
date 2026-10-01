@@ -2250,7 +2250,8 @@ dsh_strip_ansi() { awk '{ gsub(/\033\[[0-9;]*[A-Za-z]/, ""); print }'; }
 # Every line is ANSI-stripped, trimmed, and freed of ONE leading `[…]` prefix (Mill's `[n/m]`/`[error]`,
 # weaver's `[0]`/`[1]` failure index). The adapter is chosen from the text when `auto`: diagnostics
 # first -- a `[SEV][Rule.kind] path:l:c`, `path:l:c: warning: [Rule.kind]`, `Rewriting and linting N
-# Scala sources` or `scalafix found N diagnostic(s)` line is scalafix, an `[error|warn] path.scala:l:c`
+# Scala sources`, `scalafix found N diagnostic(s)` or fixStrict's own `fixStrict: scalafix could not run` /
+# `fixStrict: N file(s) failed` line is scalafix, an `[error|warn] path.scala:l:c`
 # line (Mill 1.1's compile reporter) is scalac -- then a `! …: Falsified`/`> ARG_n:` line is plain
 # scalacheck, an `==> X ` line is munit, anything else weaver.
 #
@@ -2309,7 +2310,7 @@ dsh_feedback_parse() {
   if [ "$_fp_adapter" = auto ]; then
     # Diagnostics first: a scalafix or Mill-compile transcript never carries a test marker, and a test
     # transcript never carries a `[SEVERITY][Rule…] path:l:c` (uppercase severity; Mill's `[error] path:l:c` is scalac) or `path:l:c: warning: [Rule…]` line.
-    if grep -Eq '^[ \t]*\[[A-Z]+\]\[[A-Za-z0-9_.-]+\] [^ ]+:[0-9]+:[0-9]+( |$)|^[^ ]+\.scala:[0-9]+:[0-9]+: (warning|error|info): \[|^[ \t]*(Rewriting and linting|Linting) [0-9]+ Scala sources|scalafix found [0-9]+ diagnostic' "$_fp_tmp"; then _fp_adapter=scalafix
+    if grep -Eq '^[ \t]*\[[A-Z]+\]\[[A-Za-z0-9_.-]+\] [^ ]+:[0-9]+:[0-9]+( |$)|^[^ ]+\.scala:[0-9]+:[0-9]+: (warning|error|info): \[|^[ \t]*(Rewriting and linting|Linting) [0-9]+ Scala sources|scalafix found [0-9]+ diagnostic|fixStrict: (scalafix could not run|[0-9]+ file\(s\) failed)' "$_fp_tmp"; then _fp_adapter=scalafix
     elif grep -Eq '^[ \t]*\[(error|warn)\] [^ ]+\.(scala|java):[0-9]+:[0-9]+[ \t]*$' "$_fp_tmp"; then _fp_adapter=scalac
     elif grep -Eq '^[ \t]*(\[[^]]*\][ \t]*)?(! .*: Falsified|> ARG_[0-9])' "$_fp_tmp"; then _fp_adapter=scalacheck
     elif grep -Eq '^[ \t]*(\[[^]]*\][ \t]*)?==> X ' "$_fp_tmp"; then _fp_adapter=munit

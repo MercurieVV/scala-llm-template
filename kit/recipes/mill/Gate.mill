@@ -36,11 +36,24 @@ trait GateLayer extends ScalafixModule {
         .withScalacOptions(scalacOptions().asJava)
         .withPaths(filesToFix.map(_.toNIO.toAbsolutePath).asJava)
       val eval = args.evaluate()
-      eval.getErrorMessage.toScala.foreach(msg => Task.log.error(msg))
+      // A run scalafix could not start (an unknown rule, a bad config) and a file it could not evaluate (stale
+      // SemanticDB, a parse error) both yield no diagnostics, which would read as a clean lint under exit 0.
+      // Each fails the task by name instead, as in fixRanges.
+      val unevaluated = eval.getFileEvaluations.iterator
+        .filterNot(_.isSuccessful)
+        .map { fe =>
+          val why = fe.getErrorMessage.toScala.orElse(fe.getError.toScala.map(_.toString)).getOrElse("unknown error")
+          s"could not evaluate ${fe.getEvaluatedFile}: $why"
+        }
+        .toSeq
       val diags = eval.getFileEvaluations.iterator
         .flatMap(fe => fe.getDiagnostics.iterator.map(fe.getEvaluatedFile -> _))
         .toSeq
-      if diags.isEmpty then mill.api.Result.Success(())
+      val failed = unevaluated.map("\n" + _).mkString
+      if eval.getErrorMessage.isPresent then
+        mill.api.Result.Failure(s"fixStrict: scalafix could not run: ${eval.getErrorMessage.get}")
+      else if diags.isEmpty && unevaluated.isEmpty then mill.api.Result.Success(())
+      else if diags.isEmpty then mill.api.Result.Failure(s"fixStrict: ${unevaluated.length} file(s) failed:$failed")
       else
         val msgs = diags.map { case (file, d) =>
           val pos = d.position.toScala.map(p => s":${p.startLine + 1}:${p.startColumn + 1}").getOrElse("")
@@ -51,7 +64,7 @@ trait GateLayer extends ScalafixModule {
             .getOrElse("")
           s"[${d.severity}]$rule $file$pos ${d.message}"
         }
-        mill.api.Result.Failure(s"scalafix found ${diags.length} diagnostic(s):\n${msgs.mkString("\n")}")
+        mill.api.Result.Failure(s"scalafix found ${diags.length} diagnostic(s):\n${msgs.mkString("\n")}$failed")
     else mill.api.Result.Success(())
   }
 

@@ -1551,6 +1551,13 @@ is "scalafix: an unrecognised [error] line under a marker is infra" "kind${tab}i
 is "scalafix: … whose message is that line, bracket-stripped" "message${tab}core.fix scalafix.internal.config.ScalafixConfigException: Unknown rule 'X'" "$(printf '%s\n' "$out" | grep "^message${tab}")"
 out=$(printf 'Rewriting and linting 9 Scala sources against 24 rules\n[error] core.fix A Scalafix test error was reported. Run `fix` without `--check` or `--diff` to fix the error\n' | fpr scalafix "")
 is "scalafix: a Scalafix error line without a diagnostic is infra" 1 "$(printf '%s\n' "$out" | grep -c "^kind${tab}infra\$")"
+# fixStrict's own failures (Gate.mill): a run scalafix could not start, a file it could not evaluate --
+# no `Rewriting and linting` marker, so the line itself names the adapter (captured from skreeep2 under --ticker false)
+out=$(printf '[error] score.fixStrict fixStrict: scalafix could not run: Unknown rule '"'"'NoSuchRuleXyz'"'"'\n' | fpr auto "" 1)
+is "scalafix: fixStrict could-not-run is infra" "kind${tab}infra" "$(printf '%s\n' "$out" | grep "^kind${tab}")"
+is "scalafix: … whose message names the cause" "message${tab}score.fixStrict fixStrict: scalafix could not run: Unknown rule 'NoSuchRuleXyz'" "$(printf '%s\n' "$out" | grep "^message${tab}")"
+out=$(printf '[error] core.fixStrict fixStrict: 1 file(s) failed:\ncould not evaluate /r/core/src/A.scala: SemanticDB not found\n' | fpr auto "" 1)
+is "scalafix: fixStrict unevaluated files are infra" "kind${tab}infra" "$(printf '%s\n' "$out" | grep "^kind${tab}")"
 # with no `[error]` line either, only the exit status tells a red run from a green one
 is "scalafix: a marker alone with rc 1 is unreadable" "kind${tab}unreadable" "$(printf 'Rewriting and linting 3 Scala sources against 24 rules\n' | fpr auto "" 1 | grep "^kind${tab}")"
 is "scalafix: a marker alone with rc 0 is a green header" "counts${tab}0${tab}0${tab}1${tab}0${tab}0" "$(printf 'Rewriting and linting 3 Scala sources against 24 rules\n' | fpr auto "" 0)"
