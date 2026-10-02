@@ -611,6 +611,20 @@ done <<EOF
 $hc_rows
 EOF
 
+# The structural holdout seal (spec 2026-10-02 §4.4): the agent's sandbox settings, same row shape as above.
+sb_rows=$(dsh_sandbox_checks "$repo" 2>&1) || :
+while IFS="$tab" read -r sb_kind sb_msg; do
+  [ -n "$sb_kind" ] || continue
+  case "$sb_kind" in
+    ok) ok "$sb_msg" ;;
+    FAIL) bad "$sb_msg" ;;
+    note) note "$sb_msg" ;;
+    *) bad "dsh_sandbox_checks printed a row this check does not understand: $sb_kind $sb_msg" ;;
+  esac
+done <<EOF
+$sb_rows
+EOF
+
 # The module map's dependents column (spec 2026-10-01 §4): same row shape as the holdout rows above.
 dc_rows=$(dsh_dependents_column_check "$repo" 2>&1) || :
 while IFS="$tab" read -r dc_kind dc_msg; do

@@ -1,0 +1,6 @@
+#!/bin/sh
+d="$SCRATCH_ROOT.holdout"
+mkdir -p "$d"
+printf '%s\n' 'test("stop releases device") { assert(player.stop() == Released(42)) }' 'test("exact name") {' > "$d/P.scala"
+# Unique per scratch root (parallel runs share TMPDIR): point the contract at it.
+sed "s|^holdoutDir = .*|holdoutDir = $SCRATCH_ROOT.holdout|" .dsh/contract > .dsh/contract.tmp && mv .dsh/contract.tmp .dsh/contract

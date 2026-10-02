@@ -114,5 +114,12 @@ is "wrapper: a clean compile reads as 0 errors" "FEEDBACK: 0 errors, 0 warnings 
 is "wrapper: a clean compile is not unreadable" 0 "$(printf '%s\n' "$out" | grep -c '^UNREADABLE')"
 out=$(run -- sh compile-stub.sh ./mill -j 1 --ticker false core.compile 2>&1)
 is "wrapper: a clean compile, selector inferred" "FEEDBACK: 0 errors, 0 warnings (core.compile)" "$(printf '%s\n' "$out" | sed -n 1p)"
+# a Mill launcher that cannot start (spike, 2026-10-02: the sandbox refuses its socket) is an INFRA record naming the cause, on a compile and on a test run
+printf '%s\n' '#!/bin/sh' 'echo "Mill launcher failed: java.net.SocketException: Operation not permitted"' 'exit 1' > "$scratch/launcher-stub.sh"
+for sel in core.compile core.test; do
+  out=$(run --selector "$sel" -- sh launcher-stub.sh 2>&1)
+  is "wrapper: a failed Mill launcher ($sel) is an INFRA record naming the cause" "INFRA: Mill launcher failed: java.net.SocketException: Operation not permitted" "$(printf '%s\n' "$out" | grep '^INFRA')"
+  is "wrapper: a failed Mill launcher ($sel) is not unreadable" 0 "$(printf '%s\n' "$out" | grep -c '^UNREADABLE')"
+done
 rm -rf "$scratch"
 printf '\n%s passed, %s failed\n' "$passed" "$failed"; [ "$failed" -eq 0 ]

@@ -1,0 +1,3 @@
+preCommit  = ./mill -j 1 preCommit
+holdout = ./mill -j 1 --ticker false holdout.test
+holdoutDir = ../t12-holdout-case

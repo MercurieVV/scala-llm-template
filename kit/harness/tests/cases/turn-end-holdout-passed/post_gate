@@ -1,0 +1,5 @@
+#!/bin/sh
+rm -rf "$SCRATCH_ROOT.holdout"
+if grep -q 'looks like a failure' "$GATE_OUT_FILE"; then echo "FAIL: output text reached the agent"; exit 1; fi
+grep -q '^holdout	0	0	' .dsh/.state/receipts || { echo "FAIL: receipt should carry exit 0, k 0"; cat .dsh/.state/receipts; exit 1; }
+echo "post_gate: exit status decides"

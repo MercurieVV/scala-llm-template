@@ -1,0 +1,9 @@
+#!/bin/sh
+phys=$(cd "$SCRATCH_ROOT.holdout" && pwd -P)
+rm -rf "$SCRATCH_ROOT.holdout"
+[ -s hoenv.log ] || { echo "FAIL: no holdout env log"; exit 1; }
+grep -qx "DSH_HOLDOUT_DIR=$phys" hoenv.log || { echo "FAIL: the holdout run did not see DSH_HOLDOUT_DIR=$phys"; cat hoenv.log; exit 1; }
+n=$(grep -c '^DSH_HOLDOUT_DIR=<unset>$' hoenv.log)
+[ "$n" -ge 1 ] || { echo "FAIL: no other Mill call saw DSH_HOLDOUT_DIR unset"; cat hoenv.log; exit 1; }
+[ "$(grep -c "^DSH_HOLDOUT_DIR=$phys\$" hoenv.log)" = 1 ] || { echo "FAIL: more than one call saw it"; cat hoenv.log; exit 1; }
+echo "post_gate: only the holdout run saw DSH_HOLDOUT_DIR"

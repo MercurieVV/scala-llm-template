@@ -1,0 +1,5 @@
+#!/bin/sh
+rm -rf "$SCRATCH_ROOT.holdout"
+[ -n "${GATE_OUT_FILE:-}" ] && [ -f "$GATE_OUT_FILE" ] || { echo "FAIL: GATE_OUT_FILE not provided by run.sh"; exit 1; }
+if grep -q 'arbitrary forged text' "$GATE_OUT_FILE"; then echo "FAIL: a forged name reached the agent"; exit 1; fi
+echo "post_gate: forged name not printed"

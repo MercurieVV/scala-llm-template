@@ -200,7 +200,7 @@ check "a newer build.mill refreshes the cache" "$scratch/engine/details/src/Wiri
 # `--ticker false` is what keeps the map free of Mill's `<n>] ` line prefixes: with the ticker on
 # (the default even when stdout is a pipe) every row arrives adorned. Asserted right after the one
 # lookup that triggered it — build.mill stays in the future, so later lookups refresh again.
-is "the refresh asked Mill for unadorned output" "mill --ticker false moduleMap" "$(cat "$log")"
+is "the refresh asked Mill for unadorned output" "mill --no-daemon --ticker false moduleMap" "$(cat "$log")"
 # The refreshed map's `engine/shape` loses `tests` against the cached row, and its `scope` row is
 # `fmt,tests` — the one capability combination that is not a prefix of `fmt,scalafix,tests`, so a
 # validator that only knows the Layer shapes would refuse this map.

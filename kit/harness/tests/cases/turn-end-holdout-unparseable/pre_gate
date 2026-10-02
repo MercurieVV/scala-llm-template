@@ -1,0 +1,7 @@
+#!/bin/sh
+# holdoutDir is a real directory outside the scratch root; post_gate removes it.
+mkdir -p "$SCRATCH_ROOT.holdout"
+# A declared test: an empty holdoutDir reports "not verified" before the exit status is read (Ruling 29 M1).
+printf '%s\n' 'test("compiles at all")' > "$SCRATCH_ROOT.holdout/H.scala"
+# Unique per scratch root (parallel runs share TMPDIR): point the contract at it.
+sed "s|^holdoutDir = .*|holdoutDir = $SCRATCH_ROOT.holdout|" .dsh/contract > .dsh/contract.tmp && mv .dsh/contract.tmp .dsh/contract

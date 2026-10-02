@@ -6,3 +6,10 @@ checkFormat = ./mill -j 1 --ticker false <module>.checkFormat
 fix         = ./mill -j 1 --ticker false <module>.fix --check
 coverage    = ./mill -j 1 --ticker false moduleMap
 roots       = .
+# The agent's Mill output directory (spec 2026-10-02); default out-agent with a holdout line, else out.
+# agentOutputDir = out-agent
+# The gate's holdout run Mill output directory (default out-holdout); never the agent's.
+# holdoutOutputDir = out-holdout
+# Required with a holdout line: the holdout sources, OUTSIDE the repository (absolute, or starting with ../).
+# The gate sets DSH_HOLDOUT_DIR to it for the holdout run only.
+# holdoutDir = ../<project>-holdout

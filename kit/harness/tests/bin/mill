@@ -1,6 +1,16 @@
 #!/bin/sh
 # Test double for ./mill: records its arguments and exits with MILL_STUB_EXIT (default 0).
 printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+# MILL_STUB_ENV_LOG names a file that records the MILL_OUTPUT_DIR each call saw (`<unset>` when unset): how a
+# case asserts the gate's wrapper ran Mill in the agent's output directory.
+if [ -n "${MILL_STUB_ENV_LOG:-}" ]; then printf 'MILL_OUTPUT_DIR=%s\n' "${MILL_OUTPUT_DIR-<unset>}" >> "$MILL_STUB_ENV_LOG"; fi
+# MILL_STUB_HOLDOUT_ENV_LOG likewise records the DSH_HOLDOUT_DIR each call saw (`<unset>` when unset): how a case
+# asserts that only the gate's holdout run is told where the holdout sources are (spec 2026-10-02 §10). A separate
+# file, so the MILL_OUTPUT_DIR log keeps one kind of line.
+if [ -n "${MILL_STUB_HOLDOUT_ENV_LOG:-}" ]; then printf 'DSH_HOLDOUT_DIR=%s\n' "${DSH_HOLDOUT_DIR-<unset>}" >> "$MILL_STUB_HOLDOUT_ENV_LOG"; fi
+# MILL_STUB_CALL_ENV_LOG records `MILL_OUTPUT_DIR=<value> <arguments>` per call: how a case asserts WHICH call
+# built in which output directory (the holdout run in out-holdout, the rest in the agent's).
+if [ -n "${MILL_STUB_CALL_ENV_LOG:-}" ]; then printf 'MILL_OUTPUT_DIR=%s %s\n' "${MILL_OUTPUT_DIR-<unset>}" "$*" >> "$MILL_STUB_CALL_ENV_LOG"; fi
 # MILL_STUB_FIXRANGES_SCRIPT names a script run for `<module>.fixRanges` (cwd = the scratch root, Mill's own
 # arguments passed through, so it can tell the module and read the ranges file): how a
 # fixture simulates purrism rewriting a file. MILL_STUB_COMPILE_FAIL_MARK is a word whose presence in any

@@ -1,2 +1,3 @@
 preCommit  = ./mill -j 1 preCommit
 holdout = touch .dsh/holdout-ran
+holdoutDir = ../t12-holdout-case

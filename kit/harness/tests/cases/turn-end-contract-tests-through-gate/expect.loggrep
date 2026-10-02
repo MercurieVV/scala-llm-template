@@ -1,0 +1,1 @@
+mill --no-daemon -j 1 --ticker false core.test

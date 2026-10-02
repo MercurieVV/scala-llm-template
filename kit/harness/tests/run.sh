@@ -255,7 +255,7 @@ $out2"
   # asserts it in post_gate against this file.
   if [ -f "$case_dir/post_gate" ]; then
     printf '%s\n' "$out" > "$scratch/gate.out"
-    pg_out=$(cd "$scratch" && GATE_OUT_FILE="$scratch/gate.out" "$shell_bin" "$case_dir/post_gate" 2>&1)
+    pg_out=$(cd "$scratch" && GATE_OUT_FILE="$scratch/gate.out" MILL_STUB_LOG="$mill_log" "$shell_bin" "$case_dir/post_gate" 2>&1)
     pg_code=$?
     out="$out
 --- post_gate (exit $pg_code) ---

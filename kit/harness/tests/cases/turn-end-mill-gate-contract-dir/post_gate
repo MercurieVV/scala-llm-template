@@ -1,0 +1,6 @@
+#!/bin/sh
+# Every Mill call went through the wrapper: the agent's directory, never a server.
+[ -s env.log ] || { echo "FAIL: no env log"; exit 1; }
+if grep -v '^MILL_OUTPUT_DIR=build-agent$' env.log; then echo "FAIL: a call outside build-agent"; exit 1; fi
+if grep -v -- '--no-daemon' "$SCRATCH_ROOT/mill.log"; then echo "FAIL: a call without --no-daemon"; exit 1; fi
+echo "post_gate: all calls through the wrapper"

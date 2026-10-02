@@ -1,0 +1,9 @@
+#!/bin/sh
+# Ruling 29 C1: the holdout run must not write into the agent's output directory (Mill --no-daemon leaves
+# <dir>/mill-console-tail with holdout source in it); mill-gate.sh selects out-holdout when DSH_HOLDOUT_DIR is set.
+rm -rf "$SCRATCH_ROOT.holdout"
+[ -s callenv.log ] || { echo "FAIL: no call env log"; exit 1; }
+grep -q '^MILL_OUTPUT_DIR=out-holdout .*holdout\.test$' callenv.log || { echo "FAIL: the holdout run did not build in out-holdout"; cat callenv.log; exit 1; }
+grep -q '^MILL_OUTPUT_DIR=out-agent .*engine\.details\.test$' callenv.log || { echo "FAIL: turnEndTests did not build in out-agent"; cat callenv.log; exit 1; }
+[ "$(grep -c '^MILL_OUTPUT_DIR=out-holdout ' callenv.log)" = 1 ] || { echo "FAIL: another call built in out-holdout"; cat callenv.log; exit 1; }
+echo "post_gate: the holdout run built in out-holdout, turnEndTests in out-agent"

@@ -78,6 +78,8 @@
 set -u
 here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$here/lib.sh"
+# An inherited DSH_HOLDOUT_DIR must not reach an unsandboxed Mill run: only the gate's holdout run sets it (turn-end.sh).
+unset DSH_HOLDOUT_DIR
 
 root=$(gate_root)
 
@@ -269,6 +271,7 @@ fi
 # that failed on files this turn did not touch, and this module's own red test is not one of those.
 ft_green=''; fb_noted=0; ft_notes=''
 if has_cap tests && ft=$(dsh_contract_for_module fastTests "$module" "$root"); then
+  ft=$(dsh_gate_command "$ft" "$here")
   ft_out=$(sh "$here/hooks/feedback.sh" --selector "$module.test" -- sh -c "$ft" 2>&1)
   ft_rc=$?
   if [ "$ft_rc" = 0 ]; then

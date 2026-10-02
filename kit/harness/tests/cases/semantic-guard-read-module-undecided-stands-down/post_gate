@@ -1,0 +1,7 @@
+#!/bin/sh
+# Ruling 3: module-map now finds Mill through resolve_mill (./mill, else PATH), as post-edit/turn-end do, so the
+# scratch root with no ./mill still makes one Mill call (the PATH stub). The verdict is unchanged: the stub
+# prints no map, so the map is NOT built and the guard still stands down with "cannot decide".
+if grep -q "cannot decide which module owns" "$GATE_OUT_FILE"; then :; else echo "FAIL: stand-down text missing"; exit 1; fi
+if [ -s .dsh/.state/modules.tsv ]; then echo "FAIL: a usable map was built"; exit 1; fi
+echo "post_gate: still undecided, no map built"

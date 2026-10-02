@@ -1,4 +1,5 @@
 #!/bin/sh
+rm -rf "$SCRATCH_ROOT.holdout"
 grep -q 'Expected true but got false' .dsh/.state/holdout.log || { echo "FAIL: full output not in holdout.log"; exit 1; }
 grep -q '^holdout	1	2	' .dsh/.state/receipts || { echo "FAIL: receipt missing"; cat .dsh/.state/receipts; exit 1; }
 # The raw runner text must NOT reach the agent: the gate's captured output (GATE_OUT_FILE, the

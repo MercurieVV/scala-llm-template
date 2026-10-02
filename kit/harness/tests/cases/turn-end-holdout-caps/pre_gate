@@ -1,0 +1,8 @@
+#!/bin/sh
+d="$SCRATCH_ROOT.holdout"
+mkdir -p "$d"
+i=1
+while [ "$i" -le 25 ]; do echo "test(\"case number $i\")" >> "$d/Caps.scala"; i=$((i + 1)); done
+echo "test(\"long$(printf 'L%.0s' $(seq 1 150))\")" >> "$d/Caps.scala"
+# Unique per scratch root (parallel runs share TMPDIR): point the contract at it.
+sed "s|^holdoutDir = .*|holdoutDir = $SCRATCH_ROOT.holdout|" .dsh/contract > .dsh/contract.tmp && mv .dsh/contract.tmp .dsh/contract

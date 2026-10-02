@@ -236,4 +236,38 @@ fi
 if nm=$(dsh_non_mill_build "$root"); then
   printf 'DSH harness: note -- gate engine supports Mill builds only; found: %s -- checks stand down\n' "$nm"
 fi
+# The holdout seal's second layer is the OS sandbox on the agent's shell; say so when this session has
+# only the text layer. Only a contract with a holdout suite needs it. DSH_SANDBOX_PROBE is a test seam:
+# `ok` or `none` replaces the platform probe, any other value runs it. Whether the settings enable the
+# sandbox is read from .claude/settings.local.json when that file sets sandbox.enabled (it overrides the
+# project file), else from .claude/settings.json. A settings file the engine cannot read counts as "not
+# enabled".
+if dsh_holdout_target "$root" >/dev/null 2>&1; then
+  sb_os=$(uname -s 2>/dev/null)
+  case "${DSH_SANDBOX_PROBE:-}" in
+    ok|none) sb_probe=$DSH_SANDBOX_PROBE ;;
+    *)
+      sb_probe=none
+      case "$sb_os" in
+        Darwin) command -v sandbox-exec >/dev/null 2>&1 && sb_probe=ok ;;
+        Linux) command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1 && sb_probe=ok ;;
+      esac ;;
+  esac
+  if [ "$sb_probe" = none ]; then
+    printf 'DSH harness: note -- the holdout seal is text-only in this session: no OS sandbox on this platform (%s); see .dsh/engine/README.md "Structural holdout seal"\n' "$sb_os"
+  else
+    sb_file=.claude/settings.json
+    sb_en=''
+    if [ -f "$root/.claude/settings.local.json" ]; then
+      sb_en=$(dsh_json_get "$root/.claude/settings.local.json" sandbox.enabled 2>/dev/null) || sb_en=unreadable
+      [ -n "$sb_en" ] && sb_file=.claude/settings.local.json
+    fi
+    if [ -z "$sb_en" ]; then
+      sb_en=$(dsh_json_get "$root/.claude/settings.json" sandbox.enabled 2>/dev/null) || sb_en=""
+    fi
+    if [ "$sb_en" != true ]; then
+      printf 'DSH harness: note -- the holdout seal is text-only in this session: %s does not enable the sandbox; run sh .dsh/engine/check-harness.sh\n' "$sb_file"
+    fi
+  fi
+fi
 exit 0

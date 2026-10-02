@@ -1,0 +1,3 @@
+#!/bin/sh
+grep -q -- 'holdout.test' "$MILL_STUB_LOG" && { echo "FAIL: the holdout ran with an invalid holdoutDir"; exit 1; }
+echo "post_gate: holdout not run"

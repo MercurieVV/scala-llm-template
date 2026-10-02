@@ -1,4 +1,16 @@
 {
+  "env": { "MILL_OUTPUT_DIR": "out-agent" },
+  "sandbox": {
+    "enabled": true,
+    "allowUnsandboxedCommands": false,
+    "failIfUnavailable": true,
+    "network": { "allowLocalBinding": true },
+    "filesystem": {
+      "allowWrite": ["~/.cache/mill", "~/.cache/coursier", "~/Library/Caches/Coursier", "/var/folders"],
+      "denyRead": ["./out", "./out-agent/holdout", "./out-holdout", "./holdout", "./.dsh/.state/holdout.log"],
+      "denyWrite": ["./.dsh/engine", "./.dsh/contract", "./.dsh/frozen-paths", "./.claude", "./out-holdout", "./holdout", "./.dsh/.state/holdout.log"]
+    }
+  },
   "hooks": {
     "SessionStart": [
       { "hooks": [ { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/.dsh/engine/gate.sh\" health", "timeout": 120 } ] },

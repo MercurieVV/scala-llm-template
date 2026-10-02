@@ -1,1 +1,1 @@
-mill --ticker false moduleMap
+mill --no-daemon --ticker false moduleMap

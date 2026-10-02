@@ -44,7 +44,10 @@
 #        sh .dsh/engine/module-map.sh --dependents <module id>   (field 4: one dependent id per line)
 # POSIX sh only: no arrays, no `local`, no `set -e`.
 set -u
-. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/lib.sh"
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$here/lib.sh"
+# An inherited DSH_HOLDOUT_DIR must not reach an unsandboxed Mill run: only the gate's holdout run sets it (turn-end.sh).
+unset DSH_HOLDOUT_DIR
 dep_query=''
 if [ "${1:-}" = "--dependents" ]; then dep_query=${2:-}; set -- "${2:-}"; fi
 
@@ -87,7 +90,8 @@ if [ ! -s "$map" ] || [ "$root/build.mill" -nt "$map" ]; then
   # arrives as `1] moduleMap core<TAB>core`, `1] diagnostics<TAB>diagnostics`, ...
   # A failed, partial or adorned run must never replace a good map: write beside it, then rename.
   tmp="$map.tmp.$$"
-  if (cd "$root" && ./mill --ticker false moduleMap 2>/dev/null) > "$tmp" 2>/dev/null && map_clean "$tmp"; then
+  mm_mill=$(resolve_mill "$root") || mm_mill=''
+  if [ -n "$mm_mill" ] && (cd "$root" && "$mm_mill" --ticker false moduleMap 2>/dev/null) > "$tmp" 2>/dev/null && map_clean "$tmp"; then
     mv "$tmp" "$map"
   else
     rm -f "$tmp"

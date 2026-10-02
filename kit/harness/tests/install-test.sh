@@ -15,6 +15,12 @@ is "fresh_install_seeds: exit" 0 "$code"
 for f in contract frozen-paths hooks.json cc-settings.json policy/allowed-types.tsv policy/memorisation.tsv policy/kernels.tsv instructions/local.tsv instructions/scalac-kinds.tsv; do
   is "fresh_install_seeds: seeded $f" yes "$([ -f "$p/.dsh/$f" ] && echo yes || echo no)"
 done
+is "fresh_install_seeds: seeded settings enable the sandbox" true "$(dsh_json_get "$p/.dsh/cc-settings.json" sandbox.enabled)"
+is "fresh_install_seeds: seeded settings name the agent output dir" '"out-agent"' "$(dsh_json_get "$p/.dsh/cc-settings.json" env.MILL_OUTPUT_DIR)"
+# Ruling 29: the seed denies the whole ./out (the human's prePush compiles the holdout there) and the holdout run's
+# own out-holdout, for reads and writes.
+is "fresh_install_seeds: seeded denyRead" '["./out","./out-agent/holdout","./out-holdout","./holdout","./.dsh/.state/holdout.log"]' "$(dsh_json_get "$p/.dsh/cc-settings.json" sandbox.filesystem.denyRead)"
+is "fresh_install_seeds: seeded denyWrite has ./out-holdout" yes "$(dsh_json_get "$p/.dsh/cc-settings.json" sandbox.filesystem.denyWrite | grep -Fq '"./out-holdout"' && echo yes || echo no)"
 is "fresh_install_seeds: engine gate" yes "$([ -f "$p/.dsh/engine/gate.sh" ] && echo yes || echo no)"
 is "fresh_install_seeds: no seed/ inside the engine" no "$([ -e "$p/.dsh/engine/seed" ] && echo yes || echo no)"
 is "fresh_install_seeds: verdict" ok "$(dsh_engine_stamp_verdict "$p/.dsh/engine")"

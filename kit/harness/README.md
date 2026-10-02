@@ -19,7 +19,7 @@ The engine directory is **the same tree** in both places: `kit/harness/` in the 
 - **Project state is found from `gate_root`** (`GATE_ROOT` → `CLAUDE_PROJECT_DIR` → git toplevel → `PWD`), always
   under `<root>/.dsh/`: `contract`, `frozen-paths`, `policy/`, `instructions/`, `skills/`, `.state/`,
   `hooks.json`, `cc-settings.json`, and — for a DSH project — `dsh.sh` and `profile/`.
-- **Engine files are never at `<root>/.dsh/<file>`.** They are `gate.sh`, `lib.sh`, `verify-diff.sh`,
+- **Engine files are never at `<root>/.dsh/<file>`.** They are `gate.sh`, `lib.sh`, `mill-gate.sh`, `verify-diff.sh`,
   `module-map.sh`, `check-harness.sh`, `instructions-sync.sh`, `hooks/`, `tests/`, `README.md` and (vendored
   only) `STAMP`, all under `.dsh/engine/`.
 - **The split rule:** what the engine reads at a fixed path under `.dsh/` is project state; everything
@@ -138,11 +138,14 @@ substitutes `<module>`). The seed:
 | `fix` | `./mill -j 1 --ticker false <module>.fix --check` | the same |
 | `coverage` | `./mill -j 1 --ticker false moduleMap` | the same |
 | `roots` | `.` | the same |
-| `holdout` *(optional)* | — | `tool-policy` (refuses the agent running the sealed suite) and `turn-end` (runs it, reports names only) |
+| `holdout` *(optional)* | — | `tool-policy` (refuses the agent running the sealed suite) and `turn-end` (runs it, reports verified failing names only) |
+| `holdoutDir` *(required with `holdout`)* | — (a commented line in the seed) | `turn-end` (the one run that gets `DSH_HOLDOUT_DIR=<holdoutDir>`) and check-harness. An absolute path, or one starting with `../`, to the directory holding the holdout sources, outside the repository. See [Structural holdout seal](#structural-holdout-seal). |
 | `fastTests` *(optional)* | — | `post-edit`: per module, on any edit inside a `tests`-capable module; noted, never blocking |
 | `turnEndTests` *(optional)* | — | `turn-end`: per module, blocking — for each touched module and, from spec 2026-10-01, for each touched module's dependents (the map's fourth column) |
+| `holdoutOutputDir` *(optional)* | `out-holdout` (a commented line in the seed) | `mill-gate.sh` (`MILL_OUTPUT_DIR` for the holdout run, the one call with `DSH_HOLDOUT_DIR` set) and check-harness (denyRead and denyWrite must list `./<it>`; must differ from the agent directory); a value that is not a plain relative path falls back to `out-holdout` and check-harness FAILs. See [Structural holdout seal](#structural-holdout-seal). |
+| `agentOutputDir` *(optional)* | `out-agent` when the contract has a `holdout =` line, else `out` (a commented line in the seed) | `mill-gate.sh` (`MILL_OUTPUT_DIR` for every Mill the engine starts) and check-harness (must equal `.claude/settings.json`'s `env.MILL_OUTPUT_DIR`); a value that is not a plain relative path falls back to `out-agent` and check-harness FAILs. See [Structural holdout seal](#structural-holdout-seal). |
 
-The engine's hooks read only the three optional keys. The six base keys are the project's declaration of its
+The engine's hooks read only the three optional command keys, `holdoutDir` and `agentOutputDir`. The six base keys are the project's declaration of its
 gate; the checks themselves call the Mill interface below by task name, which is why the engine supports Mill
 only. A contract without `holdout` is legal but weaker, and check-harness says so in a note.
 
@@ -175,10 +178,11 @@ The sealed holdout suite (the contract's `holdout` command) runs last of all, on
 rule: capped at `min(DSH_HOLDOUT_CAP (default 120), what is left of DSH_STOP_BUDGET)`, not started with 10 s or
 less left. Uncapped, a holdout exercising agent code that never terminates ran the hook past its budget (measured:
 `sleep 40` under a 20 s budget held the hook for 40 s). It stays a signal, never a block; its receipt row records
-`-` counts:
+`-` counts when the run gave no verdict:
 
 | Condition | Line |
 |---|---|
+| no usable `holdoutDir` (absent, not an existing directory, or inside the repository) | `holdout: not verified — <reason>` (the suite is not run) |
 | 10 s or less of the Stop-hook budget left | `holdout: not started — the Stop hook's budget (<n> s of the <budget> s were left); not verified this turn` |
 | the run hit its `DSH_HOLDOUT_CAP` (or budget-shortened) cap and was killed | `holdout: did not finish within <N> s — not verified …` (the partial output stays in the sealed `.dsh/.state/holdout.log`) |
 
@@ -289,6 +293,207 @@ are out of scope, and a symbol defined in the sealed suite can surface through t
 the read/write matcher is a LITERAL alternation of tool names, and mixing a regex into that string
 would turn every name in it into an unanchored regex (`Bash` would also select `BashOutput`, `read`
 would select `mcp__idea__read_file`). The two matchers are disjoint, so a call still runs the gate once.
+
+## Structural holdout seal
+
+The text rules in `tool-policy` and `semantic-guard` read command text, and code that computes the command defeats
+them: two live gated runs showed `H=hold; H="${H}out"; ./mill "$H.test"` and a Python
+`subprocess.call(["./mill", "hold" + "out.test"])` both running the sealed suite. The structural seal puts the OS
+under the agent's shell instead. The invariant it holds: **every Mill server the agent's client can find runs
+inside the agent's sandbox, and the sandbox cannot read the holdout.** It applies only when the contract has a
+`holdout =` line. Design: scala-coding-guidelines `docs/superpowers/specs/2026-10-02-structural-holdout-seal-design.md`
+(§4/§8 the sandbox, §10 the external holdout).
+
+**The holdout lives outside the repository.** A holdout kept in the repository is readable from `.git/objects` once
+tracked (`git cat-file -p <sha>` passes the text rules, and a sandbox `denyRead ./holdout` does not cover `.git`), so
+the sealed rows inside the repo are not the seal. The contract's `holdoutDir` is:
+
+* an absolute path, or one starting with `../` (resolved from the project root); anything else is invalid;
+* resolved physically (`pwd -P`) and required to exist;
+* required to be outside the repository, checked by inode (`-ef`) up the path to `/` in both directions, so a
+  case-insensitive filesystem, a symlink, the root itself, an ancestor of the root, or a directory inside it cannot pass.
+
+The holdout module's sources come from `holdoutDir` only when `DSH_HOLDOUT_DIR=<holdoutDir>` is set (the
+`HoldoutModule` trait in `kit/recipes/mill/Gate.mill`; see `kit/recipes/mill.md` section 9, not repeated here). Otherwise
+the module has no sources: the agent's builds and the gate's other checks see an empty holdout. `DSH_HOLDOUT_DIR` is set
+for exactly one command, the `holdout =` run in `turn-end` (a command-prefix assignment inside the bounded probe, never
+exported); `turn-end`, `post-edit` and `module-map` also `unset` an inherited one at entry. It is a seam, not a setting.
+The human runs the real holdout with it set: `DSH_HOLDOUT_DIR=<holdoutDir> ./mill prePush` (unchanged). That command
+builds in the default output directory `./out`, so the compiled holdout (classes, `test-report.xml`, `out.json` with
+source excerpts, `mill-console-tail`) lands in `./out/<holdout>`; the settings therefore deny the agent reads of the
+whole `./out`. Without the variable `prePush` runs zero holdout tests.
+
+**History caveat.** Anything ever committed stays in git history and is not sealed. Moving old holdout tests to
+`holdoutDir` does not protect them; write NEW holdout tests in `holdoutDir`, and `git rm` the old in-repo ones.
+
+**The settings block (human-owned).** `.dsh/cc-settings.json` (the seed `kit/harness/seed/cc-settings.json`) carries an
+`env` and a `sandbox` block; the human copies them into `.claude/settings.json` (a frozen file, so a human step):
+
+```json
+"env": { "MILL_OUTPUT_DIR": "out-agent" },
+"sandbox": {
+  "enabled": true,
+  "allowUnsandboxedCommands": false,
+  "failIfUnavailable": true,
+  "network": { "allowLocalBinding": true },
+  "filesystem": {
+    "allowWrite": ["~/.cache/mill", "~/.cache/coursier", "~/Library/Caches/Coursier", "/var/folders"],
+    "denyRead": ["./out", "./out-agent/holdout", "./out-holdout", "./holdout", "./.dsh/.state/holdout.log"],
+    "denyWrite": ["./.dsh/engine", "./.dsh/contract", "./.dsh/frozen-paths", "./.claude", "./out-holdout", "./holdout", "./.dsh/.state/holdout.log"]
+  }
+}
+```
+
+* `denyRead` and `denyWrite` both list the absolute, physical `holdoutDir` (the seed cannot know it; add it) and
+  `./<holdoutOutputDir>` (default `./out-holdout`, the gate's holdout run's own output directory, below). `denyRead`
+  also lists every `sealed` row of `.dsh/frozen-paths`; the human's whole output directory `./out` — the human's
+  `DSH_HOLDOUT_DIR=… ./mill prePush` compiles the holdout there, and it holds the human's server directory
+  `out/mill-daemon` (the agent cannot learn the port of a server it may not use); and the holdout module's output in
+  the agent's directory (`./<agentOutputDir>/<holdout output path>`), which holds holdout output written by an
+  engine older than `out-holdout`. The holdout output path (`dsh_holdout_out_path`) is the holdout command's selector
+  (its last word) without the final dotted segment, the rest joined with `/`: `holdout.test` → `holdout`,
+  `engine.holdout.test` → `engine/holdout` — never `engine`, which would deny the agent its own builds of every
+  `engine.*` module (in `out-holdout` the whole directory is denied, so the path needs no entry of its own). The
+  seed's values are the skreeep2 shape; edit them to the project's sealed rows and holdout selector.
+* `denyWrite`: the sandbox lets the agent write the working directory, and the hooks run outside it, so a sandboxed
+  write could replace what they run or trust. It lists `./.dsh/engine` (the engine, `mill-gate.sh` among it),
+  `./.dsh/contract`, `./.dsh/frozen-paths`, `./.claude`, `./<holdoutOutputDir>`, the physical `holdoutDir`, and
+  `./<path>` for each sealed row (the seed's `./holdout` and `./.dsh/.state/holdout.log`). The holdout output path in
+  the agent's directory needs no write denial.
+* `allowWrite`: lists the cache directories Mill and coursier need, and on macOS `/var/folders` where the JVM's temp
+  directory (`java.io.tmpdir`) is located — without it a cold Mill build fails inside the sandbox. Linux (where
+  `java.io.tmpdir` defaults to `/tmp`) is unmeasured.
+* Settings that switch the seal off: a non-empty `sandbox.excludedCommands` (those commands run outside the sandbox)
+  and `sandbox.enableWeakerNestedSandbox: true`. `.claude/settings.local.json` overrides `.claude/settings.json` key
+  by key, so check-harness reads the same keys there too: a local `sandbox.enabled`, `allowUnsandboxedCommands`,
+  `failIfUnavailable`, `env.MILL_OUTPUT_DIR`, `enableWeakerNestedSandbox` or `excludedCommands` that undoes the
+  project value is a FAIL naming that file, and so is a local file that is not valid JSON.
+* `env.MILL_OUTPUT_DIR` gives the agent's builds and server their own directory. An agent that overrides it
+  (`MILL_OUTPUT_DIR=out ./mill …`) reaches `./out`, which it cannot read, so its client fails rather than connecting.
+  `agentOutputDir = out` with a holdout line is a FAIL: the agent would build where the holdout is compiled.
+* `allowUnsandboxedCommands: false` makes Claude Code ignore `dangerouslyDisableSandbox`; `failIfUnavailable: true`
+  makes it exit rather than run unsandboxed when the sandbox cannot start; `allowLocalBinding` and the `allowWrite`
+  caches are what Mill needs to start inside the sandbox (measured: `version` 0.49 s, `core.compile` 0.95 s).
+* Add `/out-agent/` (the agent directory) and `/out-holdout/` (the holdout run's) to `.gitignore`.
+
+**`mill-gate.sh` and `dsh_gate_command`.** The gate must not leave a Mill server outside the sandbox, because a
+sandboxed client that found one would use it (measured: the holdout suite ran). So every Mill process the engine
+starts goes through `mill-gate.sh`, which runs the project's Mill (`./mill`, else `mill` on PATH) with `--no-daemon`
+first and `MILL_OUTPUT_DIR` set to the agent's directory, from the project root (it `cd`s there first, and exits 127
+when it cannot); it shares the agent's compile cache, so the gate checks what the agent built. The agent's directory
+is `agentOutputDir`, default `out-agent` when the contract has a `holdout =` line and `out` when it has none: a
+project with nothing sealed keeps the one output directory it always had. **The holdout run builds elsewhere:** when
+`DSH_HOLDOUT_DIR` is set and non-empty (only `turn-end`'s holdout run has it; the hooks unset an inherited one),
+`mill-gate.sh` sets `MILL_OUTPUT_DIR` to `holdoutOutputDir` (`dsh_holdout_output_dir`, default `out-holdout`, validated
+like `agentOutputDir`: an invalid value falls back to `out-holdout` and check-harness FAILs). Measured with Mill
+1.1.8: a `--no-daemon` run writes `<output dir>/mill-console-tail` with the console's last lines, and after a failing
+holdout it held verbatim holdout source — in the agent's directory the agent could read it. Two routes:
+
+* **direct calls** (module-map, post-edit, turn-end): `resolve_mill` returns `<engine>/mill-gate.sh`;
+* **contract commands** (`turnEndTests`, `fastTests`, `holdout`): `dsh_gate_command <cmd> <engine dir>` replaces the
+  leading `./mill` or `mill` word (after leading blanks and `NAME=value` assignments, which stay in front) with the
+  single-quoted wrapper path. A command whose first word is anything else runs as written, and check-harness notes it.
+  **One Mill per contract command:** only the first Mill can be routed, so a command that starts another `./mill` or
+  `mill` after `&&`, `||`, `;` or `|` (`./mill core.compile && ./mill holdout.test`) makes `dsh_gate_command` return 2,
+  and check-harness FAILs it. Split it, or make it one `./mill` call (`./mill a.test | tee x` is one Mill).
+  **The `holdout` command is exactly one `./mill` call:** its exit status is the verdict, so for the `holdout` key
+  alone check-harness FAILs any `|`, `;`, `&&`, `||` or `&` (`./mill holdout.test || true` would fake a pass, and
+  `| tee x` reports tee's status). Other keys keep the rule above.
+
+Cost, measured on a scratch clone: `--no-daemon` `core.compile` 2 s against 1-2 s on a server (measured +28 s per
+turn-end on skreeep2). The holdout run (the `DSH_HOLDOUT_CAP` cap applies) runs outside the sandbox, as hooks do, and its
+output (classes, reports, `mill-console-tail`) lands in `./<holdoutOutputDir>`, which the agent can neither read nor
+write. That directory is a second cold compile cache (one full compile the first time).
+
+**The holdout report.** The run's output is never trusted: a test can print any line, including totals and suite
+names. `turn-end` reports the run's exit status and only names it can verify (`dsh_holdout_verify`):
+
+* **The allowlist.** Once per completed run, the hook (unsandboxed) collects the string literals that are the FIRST
+  argument of `test(`, `pureTest(`, `loggedTest(`, `simpleTest(` or `property(` in the regular files under `holdoutDir`
+  (`find -type f`: symlinks are not followed; `\"` and `\\` unescaped). Interpolated (`s"…"`) and multi-line names
+  never enter it: they fail closed, shown as unverified.
+* **Empty allowlist:** no test declaration under `holdoutDir` (emptied, never filled, or an unusual declaration style)
+  → `holdout: not verified — no test declarations under holdoutDir`, whatever the exit status — 0 included: an empty
+  holdout is never a pass.
+* exit 0 (allowlist not empty): `holdout: passed`.
+* otherwise each failing line `- <name>` the runner printed after a suite line is kept only when its test name
+  (everything after the first dot of `<Suite>.<test>`) EQUALS an allowlist entry as a whole string (`grep -Fxq`); a
+  fragment of holdout source (`{`, an assertion line, a substring of a name) never verifies. Only the test name is
+  printed, never the suite part (the runner's text). At most 1000 failure lines are examined (the rest count as
+  unverified). The report is `holdout: failed — <k> verified failing name(s)`, then at most 20 names, each cut to 120
+  characters, `(<k-20> more verified, not shown)` past that, and always `unverified lines dropped: none`, `some`
+  (1–20) or `more than 20` — a bucket, not a count.
+* a run with no readable result: `holdout: did not complete (exit <n>)`; no usable `holdoutDir`: `holdout: not
+  verified — <reason>`.
+* **Failing names need weaver-style output:** a suite line, then `- <name>` lines (weaver; `dsh_weaver_failures`
+  reads it). Other frameworks' output (munit's `==> X` lines) is not read: a failing run reports its exit status only,
+  as `holdout: did not complete (exit <n>)` (the result is unreadable), with the full output in the sealed log.
+
+No passed count is ever printed. The receipt row (`.dsh/.state/receipts`) is `holdout`, the exit status, `k`, the head and
+the time, with `-` `-` when the run gave no verdict. The full output stays in the human's `.dsh/.state/holdout.log`.
+
+**check-harness** (rows from `dsh_sandbox_checks`):
+
+| Row | Verdict |
+|---|---|
+| no `holdout =` line | one note: the sandbox is not required |
+| `agentOutputDir` not a plain relative path | FAIL (the engine uses `out-agent`) |
+| `agentOutputDir` resolves to `out` | FAIL: the agent would build where the holdout is compiled (the human's `prePush`) |
+| `holdoutOutputDir` not a plain relative path | FAIL (the engine uses `out-holdout`) |
+| `holdoutOutputDir` equals the agent directory | FAIL: the holdout run's output would be the agent's |
+| `.claude/settings.json` missing | FAIL: copy `.dsh/cc-settings.json` there |
+| neither `jq` nor `python3` on PATH, or the file is not valid JSON | FAIL |
+| `.claude/settings.local.json` is not valid JSON | FAIL |
+| `sandbox.enabled`, `allowUnsandboxedCommands`, `failIfUnavailable`, `network.allowLocalBinding` | ok, or FAIL naming the line to add — or, when `.claude/settings.local.json` overrides the key with another value, FAIL naming that file |
+| `env.MILL_OUTPUT_DIR` equals the agent directory | ok, or FAIL (naming `.claude/settings.local.json` when it overrides it) |
+| `sandbox.excludedCommands` (either file) | ok when absent or empty, else FAIL: those commands run outside the sandbox |
+| `sandbox.enableWeakerNestedSandbox` | ok unless `true`, then FAIL (naming `.claude/settings.local.json` when it sets it) |
+| `denyRead`, `denyWrite`, `allowWrite` not a JSON array | FAIL `<key> must be a JSON array` |
+| `holdoutDir` absent, not absolute or `../`, not an existing directory, or the repository root, inside it, or containing it | FAIL (no holdout is run) |
+| `denyRead` has `./out` (the whole directory; `./out/mill-daemon` alone is not enough), `./<holdoutOutputDir>`, `./<dir>/<holdout output path>`, the physical `holdoutDir`, and `./<path>` for each sealed row | one ok or FAIL per entry |
+| `denyWrite` has `./.dsh/engine`, `./.dsh/contract`, `./.dsh/frozen-paths`, `./.claude`, `./<holdoutOutputDir>`, the physical `holdoutDir`, and `./<path>` for each sealed row | one ok or FAIL per entry |
+| `git ls-files` lists a file under a sealed row | FAIL: its content is readable from `.git`; `git rm --cached` it and keep the holdout in `holdoutDir` |
+| `env.DSH_*` in `.claude/settings.json` or `.claude/settings.local.json` | FAIL: settings `env` reaches the hooks; DSH_* variables are the engine's seams |
+| `allowWrite` lacks a Mill/coursier cache or `/var/folders` (macOS) | note (the build fails loudly, or without `/var/folders` the JVM cannot write its temp directory) |
+| the agent directory or the holdout output directory is not git-ignored | note |
+| `turnEndTests` or `fastTests` does not start with `./mill`/`mill` | note: a server it starts is outside the seal |
+| `holdout` does not start with `./mill`/`mill` | FAIL: the engine cannot route it, and the holdout run must be one `./mill` call |
+| `turnEndTests`, `fastTests` or `holdout` runs Mill more than once | FAIL: only its first `./mill` can be routed |
+| `holdout` contains `\|`, `;`, `&&`, `\|\|` or `&` | FAIL: not exactly one `./mill` call — its exit status is the verdict |
+| `.mcp.json` exists, or `.claude/settings.json` has `mcpServers` | note: MCP servers run outside the sandbox |
+
+**health** (SessionStart; only with a holdout line): one note when the seal is text-only in this session:
+`DSH harness: note -- the holdout seal is text-only in this session: no OS sandbox on this platform (<uname>); see
+.dsh/engine/README.md "Structural holdout seal"` (macOS without `sandbox-exec`; Linux without `bwrap` and `socat`;
+native Windows) or `…: <file> does not enable the sandbox; run sh .dsh/engine/check-harness.sh`, where `<file>` is
+`.claude/settings.local.json` when that file sets `sandbox.enabled` (it overrides the project file), else
+`.claude/settings.json`. `DSH_SANDBOX_PROBE` `ok` or `none` replaces the platform probe and any other value runs it;
+it is a test seam, not a setting.
+
+**Residuals, stated.** The seal is the OS layer under the agent's shell commands and the processes they start, no more:
+
+* Code the gate runs unsandboxed, namely `build.mill` and the agent's production code executed by the holdout run, can
+  read `holdoutDir` if it knows the path (it is in the contract, which the agent can read). The holdout run's output
+  reaches the agent only as verified names and a bucketed dropped count, but a hostile test target can still leak
+  through WHICH declared names it fails. Closing this needs the gate's Mill confined by a deny-default OS profile.
+  That was tried (sandbox-exec profiles) and withdrawn: they proved escapable.
+* The same unsandboxed code can also WRITE or DELETE `holdoutDir` and so force the verdict: an emptied directory now
+  reports `not verified` (no test declarations), but production code that special-cases the holdout tests (or rewrites
+  them) reports `passed`. **`holdout: passed` is not trustworthy against hostile production code.** Keep `holdoutDir`
+  under version control outside the repository (so a change shows) and, where possible, read-only for the user the
+  gate runs as.
+* The report reveals which declared test names failed (by design), so agent code can probe the set of declared names
+  across turns; `k` and the dropped-count bucket are small additional channels.
+* Content committed before the move stays in git history (see the history caveat above).
+* The human's terminal server in `out/` stays reachable through `localhost` by an agent that guesses its port and
+  speaks Mill's protocol; `socketPort` is unreadable to it. Documented, not solved.
+* Claude Code's file tools are not sandboxed; `semantic-guard`'s sealed-path refusal stays their layer (and `holdoutDir`
+  is outside the repository, so only the sandbox's deny entries and the text rules protect it from them).
+* MCP servers (and hooks) run outside the sandbox: an MCP tool that runs Mill or reads `holdoutDir` would reopen the
+  bypass. check-harness notes it when `.mcp.json` exists or `.claude/settings.json` has `mcpServers`.
+* A new library dependency downloaded inside the sandbox may fail (the JVM ignores the proxy variables); the remedy is
+  the human running `MILL_OUTPUT_DIR=out-agent ./mill --no-daemon <m>.compile` once in a terminal. Not yet measured.
+* Native Windows has no sandbox: the seal stays text-only and `health` says so.
 
 ## Blind spots
 
@@ -401,7 +606,9 @@ frozen finding like any other block.
   run time; only a sandbox closes this.
 * **Computed paths, and an interpreter run from a script file rather than inline, are not caught by either text
   rule** (`deny_frozen_operand`'s and `deny_frozen_interp`'s own messages name this) — the post-hoc turn-end check
-  is the layer that answers for both.
+  is the layer that answers for both. For the **sealed holdout**, a run-time-built selector or a non-shell
+  interpreter reaches the suite only where the sandbox is off (see [Structural holdout seal](#structural-holdout-seal));
+  with the sandbox on, the OS refuses the read or run.
 * **Wrappers are seen through with their own options** (the wrapper-bypass fix): `env [-i] [-u NAME] [NAME=value]…`,
   `timeout [-s SIG] [-k DUR] DURATION`, `nice [-n N]`, `time [-p]`, `sudo [-u USER] [-E]…`, `nohup`, `exec [-a NAME]`,
   `stdbuf -oL`, `ionice`, `xargs` with its value-taking options, `busybox <applet>`, chains of them, and a leading
@@ -540,7 +747,7 @@ this gate exists to remove.
 **Every NOTE the gate can print, and what it means** (the table is the whole set: every `dnote` and
 every `section note` in `verify-diff.sh`, the bare lines it prints before its section machinery runs,
 and every non-blocking section `turn-end.sh` files — its own `section note` calls and the headers of
-its `vd_note`/`rw_note`/`vk_note` — plus the two notes vendoring added, printed by `health` and by the non-Mill
+its `vd_note`/`rw_note`/`vk_note` — plus the two notes vendoring added and the holdout-seal note, printed by `health` and by the non-Mill
 stand-down. A NOTE not listed here is a bug in this table). **Kind** is the split above:
 a *finding* is something wrong the agent can fix; a *degradation* is "this was not checked", and never
 promotes to a block. The `<module>`, `<check>` and `N` parts of a title are filled in at run time.
@@ -578,6 +785,7 @@ promotes to a block. The `<module>`, `<check>` and `N` parts of a title are fill
 | `frozen ignored paths not compared` | turn-end | degradation | the git-ignored frozen-file record (`.dsh/.state/frozen/<key>.tsv`) could not be fully compared this turn: no sha256 tool, the record itself is `incomplete:` (SessionStart could not hash every git-ignored frozen file), or the ignored-file list could not be re-enumerated to catch one ADDED since SessionStart. The rows it did record (or list) were still compared. See [Frozen paths: what is caught where](#frozen-paths-what-is-caught-where). |
 | `vendored engine does not match its stamp` | health | degradation | the vendored `.dsh/engine/` is missing its `STAMP`, no longer matches it, or cannot be hashed (the parenthesis says which). The gate still runs; `sh .dsh/engine/check-harness.sh` FAILs on the same condition. Remedy: re-run `install.sh` from a scala-llm-template checkout. |
 | `gate engine supports Mill builds only` | health, post-edit, turn-end | degradation | positive evidence of another build tool (`found: build.sbt` or `found: project.scala`, and no `build.mill` or `./mill`): the Mill checks stand down, named. At turn-end, diff-scoped verification has already run. See [Non-Mill projects](#non-mill-projects). |
+| `the holdout seal is text-only in this session` | health | degradation | the contract has a `holdout =` line but the OS sandbox does not back it: the platform has none (`no OS sandbox on this platform (<uname>)`) or `.claude/settings.json` does not enable it. Only the text rules stand. See [Structural holdout seal](#structural-holdout-seal). |
 | `vericoding: <m> — <N> verification condition(s) unknown (solver timeout)` | turn-end | finding | Stainless could neither prove nor refute these VCs within its per-VC timeout; each is listed as `<file>:<l>:<c>  <fn>  <vc kind>  (timeout)`. The human decides whether to accept them. See [Vericoding](#vericoding-contracts-are-the-humans-stainless-checks-the-body). |
 | `vericoding: no contract snapshot for <files>` | turn-end | degradation | the session's contract snapshot does not cover these touched kernels (recorded `incomplete: <reason>`, which the body quotes, or registered since), so their contracts were not compared. Stainless still runs. |
 | `vericoding: contract guard stood down` | turn-end | degradation | `contract_clauses` could not be asked or read: no launcher, a failed call, a per-file error, no JSON reader, or an answer that is not JSON. Contracts were not compared; Stainless still runs. |

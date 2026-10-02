@@ -1,0 +1,4 @@
+preCommit  = ./mill -j 1 preCommit
+holdout = ./mill -j 1 --ticker false holdout.test
+turnEndTests = ./mill -j 1 --ticker false engine.details.test
+holdoutDir = ../t12-nonexistent

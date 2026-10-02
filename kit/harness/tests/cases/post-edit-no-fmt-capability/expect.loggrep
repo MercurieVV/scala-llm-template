@@ -1,3 +1,3 @@
-mill --ticker false --color false backend.api.fix --check
-mill --ticker false --color false backend.api.fixStrict
-mill --ticker false --color false backend.api.compile
+mill --no-daemon --ticker false --color false backend.api.fix --check
+mill --no-daemon --ticker false --color false backend.api.fixStrict
+mill --no-daemon --ticker false --color false backend.api.compile

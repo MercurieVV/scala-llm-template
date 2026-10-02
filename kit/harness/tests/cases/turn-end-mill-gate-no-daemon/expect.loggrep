@@ -1,0 +1,1 @@
+mill --no-daemon --ticker false --color false engine.details.compile

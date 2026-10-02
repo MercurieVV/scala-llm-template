@@ -438,6 +438,58 @@ verifies in the tool, but the gate blocks it as not implemented.
 How this recipe was checked: [`mill/stainless-feasibility.md`](mill/stainless-feasibility.md) — the scratch assembly,
 per-file exits, the K1–K3 pilot verdicts, and the output line patterns the engine parses.
 
+## 9. The holdout seal (when the contract has a `holdout =` line)
+
+The engine runs every Mill it starts through `mill-gate.sh` (`--no-daemon`, in `out-agent/`; the holdout run alone in
+`out-holdout/`), and the agent's own
+Mill server runs inside Claude Code's sandbox with the holdout unreadable. Four human steps, none of which the agent can do:
+
+1. Copy the `env` and `sandbox` blocks of `.dsh/cc-settings.json` into `.claude/settings.json`. Adjust `denyRead` to
+   the project's sealed rows and holdout target (the whole `./out`, `./out-holdout`, `./out-agent/<holdout target>`,
+   and each `sealed` row of `.dsh/frozen-paths`); `denyWrite` keeps `./out-holdout`.
+2. Add `/out-agent/` and `/out-holdout/` to `.gitignore`.
+3. Run `sh .dsh/engine/check-harness.sh`; every sandbox row must be ok (a note is fine, a FAIL names the line to add).
+4. The first agent build fills `out-agent/` (a full compile once). A terminal `./mill` keeps using `out/` and its own
+   server, which the agent cannot reach by reading its port. If a new dependency fails to download inside the sandbox, run
+   `MILL_OUTPUT_DIR=out-agent ./mill --no-daemon <module>.compile` once in a terminal.
+
+Contract commands (`turnEndTests`, `fastTests`, `holdout`) should start with `./mill` or `mill` so the engine can route
+them through the wrapper; check-harness FAILs a `holdout` that does not (the other keys are only noted). The `holdout`
+command must be exactly one `./mill` call — no `|`, `;`, `&&`, `||`, `&` (its exit status is the verdict; `|| true`
+would fake a pass). `agentOutputDir` in the contract renames `out-agent` and must match `env.MILL_OUTPUT_DIR`;
+`holdoutOutputDir` renames `out-holdout`, the directory of the gate's holdout run (Mill `--no-daemon` writes
+`mill-console-tail` there, holdout source after a failing run, so it is never the agent's). Full description and residuals: `kit/harness/README.md`, "Structural holdout seal".
+
+### Holdout outside the repository (`HoldoutModule`)
+
+A holdout kept in the repository is readable by anything that can read the repository. The seal's strongest form keeps
+the tests outside it:
+
+1. Set `holdoutDir` in the contract to an absolute path, or a `../` path, outside the repo. The engine passes it to the
+   gate as `DSH_HOLDOUT_DIR`.
+2. Deny it in the sandbox settings: put the directory in both `denyRead` and `denyWrite`. The entry must be the
+   PHYSICAL absolute path `check-harness` prints (symlinks resolved, e.g. `/tmp` is `/private/tmp` on macOS); a
+   symlinked spelling does not match.
+3. Move the holdout module to `HoldoutModule` (`kit/recipes/mill/Gate.mill`): `object test extends ScalaTests with
+   TestModule.Munit with HoldoutModule`. Its sources are only the directory named by `DSH_HOLDOUT_DIR`, read as a Mill
+   task input (a changed variable or an edited test invalidates); with the variable unset there are no sources and
+   `compile`/`test` succeed with zero tests. **Note:** the gate reports failing holdout NAMES only from weaver-style
+   output (a suite line, then `- <name>` lines; declare tests with `test(`/`pureTest(`/`loggedTest(`/`simpleTest(`/
+   `property(` and a literal name). With munit, as in this example, a failing holdout reports its exit status only
+   (`holdout: did not complete`, the result unreadable); use `TestModule.Weaver` (weaver-cats) for names. A
+   `holdoutDir` with no such declaration reports `holdout: not verified`.
+4. Write NEW holdout tests in `holdoutDir`. Anything ever committed stays in git history and is not sealed, so
+   existing holdout tests cannot be moved there; write fresh ones.
+5. `git rm` the old in-repo holdout sources.
+6. The human runs the holdout with the variable set: `DSH_HOLDOUT_DIR=<holdoutDir> ./mill prePush` (or exports it in
+   their own terminal or git hook). Without it `HoldoutModule` has no sources and `prePush` silently runs ZERO holdout
+   tests. NEVER put it in the `env` of `.claude/settings.json`: the agent would see it. A relative value or a missing
+   directory fails the task. That command builds in `./out`, so the compiled holdout lands in `./out/<holdout>`: the
+   settings deny the agent the whole `./out` (check-harness FAILs without it).
+
+Checked by `kit/harness/tests/holdout-module-test.sh` (real Mill 1.1.8 scratch build: unset gives zero tests, a passing
+test runs, a failing test fails the run; skipped without `mill`).
+
 ## What this does not decide (R-11)
 
 A green `fix --check` says the modules name allowlisted types and use no denylisted construct. It does not say the

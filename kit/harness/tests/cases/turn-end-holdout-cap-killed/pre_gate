@@ -1,0 +1,8 @@
+#!/bin/sh
+# holdoutDir is a real directory outside the scratch root; post_gate removes it.
+mkdir -p "$SCRATCH_ROOT.holdout"
+# Unique per scratch root (parallel runs share TMPDIR): point the contract at it.
+sed "s|^holdoutDir = .*|holdoutDir = $SCRATCH_ROOT.holdout|" .dsh/contract > .dsh/contract.tmp && mv .dsh/contract.tmp .dsh/contract
+# A sleep length unique to this run: post_gate's process check must not see a concurrent run's sleep.
+n=$((20000 + $$ % 10000)); echo "$n" > sleep-n
+sed "s|^holdout = .*|holdout = sleep $n|" .dsh/contract > .dsh/contract.tmp && mv .dsh/contract.tmp .dsh/contract

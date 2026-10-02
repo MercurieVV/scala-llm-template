@@ -1,1 +1,1 @@
-mill --ticker false --color false engine.details.fixStrict
+mill --no-daemon --ticker false --color false engine.details.fixStrict

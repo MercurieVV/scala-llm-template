@@ -1,0 +1,7 @@
+#!/bin/sh
+# A dirty path that predates the session (skipped) plus a brand-new file the session created (always
+# checked, because it is absent from the baseline record).
+printf '\n// pre-existing work, not this session\x27s\n' >> engine/details/src/A.scala
+engine=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+GATE_ROOT="$PWD" "${GATE_SH:-sh}" "$engine/gate.sh" baseline < "$(dirname -- "$0")/payload.json" || exit 1
+printf 'package x\nobject New { val  a=1 }\n' > engine/details/src/New.scala

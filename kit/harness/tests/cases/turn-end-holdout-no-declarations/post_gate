@@ -1,0 +1,5 @@
+#!/bin/sh
+rm -rf "$SCRATCH_ROOT.holdout"
+if grep -q 'holdout: passed' "$GATE_OUT_FILE"; then echo "FAIL: an empty allowlist reported passed"; exit 1; fi
+grep -q '^holdout	-	-	' .dsh/.state/receipts || { echo "FAIL: receipt should carry -	-"; cat .dsh/.state/receipts; exit 1; }
+echo "post_gate: an empty allowlist is not a pass"

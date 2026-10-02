@@ -1,0 +1,5 @@
+#!/bin/sh
+# holdoutDir is a real directory outside the scratch root; post_gate removes it.
+mkdir -p "$SCRATCH_ROOT.holdout"
+# Unique per scratch root (parallel runs share TMPDIR): point the contract at it.
+sed "s|^holdoutDir = .*|holdoutDir = $SCRATCH_ROOT.holdout|" .dsh/contract > .dsh/contract.tmp && mv .dsh/contract.tmp .dsh/contract

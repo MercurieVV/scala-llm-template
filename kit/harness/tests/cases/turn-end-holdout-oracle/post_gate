@@ -1,0 +1,6 @@
+#!/bin/sh
+rm -rf "$SCRATCH_ROOT.holdout"
+for t in LEAK 'assert(' '  - {' '  - t$' 'and more'; do
+  if grep -q -- "$t" "$GATE_OUT_FILE"; then echo "FAIL: leaked $t"; exit 1; fi
+done
+echo "post_gate: no oracle"

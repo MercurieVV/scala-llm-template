@@ -1,5 +1,6 @@
 #!/bin/sh
+rmdir "$SCRATCH_ROOT.holdout" 2>/dev/null
 # Killed at its cap: no counts, the receipt still written, and nothing left running.
 grep -q '^holdout	-	-	' .dsh/.state/receipts || { echo "FAIL: receipt missing"; cat .dsh/.state/receipts; exit 1; }
-if ps -ax -o command= 2>/dev/null | grep -q '^sleep 30$'; then echo "FAIL: holdout still running"; exit 1; fi
+if ps -ax -o command= 2>/dev/null | grep -q "^sleep $(cat sleep-n)$"; then echo "FAIL: holdout still running"; exit 1; fi
 echo "post_gate: killed and recorded"

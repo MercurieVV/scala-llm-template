@@ -1,4 +1,4 @@
-mill --ticker false --color false engine.details.checkFormat
-mill --ticker false --color false engine.details.fix --check
-mill --ticker false --color false engine.details.fixStrict
-mill --ticker false --color false engine.details.compile
+mill --no-daemon --ticker false --color false engine.details.checkFormat
+mill --no-daemon --ticker false --color false engine.details.fix --check
+mill --no-daemon --ticker false --color false engine.details.fixStrict
+mill --no-daemon --ticker false --color false engine.details.compile

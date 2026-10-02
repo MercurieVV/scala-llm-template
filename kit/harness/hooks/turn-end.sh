@@ -107,6 +107,8 @@ set -u
 te_start=$(date +%s 2>/dev/null) || te_start=''
 here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$here/lib.sh"
+# An inherited DSH_HOLDOUT_DIR must not reach an unsandboxed Mill run: only the gate's holdout run sets it (turn-end.sh).
+unset DSH_HOLDOUT_DIR
 
 root=$(gate_root)
 st=$(state_dir)
@@ -1133,6 +1135,7 @@ te_run() {
   te_mod=$1; te_origin=$2
   te_from=''; [ -n "$te_origin" ] && te_from=" (downstream of $te_origin)"
   te_cmd=$(dsh_contract_for_module turnEndTests "$te_mod" "$root") || return 0
+  te_cmd=$(dsh_gate_command "$te_cmd" "$here")
   if [ "$te_stopped" = 1 ]; then te_left=$((te_left + 1)); te_left_ids="$te_left_ids $te_mod"; return 0; fi
   if [ "$te_budget_out" = 1 ]; then
     te_left=$((te_left + 1))
@@ -1368,7 +1371,7 @@ $vk_m: remove the assume/@extern/@ignore added to $vk_p; only the human adds one
   rm -f "$tmpd/vk-rc"
   if dsh_bounded_probe "$vk_cap" "$tmpd/vk-out" "$tmpd/vk-err" \
        sh -c '"$@" 2>&1; printf "%s" "$?" > "$0"' "$tmpd/vk-rc" \
-       "$mill" --no-server --ticker false --color false "$vk_m.stainlessVerify" --targets "$vk_targets"; then
+       "$mill" --ticker false --color false "$vk_m.stainlessVerify" --targets "$vk_targets"; then
     vk_rc=$(cat "$tmpd/vk-rc" 2>/dev/null)
     case "$vk_rc" in ''|*[!0-9]*) vk_rc=1 ;; esac
     vk_v=$(dsh_stainless_verdict "$tmpd/vk-out" "$vk_rc" "$vk_targets")
@@ -1534,6 +1537,7 @@ fi
 # agent only how many passed and which NAMES failed -- an oracle it can act on but not memorise.
 # It is a SIGNAL, not a block: exit stays 0; `prePush` (the human's gate) is where it blocks.
 holdout_cmd=$(dsh_contract_get holdout "$root" 2>/dev/null) || holdout_cmd=''
+[ -n "$holdout_cmd" ] && holdout_cmd=$(dsh_gate_command "$holdout_cmd" "$here")
 if [ -n "$holdout_cmd" ]; then
   mkdir -p "$st" 2>/dev/null
   holdout_log="$st/holdout.log"
@@ -1552,28 +1556,60 @@ if [ -n "$holdout_cmd" ]; then
   esac
   [ "$ho_left" -lt "$ho_cap" ] && ho_cap=$ho_left
   holdout_report=''
-  if [ "$ho_left" -le 10 ]; then
+  # The holdout sources live outside the repository (spec 2026-10-02 §10): only this run is told where, by a
+  # command-prefix assignment inside the probe -- never exported here, so no other command of the hook sees it.
+  ho_dir=$(dsh_holdout_dir "$root" 2>/dev/null); ho_dir_rc=$?
+  if [ "$ho_dir_rc" != 0 ]; then
+    # No usable holdoutDir (absent, missing, or inside the repository): the holdout is not run at all.
+    if [ "$ho_dir_rc" = 1 ]; then ho_why='holdoutDir is absent from .dsh/contract'; else ho_why=$ho_dir; fi
+    ho_dir=''
+    holdout_report="holdout: not verified — $ho_why"
+  elif [ "$ho_left" -le 10 ]; then
     holdout_report="holdout: not started — the Stop hook's budget ($ho_left s of the $ho_budget s were left); not verified this turn"
   else
     rm -f "$tmpd/ho-rc"
     if dsh_bounded_probe "$ho_cap" "$holdout_log" "$tmpd/ho-err" \
-         sh -c 'cd "$1" && sh -c "$2" 2>&1; printf "%s" "$?" > "$3"' _ "$root" "$holdout_cmd" "$tmpd/ho-rc"; then
+         sh -c 'cd "$1" && unset DSH_HOLDOUT_DIR && if [ -n "$4" ]; then DSH_HOLDOUT_DIR=$4 sh -c "$2" 2>&1; else sh -c "$2" 2>&1; fi; printf "%s" "$?" > "$3"' _ "$root" "$holdout_cmd" "$tmpd/ho-rc" "$ho_dir"; then
       holdout_exit=$(cat "$tmpd/ho-rc" 2>/dev/null)
       [ -n "$holdout_exit" ] || holdout_exit=1
     else
       holdout_report="holdout: did not finish within $ho_cap s — not verified (DSH_HOLDOUT_CAP, default 120, bounded by what was left of DSH_STOP_BUDGET); the partial output is the human's .dsh/.state/holdout.log"
     fi
   fi
+  # The receipt row is `holdout TAB <exit status> TAB <k> TAB <head> TAB <ts>`: the holdout command's exit
+  # status and k, the number of failing names verified against the holdoutDir sources (spec §10.2 item 4).
+  # No passed/failed total is ever taken from the run's output -- a test can print anything -- so the report
+  # states the exit status and only the names that equal a declared test-name literal under holdoutDir
+  # (dsh_holdout_verify). `-<TAB>-` when the run gave no verdict (not started, not verified, capped).
   holdout_counts="-	-"
   if [ -z "$holdout_report" ]; then
-    holdout_report=$(dsh_weaver_failures <"$holdout_log")
-    holdout_counts=$(printf '%s\n' "$holdout_report" | sed -n '1s/^holdout: \([0-9]*\) passed, \([0-9]*\) failed$/\1	\2/p')
-    [ -n "$holdout_counts" ] || holdout_counts="-	-"
-    # A run that did not complete (compile error, crash, a missing tool) leaves no result to read; the
-    # exit status is the one fact this side may pass on -- the text stays in the sealed log. A weaver
-    # run with failures ALSO exits non-zero, so the exit is reported only when the filter read nothing.
-    if [ "$holdout_exit" != 0 ] && [ "$holdout_report" = "holdout: result unreadable" ]; then
+    ho_filtered=$(dsh_weaver_failures <"$holdout_log")
+    # The allowlist is built on every completed run, the exit-0 one included: a holdoutDir that declares no test
+    # (emptied, or never filled) verifies nothing, and its exit 0 is not a pass (spec §10.5.4).
+    ho_v=$(printf '%s\n' "$ho_filtered" | dsh_holdout_verify "$ho_dir")
+    ho_d=$(printf '%s\n' "$ho_v" | sed -n 's/^declared //p')
+    if [ "${ho_d:-0}" = 0 ]; then
+      holdout_report="holdout: not verified — no test declarations under holdoutDir"
+    elif [ "$holdout_exit" = 0 ]; then
+      holdout_report="holdout: passed"
+      holdout_counts="0	0"
+    elif [ "$ho_filtered" = "holdout: result unreadable" ]; then
+      # A run that did not complete (compile error, crash, a missing tool) leaves no result to read; the
+      # exit status is the one fact this side may pass on -- the text stays in the sealed log.
       holdout_report="holdout: did not complete (exit $holdout_exit) — see the human's .dsh/.state/holdout.log"
+    else
+      ho_k=$(printf '%s\n' "$ho_v" | sed -n 's/^verified //p')
+      ho_u=$(printf '%s\n' "$ho_v" | sed -n 's/^unverified //p')
+      holdout_report="holdout: failed — $ho_k verified failing name(s)"
+      ho_names=$(printf '%s\n' "$ho_v" | grep '^  - ')
+      [ -z "$ho_names" ] || holdout_report="$holdout_report
+$ho_names"
+      [ "$ho_k" -le 20 ] || holdout_report="$holdout_report
+  ($((ho_k - 20)) more verified, not shown)"
+      if [ "$ho_u" = 0 ]; then ho_b=none; elif [ "$ho_u" -le 20 ]; then ho_b=some; else ho_b='more than 20'; fi
+      holdout_report="$holdout_report
+unverified lines dropped: $ho_b"
+      holdout_counts="$holdout_exit	$ho_k"
     fi
   fi
   holdout_head=$(git -C "$root" rev-parse --short HEAD 2>/dev/null || printf -- -)

@@ -1,0 +1,2 @@
+MILL_STUB_HOLDOUT_ENV_LOG=$SCRATCH_ROOT/hoenv.log
+DSH_HOLDOUT_DIR=/inherited/elsewhere

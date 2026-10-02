@@ -1,0 +1,3 @@
+#!/bin/sh
+# settings.local.json is commonly git-ignored, so the case writes it rather than shipping it.
+printf '{"sandbox":{"enabled":false}}\n' > .claude/settings.local.json

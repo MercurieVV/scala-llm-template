@@ -1,0 +1,4 @@
+#!/bin/sh
+rmdir "$SCRATCH_ROOT.holdout" 2>/dev/null
+grep -q -- '--no-daemon -j 1 --ticker false holdout.test' "$MILL_STUB_LOG" || { echo FAIL; exit 1; }
+echo ok

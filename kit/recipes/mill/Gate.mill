@@ -152,6 +152,31 @@ trait GateLayer extends ScalafixModule {
   }
 }
 
+/** A module whose sources come ONLY from the directory named by the environment variable `DSH_HOLDOUT_DIR`
+  * (structural holdout seal, spec 2026-10-02 §10.2). Mix it into the holdout test module:
+  * `object test extends ScalaTests with TestModule.Munit with HoldoutModule`. The gate reports failing NAMES only
+  * from weaver-style output (`- <name>` lines after a suite line); with munit it reports the exit status only.
+  * The variable and the directory's content are a task input, so changing either invalidates `sources` and
+  * everything downstream. Unset (or empty) there are no sources: `compile` and `test` succeed with zero tests. Set,
+  * it must be an absolute path to an existing directory, else the task fails with a message (a relative value never
+  * resolves inside the repository). Nothing in the repository is read, so the holdout can live outside it and be
+  * denied to the agent.
+  */
+trait HoldoutModule extends JavaModule {
+  /** A `Task.Input`, re-evaluated on every run: the variable's value and the directory's content both feed the
+    * signature, so a changed variable or an edited holdout test invalidates (a cached `Task` would not rehash files).
+    */
+  override def sources: T[Seq[PathRef]] = Task.Input {
+    Task.env.get("DSH_HOLDOUT_DIR").filter(_.nonEmpty) match
+      case None => mill.api.Result.Success(Seq.empty[PathRef])
+      case Some(v) if !java.nio.file.Paths.get(v).isAbsolute =>
+        mill.api.Result.Failure(s"DSH_HOLDOUT_DIR must be an absolute path, got: $v")
+      case Some(v) if !os.isDir(os.Path(v)) =>
+        mill.api.Result.Failure(s"DSH_HOLDOUT_DIR does not name an existing directory: $v")
+      case Some(v) => mill.api.Result.Success(Seq(PathRef(os.Path(v))))
+  }
+}
+
 object Gate {
   def moduleId(module: Module): String = module.moduleSegments.parts.mkString(".")
 

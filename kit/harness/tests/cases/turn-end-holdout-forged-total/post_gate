@@ -1,0 +1,5 @@
+#!/bin/sh
+rm -rf "$SCRATCH_ROOT.holdout"
+if grep -q '9 passed' "$GATE_OUT_FILE"; then echo "FAIL: a forged total reached the agent"; exit 1; fi
+grep -q '^holdout	1	0	' .dsh/.state/receipts || { echo "FAIL: receipt should carry exit 1, k 0"; cat .dsh/.state/receipts; exit 1; }
+echo "post_gate: forged total not relayed"

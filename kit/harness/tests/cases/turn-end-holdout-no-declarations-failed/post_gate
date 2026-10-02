@@ -1,0 +1,7 @@
+#!/bin/sh
+rm -rf "$SCRATCH_ROOT.holdout"
+grep -q 'Expected true but got false' .dsh/.state/holdout.log || { echo "FAIL: full output not in holdout.log"; exit 1; }
+grep -q '^holdout	-	-	' .dsh/.state/receipts || { echo "FAIL: receipt should carry -	-"; cat .dsh/.state/receipts; exit 1; }
+if grep -q 'holdout: failed' "$GATE_OUT_FILE"; then echo "FAIL: a failed verdict without declarations"; exit 1; fi
+if grep -q 'stop releases device' "$GATE_OUT_FILE"; then echo "FAIL: a name reached the agent"; exit 1; fi
+echo "post_gate: no names and no failed verdict without declarations"

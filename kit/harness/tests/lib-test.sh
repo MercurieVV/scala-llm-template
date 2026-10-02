@@ -587,7 +587,7 @@ is "has_cap on a row whose only token is scalafix" "no" "$(capq 'scalafix' fmt)"
 mill_of() { # mill_of <root> <path> -> the resolved command, or NONE
   # The child's $1 is the repository (for lib.sh) and $2 is the root being resolved; the PATH
   # prefix is what the fallback searches, and in the "neither" case it holds no mill at all.
-  PATH="$2" /bin/sh -c '. "$1/lib.sh"; resolve_mill "$2" || printf NONE' _ "$engine" "$1"
+  PATH="$2" /bin/sh -c '. "$1/lib.sh"; here="$1" resolve_mill "$2" || printf NONE' _ "$engine" "$1"
 }
 mroot=$(mktemp -d)
 mkdir -p "$mroot/wrapped" "$mroot/bare" "$mroot/pathbin" "$mroot/emptybin"
@@ -596,13 +596,94 @@ chmod +x "$mroot/wrapped/mill"
 printf '#!/bin/sh\nexit 0\n' > "$mroot/bare/mill"        # present, but NOT executable
 printf '#!/bin/sh\nexit 0\n' > "$mroot/pathbin/mill"
 chmod +x "$mroot/pathbin/mill"
-is "resolve_mill prefers the repository's own executable wrapper" "./mill" \
+is "resolve_mill answers mill-gate.sh when the repository has its own executable wrapper" "$engine/mill-gate.sh" \
    "$(mill_of "$mroot/wrapped" "$mroot/pathbin")"
-is "resolve_mill falls back to a mill on PATH when the wrapper is not executable" "$mroot/pathbin/mill" \
+is "resolve_mill answers mill-gate.sh when only a mill on PATH exists" "$engine/mill-gate.sh" \
    "$(mill_of "$mroot/bare" "$mroot/pathbin")"
 is "resolve_mill answers nothing when there is neither (the caller fails closed)" "NONE" \
    "$(mill_of "$mroot/bare" "$mroot/emptybin")"
+is "resolve_mill answers nothing when here is unset" "NONE" \
+   "$(PATH="$mroot/pathbin" /bin/sh -c 'unset here; . "$1/lib.sh"; unset here; resolve_mill "$2" || printf NONE' _ "$engine" "$mroot/wrapped")"
+mkdir -p "$mroot/nogate"
+is "resolve_mill answers nothing when here has no mill-gate.sh" "NONE" \
+   "$(PATH="$mroot/pathbin" /bin/sh -c '. "$1/lib.sh"; here="$3" resolve_mill "$2" || printf NONE' _ "$engine" "$mroot/wrapped" "$mroot/nogate")"
 rm -rf "$mroot"
+real_of() { # real_of <root> <path> -> resolve_real_mill's answer, or NONE
+  PATH="$2" /bin/sh -c '. "$1/lib.sh"; resolve_real_mill "$2" || printf NONE' _ "$engine" "$1"
+}
+mroot=$(mktemp -d)
+mkdir -p "$mroot/wrapped" "$mroot/pathbin" "$mroot/emptybin"
+printf '#!/bin/sh\nexit 0\n' > "$mroot/wrapped/mill"; chmod +x "$mroot/wrapped/mill"
+printf '#!/bin/sh\nexit 0\n' > "$mroot/pathbin/mill"; chmod +x "$mroot/pathbin/mill"
+is "resolve_real_mill prefers the repository's own executable wrapper" "./mill" "$(real_of "$mroot/wrapped" "$mroot/pathbin")"
+is "resolve_real_mill falls back to a mill on PATH" "$mroot/pathbin/mill" "$(real_of "$mroot/emptybin" "$mroot/pathbin")"
+is "resolve_real_mill answers nothing when there is neither" "NONE" "$(real_of "$mroot/emptybin" "$mroot/emptybin")"
+rm -rf "$mroot"
+
+aod() { /bin/sh -c '. "$1/lib.sh"; dsh_agent_output_dir "$2"; printf "rc=%s\n" "$?"' _ "$engine" "$1"; }
+aodroot=$(mktemp -d); mkdir -p "$aodroot/.dsh"
+: > "$aodroot/.dsh/contract"
+is "agent dir: out when the contract has neither the key nor a holdout line" "out
+rc=0" "$(aod "$aodroot")"
+printf 'holdout = ./mill holdout.test\n' > "$aodroot/.dsh/contract"
+is "agent dir: out-agent when the contract has a holdout line and no key" "out-agent
+rc=0" "$(aod "$aodroot")"
+rm -f "$aodroot/.dsh/contract"
+is "agent dir: out without a contract at all" "out
+rc=0" "$(aod "$aodroot")"
+printf 'agentOutputDir = build-agent\n' > "$aodroot/.dsh/contract"
+is "agent dir: the contract key" "build-agent
+rc=0" "$(aod "$aodroot")"
+for bad in /abs/out '../out' 'out dir' 'a/../b' ''; do
+  printf 'agentOutputDir = %s\n' "$bad" > "$aodroot/.dsh/contract"
+  is "agent dir: invalid [$bad] falls back" "out-agent
+rc=3" "$(aod "$aodroot")"
+done
+rm -rf "$aodroot"
+# Ruling 29 C1: the gate's holdout run has its own output directory (Mill --no-daemon writes mill-console-tail there).
+hod() { /bin/sh -c '. "$1/lib.sh"; dsh_holdout_output_dir "$2"; printf "rc=%s\n" "$?"' _ "$engine" "$1"; }
+hodroot=$(mktemp -d); mkdir -p "$hodroot/.dsh"
+printf 'holdout = ./mill holdout.test\n' > "$hodroot/.dsh/contract"
+is "holdout output dir: out-holdout by default" "out-holdout
+rc=0" "$(hod "$hodroot")"
+rm -f "$hodroot/.dsh/contract"
+is "holdout output dir: out-holdout without a contract" "out-holdout
+rc=0" "$(hod "$hodroot")"
+printf 'holdoutOutputDir = build-holdout\n' > "$hodroot/.dsh/contract"
+is "holdout output dir: the contract key" "build-holdout
+rc=0" "$(hod "$hodroot")"
+for bad in /abs/out '../out' 'out dir' 'a/../b' ''; do
+  printf 'holdoutOutputDir = %s\n' "$bad" > "$hodroot/.dsh/contract"
+  is "holdout output dir: invalid [$bad] falls back" "out-holdout
+rc=3" "$(hod "$hodroot")"
+done
+rm -rf "$hodroot"
+# mill-gate.sh: MILL_OUTPUT_DIR is the holdout output dir only when DSH_HOLDOUT_DIR is set and non-empty.
+mgo=$(mktemp -d); mkdir -p "$mgo/.dsh"
+printf '#!/bin/sh\nprintf "%%s\\n" "$MILL_OUTPUT_DIR"\n' > "$mgo/mill"; chmod +x "$mgo/mill"
+printf 'holdout = ./mill holdout.test\n' > "$mgo/.dsh/contract"
+is "mill-gate.sh: the holdout run (DSH_HOLDOUT_DIR set) builds in out-holdout" "out-holdout" \
+   "$(GATE_ROOT="$mgo" DSH_HOLDOUT_DIR=/some/holdout sh "$engine/mill-gate.sh" x 2>&1)"
+is "mill-gate.sh: an empty DSH_HOLDOUT_DIR keeps the agent dir" "out-agent" \
+   "$(GATE_ROOT="$mgo" DSH_HOLDOUT_DIR= sh "$engine/mill-gate.sh" x 2>&1)"
+is "mill-gate.sh: no DSH_HOLDOUT_DIR keeps the agent dir" "out-agent" \
+   "$(unset DSH_HOLDOUT_DIR; GATE_ROOT="$mgo" sh "$engine/mill-gate.sh" x 2>&1)"
+printf 'holdout = ./mill holdout.test\nholdoutOutputDir = hold-out\n' > "$mgo/.dsh/contract"
+is "mill-gate.sh: the holdout run uses the contract's holdoutOutputDir" "hold-out" \
+   "$(GATE_ROOT="$mgo" DSH_HOLDOUT_DIR=/some/holdout sh "$engine/mill-gate.sh" x 2>&1)"
+rm -rf "$mgo"
+is "mill-gate.sh is executable" "yes" "$([ -x "$engine/mill-gate.sh" ] && echo yes || echo no)"
+# mill-gate.sh runs Mill FROM the root (resolve_real_mill answers the relative ./mill), whatever the caller's cwd.
+mgroot=$(mktemp -d); mkdir -p "$mgroot/r" "$mgroot/elsewhere" "$mgroot/bin"
+printf '#!/bin/sh\npwd -P\n' > "$mgroot/r/mill"; chmod +x "$mgroot/r/mill"
+printf '#!/bin/sh\necho path-mill\n' > "$mgroot/bin/mill"; chmod +x "$mgroot/bin/mill"
+is "mill-gate.sh cd's to the root before it runs ./mill" "$(cd "$mgroot/r" && pwd -P)" \
+   "$(cd "$mgroot/elsewhere" && GATE_ROOT="$mgroot/r" sh "$engine/mill-gate.sh" x 2>&1)"
+mg_out=$(cd "$mgroot/elsewhere" && GATE_ROOT="$mgroot/missing" PATH="$mgroot/bin:$PATH" sh "$engine/mill-gate.sh" x 2>&1)
+mg_rc=$?
+is "mill-gate.sh exits 127 when it cannot cd to the root" "127" "$mg_rc"
+has "mill-gate.sh names the root it cannot cd to" "mill-gate: cannot cd to $mgroot/missing" "$mg_out"
+rm -rf "$mgroot"
 
 # --- (i) the per-file coverage helpers (F72) -----------------------------------------------------
 # The read gate, the health probe and check-harness.sh all ask the same question -- which sources does
@@ -1157,6 +1238,38 @@ is "weaver: a real failing weaver run (ANSI, FAILURES banner, no Total line)" \
 is "weaver: pre-suite +/- noise before any header is never counted" \
   "holdout: 1 passed, 0 failed" \
   "$(printf -- '- a compiler note that looks like a marker 1ms\n+ another stray line\nRunning Test Class x.Y\n+ real pass 3ms\n' | wf)"
+
+hv() { /bin/sh -c '. "$1/lib.sh"; dsh_holdout_verify "$2"' _ "$engine" "$1"; }
+hvdir=$(mktemp -d); printf 'test("real one")\n' > "$hvdir/A.scala"
+is "holdout-verify: a name in a holdoutDir file is kept, a forged one dropped and counted" \
+  "  - real one
+verified 1
+unverified 1
+declared 1" \
+  "$(printf '  - S.real one\n  - S.forged text\n' | hv "$hvdir")"
+is "holdout-verify: a non-name line is ignored" "verified 0
+unverified 0
+declared 1" "$(printf 'holdout: 1 passed, 0 failed\n' | hv "$hvdir")"
+printf 'pureTest("say \\"hi\\"") { x }\ntest("stop") { assert(a == b) }\nproperty("prop one")\n' > "$hvdir/B.scala"
+is "holdout-verify: escaped quotes, property, whole-string equality only" \
+  "  - say \"hi\"
+  - stop
+  - prop one
+verified 3
+unverified 5
+declared 4" \
+  "$(printf '  - S.say "hi"\n  - S.stop\n  - S.prop one\n  - S.{\n  - S.t\n  - S.assert(a == b)\n  - S.stop and more\n  - S.stop) {\n' | hv "$hvdir")"
+rm -rf "$hvdir"
+# Ruling 29 M1: the declaration count lets the caller tell an empty holdoutDir (nothing to verify against) from a
+# run whose names were all forged.
+hvdir=$(mktemp -d); printf 'object Helper { val x = 1 }\n' > "$hvdir/Helper.scala"
+is "holdout-verify: a holdoutDir without test declarations reports declared 0" "verified 0
+unverified 1
+declared 0" "$(printf '  - S.anything\n' | hv "$hvdir")"
+is "holdout-verify: no holdoutDir at all reports declared 0" "verified 0
+unverified 0
+declared 0" "$(printf '' | hv '')"
+rm -rf "$hvdir"
 
 hc() { /bin/sh -c '. "$1/lib.sh"; dsh_holdout_checks "$2"; printf "rc=%s\n" "$?"' _ "$engine" "$1"; }
 hcroot=$(mktemp -d); mkdir -p "$hcroot/.dsh/.state" "$hcroot/.dsh/engine/hooks"
@@ -2849,6 +2962,360 @@ fs_out=$(dsh_fixture_shape_gaps "$fs_eng")
 is "fixture shape: a write into a directory nothing makes is a gap" yes "$(printf '%s\n' "$fs_out" | grep -q '^post_git of case gap writes to a/b.txt' && echo yes || echo no)"
 is "fixture shape: mkdir -p a/ (trailing slash) makes a/" no "$(printf '%s\n' "$fs_out" | grep -q 'case made' && echo yes || echo no)"
 rm -rf "$fs_eng"
+
+# dsh_gate_command: a contract command's Mill goes through mill-gate.sh
+gcmd() { /bin/sh -c '. "$1/lib.sh"; dsh_gate_command "$2" "$3"; printf "rc=%s\n" "$?"' _ "$engine" "$1" "$2"; }
+E=/x/eng
+is "gate cmd: ./mill" "'/x/eng/mill-gate.sh' -j 1 --ticker false core.test
+rc=0" "$(gcmd './mill -j 1 --ticker false core.test' "$E")"
+is "gate cmd: mill on PATH" "'/x/eng/mill-gate.sh' core.test
+rc=0" "$(gcmd 'mill core.test' "$E")"
+is "gate cmd: leading assignment stays" "FOO=1 '/x/eng/mill-gate.sh' x
+rc=0" "$(gcmd 'FOO=1 ./mill x' "$E")"
+is "gate cmd: leading blanks" "'/x/eng/mill-gate.sh' x
+rc=0" "$(gcmd '   ./mill x' "$E")"
+is "gate cmd: other command untouched" "sh .dsh/holdout-stub.sh
+rc=1" "$(gcmd 'sh .dsh/holdout-stub.sh' "$E")"
+is "gate cmd: ./millx is not mill" "./millx y
+rc=1" "$(gcmd './millx y' "$E")"
+is "gate cmd: quote in engine path" "'/x/it'\\''s/mill-gate.sh' y
+rc=0" "$(gcmd './mill y' "/x/it's")"
+is "gate cmd: a second Mill after && is rc 2, only the first routed" "'/x/eng/mill-gate.sh' -j 1 core.compile && ./mill -j 1 holdout.test
+rc=2" "$(gcmd './mill -j 1 core.compile && ./mill -j 1 holdout.test' "$E")"
+is "gate cmd: a second mill on PATH after ; is rc 2" "'/x/eng/mill-gate.sh' a;mill b
+rc=2" "$(gcmd './mill a;mill b' "$E")"
+is "gate cmd: a second Mill after || with an assignment is rc 2" "'/x/eng/mill-gate.sh' a || X=1 ./mill b
+rc=2" "$(gcmd './mill a || X=1 ./mill b' "$E")"
+is "gate cmd: a pipe into tee is one Mill (rc 0)" "'/x/eng/mill-gate.sh' a.test | tee x
+rc=0" "$(gcmd './mill a.test | tee x' "$E")"
+is "gate cmd: a mill-named argument is not a second Mill" "'/x/eng/mill-gate.sh' mill.test
+rc=0" "$(gcmd './mill mill.test' "$E")"
+sp=$(mktemp -d)/"eng dir"; mkdir -p "$sp"; printf '#!/bin/sh\necho "ran: $*"\n' > "$sp/mill-gate.sh"; chmod +x "$sp/mill-gate.sh"
+is "gate cmd: runs through a spaced engine path" "ran: -j 1 a.test" "$(sh -c "$(/bin/sh -c '. "$1/lib.sh"; dsh_gate_command "./mill -j 1 a.test" "$2"' _ "$engine" "$sp")")"
+rm -rf "$(dirname "$sp")"
+
+# --- the sandbox settings (spec 2026-10-02 §4.4): dsh_json_get, dsh_holdout_target, dsh_sandbox_checks ---
+sbc() { /bin/sh -c '. "$1/lib.sh"; dsh_sandbox_checks "$2"; printf "rc=%s\n" "$?"' _ "$engine" "$1"; }
+good_settings() { mkdir -p "$1/.claude"; cat > "$1/.claude/settings.json" <<'JSON'
+{ "env": { "MILL_OUTPUT_DIR": "out-agent" },
+  "sandbox": { "enabled": true, "allowUnsandboxedCommands": false, "failIfUnavailable": true,
+    "network": { "allowLocalBinding": true },
+    "filesystem": { "allowWrite": ["~/.cache/mill", "~/.cache/coursier", "~/Library/Caches/Coursier", "/var/folders"],
+      "denyRead": ["./out", "./out-agent/holdout", "./out-holdout", "./holdout", "./.dsh/.state/holdout.log", "HOLDOUTDIR"],
+      "denyWrite": ["./.dsh/engine", "./.dsh/contract", "./.dsh/frozen-paths", "./.claude", "./out-holdout", "./holdout", "./.dsh/.state/holdout.log", "HOLDOUTDIR"] } } }
+JSON
+sed "s|HOLDOUTDIR|$sbhd|g" "$1/.claude/settings.json" > "$1/.claude/settings.tmp" && mv "$1/.claude/settings.tmp" "$1/.claude/settings.json"
+}
+sbroot=$(mktemp -d); git -C "$sbroot" init -q; mkdir -p "$sbroot/.dsh"
+# holdoutDir: a real directory outside the repository root (a sibling of it), denied in the good settings by its physical path
+sbhd=$(mktemp -d); sbhd=$(cd "$sbhd" && pwd -P)
+printf 'holdout = ./mill -j 1 --ticker false holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"
+printf 'sealed\tholdout/**\tholdout suite\nsealed\t.dsh/.state/holdout.log\tholdout log\n' > "$sbroot/.dsh/frozen-paths"
+printf '/out-agent/\n/out-holdout/\n' > "$sbroot/.gitignore"
+good_settings "$sbroot"
+cp "$sbroot/.claude/settings.json" "$sbroot/s.good"
+out=$(sbc "$sbroot")
+case "$out" in *FAIL*) bad "sandbox-checks: good settings have no FAIL: $out" ;; *) ok "sandbox-checks: good settings have no FAIL" ;; esac
+case "$out" in *"rc=0") ok "sandbox-checks: good settings exit 0" ;; *) bad "sandbox-checks: good settings exit 0: $out" ;; esac
+case "$out" in *note*) bad "sandbox-checks: good settings have no note: $out" ;; *) ok "sandbox-checks: good settings have no note" ;; esac
+
+sed 's/"allowUnsandboxedCommands": false/"allowUnsandboxedCommands": true/' "$sbroot/s.good" > "$sbroot/.claude/settings.json"
+out=$(sbc "$sbroot")
+case "$out" in *FAIL*"sandbox.allowUnsandboxedCommands must be false"*"rc=1") ok "sandbox-checks: allowUnsandboxedCommands true is a FAIL" ;; *) bad "sandbox-checks: allowUnsandboxedCommands true is a FAIL: $out" ;; esac
+
+sed 's|"./holdout", ||' "$sbroot/s.good" > "$sbroot/.claude/settings.json"
+out=$(sbc "$sbroot")
+case "$out" in *FAIL*'lacks "./holdout"'*) ok "sandbox-checks: denyRead without ./holdout is a FAIL" ;; *) bad "sandbox-checks: denyRead without ./holdout is a FAIL: $out" ;; esac
+
+sed 's|"MILL_OUTPUT_DIR": "out-agent"|"MILL_OUTPUT_DIR": "out"|' "$sbroot/s.good" > "$sbroot/.claude/settings.json"
+out=$(sbc "$sbroot")
+case "$out" in *FAIL*"out"*"out-agent"*) ok "sandbox-checks: wrong MILL_OUTPUT_DIR names both" ;; *) bad "sandbox-checks: wrong MILL_OUTPUT_DIR names both: $out" ;; esac
+
+sed 's|, "~/Library/Caches/Coursier"||' "$sbroot/s.good" > "$sbroot/.claude/settings.json"
+out=$(sbc "$sbroot")
+case "$out" in *note*"allowWrite"*) ok "sandbox-checks: allowWrite short of a cache path is a note" ;; *) bad "sandbox-checks: allowWrite short of a cache path is a note: $out" ;; esac
+
+sed 's|, "/var/folders"||' "$sbroot/s.good" > "$sbroot/.claude/settings.json"
+out=$(sbc "$sbroot")
+case "$out" in *note*'sandbox.filesystem.allowWrite lacks "/var/folders" — on macOS the JVM'*) ok "sandbox-checks: allowWrite without /var/folders is a note" ;; *) bad "sandbox-checks: allowWrite without /var/folders is a note: $out" ;; esac
+
+printf '{' > "$sbroot/.claude/settings.json"
+out=$(sbc "$sbroot")
+case "$out" in *FAIL*"not valid JSON"*) ok "sandbox-checks: invalid JSON is a FAIL" ;; *) bad "sandbox-checks: invalid JSON is a FAIL: $out" ;; esac
+
+nj=$(mktemp -d); for t in sh grep sed awk cat git tr dirname mktemp; do ln -s "$(command -v $t)" "$nj/$t"; done
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"
+out=$(export PATH="$nj"; sbc "$sbroot")
+case "$out" in *FAIL*"neither jq nor python3"*) ok "sandbox-checks: no jq and no python3 is a FAIL" ;; *) bad "sandbox-checks: no jq and no python3 is a FAIL: $out" ;; esac
+rm -rf "$nj"
+
+rm "$sbroot/.claude/settings.json"
+out=$(sbc "$sbroot")
+case "$out" in *FAIL*".claude/settings.json is missing"*) ok "sandbox-checks: no settings file is a FAIL" ;; *) bad "sandbox-checks: no settings file is a FAIL: $out" ;; esac
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"
+
+printf 'agentOutputDir = ../x\nholdout = ./mill holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"
+out=$(sbc "$sbroot")
+case "$out" in *FAIL*"agentOutputDir = ../x"*) ok "sandbox-checks: invalid agentOutputDir is a FAIL" ;; *) bad "sandbox-checks: invalid agentOutputDir is a FAIL: $out" ;; esac
+
+printf 'holdout = ./mill holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"; : > "$sbroot/.gitignore"
+out=$(sbc "$sbroot")
+case "$out" in *note*"out-agent/ is not gitignored — add /out-agent/ to .gitignore"*) ok "sandbox-checks: ungitignored agent dir is a note" ;; *) bad "sandbox-checks: ungitignored agent dir is a note: $out" ;; esac
+
+printf 'holdout = sh .dsh/holdout-stub.sh\nturnEndTests = ./mill -j 1 a.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"
+out=$(sbc "$sbroot")
+case "$out" in *FAIL*"holdout = sh .dsh/holdout-stub.sh does not start with ./mill, so the engine cannot route it through mill-gate.sh"*"rc=1") ok "sandbox-checks: non-Mill holdout command is a FAIL (Ruling 20)" ;; *) bad "sandbox-checks: non-Mill holdout command is a FAIL (Ruling 20): $out" ;; esac
+printf 'holdout = ./mill holdout.test\nturnEndTests = sh x.sh\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+case "$out" in *note*"turnEndTests = sh x.sh does not start with ./mill"*) ok "sandbox-checks: a non-Mill turnEndTests stays a note" ;; *) bad "sandbox-checks: a non-Mill turnEndTests stays a note: $out" ;; esac
+case "$out" in *FAIL*) bad "sandbox-checks: a non-Mill turnEndTests is not a FAIL: $out" ;; *) ok "sandbox-checks: a non-Mill turnEndTests is not a FAIL" ;; esac
+case "$out" in *"turnEndTests = ./mill"*"does not start"*) bad "sandbox-checks: a ./mill turnEndTests is not noted: $out" ;; *) ok "sandbox-checks: a ./mill turnEndTests is not noted" ;; esac
+
+printf 'fastTests = ./mill x\n' > "$sbroot/.dsh/contract"
+out=$(sbc "$sbroot")
+n=$(printf '%s\n' "$out" | grep -c '^note')
+case "$out" in *FAIL*) bad "sandbox-checks: no holdout line has no FAIL: $out" ;; *) is "sandbox-checks: no holdout line is exactly one note" "1" "$n" ;; esac
+case "$out" in *"rc=0") ok "sandbox-checks: no holdout line exits 0" ;; *) bad "sandbox-checks: no holdout line exits 0: $out" ;; esac
+
+# --- final-review fix wave: denyWrite, settings that switch the seal off, one Mill per command, the
+# holdout output path, MCP servers, array shapes ---------------------------------------------------
+printf 'holdout = ./mill -j 1 --ticker false holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"
+printf '/out-agent/\n/out-holdout/\n' > "$sbroot/.gitignore"
+sbset() { sed "$1" "$sbroot/s.good" > "$sbroot/.claude/settings.json"; }
+sbcase() { # sbcase <name> <needle> -- the needle must be in a FAIL row and the run must exit 1
+  case "$out" in *FAIL*"$2"*"rc=1") ok "sandbox-checks: $1" ;; *) bad "sandbox-checks: $1: $out" ;; esac
+}
+sbclean() { # sbclean <name> -- no FAIL, exit 0
+  case "$out" in *FAIL*) bad "sandbox-checks: $1: $out" ;; *"rc=0") ok "sandbox-checks: $1" ;; *) bad "sandbox-checks: $1: $out" ;; esac
+}
+
+sbset '/denyWrite/s|"./.dsh/engine", ||'; out=$(sbc "$sbroot")
+sbcase "denyWrite without ./.dsh/engine is a FAIL" 'sandbox.filesystem.denyWrite lacks "./.dsh/engine" — '
+sbset '/denyWrite/s|"./holdout", ||'; out=$(sbc "$sbroot")
+sbcase "denyWrite without a sealed row's path is a FAIL" 'sandbox.filesystem.denyWrite lacks "./holdout" — '
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"; out=$(sbc "$sbroot")
+has "sandbox-checks: denyWrite rows are reported ok" 'ok	sandbox.filesystem.denyWrite has "./.claude"' "$out"
+
+sbset 's|"enabled": true,|"enabled": true, "excludedCommands": ["git"],|'; out=$(sbc "$sbroot")
+sbcase "a non-empty excludedCommands is a FAIL" 'sandbox.excludedCommands is not empty (["git"]) — commands listed there run outside the sandbox, which reopens the holdout seal'
+sbset 's|"enabled": true,|"enabled": true, "excludedCommands": [],|'; out=$(sbc "$sbroot")
+sbclean "an empty excludedCommands is not a FAIL"
+sbset 's|"enabled": true,|"enabled": true, "enableWeakerNestedSandbox": true,|'; out=$(sbc "$sbroot")
+sbcase "enableWeakerNestedSandbox true is a FAIL" 'sandbox.enableWeakerNestedSandbox'
+sbset 's|"failIfUnavailable": true|"failIfUnavailable": false|'; out=$(sbc "$sbroot")
+sbcase "failIfUnavailable false is a FAIL" 'sandbox.failIfUnavailable must be true'
+sbset 's|"enabled": true,|"enabled": "true",|'; out=$(sbc "$sbroot")
+sbcase "enabled as the string \"true\" is a FAIL" 'sandbox.enabled must be true'
+sbset 's|"denyRead": \[[^]]*\]|"denyRead": "./out/mill-daemon ./out-agent/holdout \\"./holdout\\" ./.dsh/.state/holdout.log"|'; out=$(sbc "$sbroot")
+sbcase "a string-valued denyRead is a FAIL" 'sandbox.filesystem.denyRead must be a JSON array'
+
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"
+printf '{"sandbox":{"enabled":false}}\n' > "$sbroot/.claude/settings.local.json"; out=$(sbc "$sbroot")
+sbcase "settings.local.json disabling the sandbox is a FAIL" '.claude/settings.local.json overrides sandbox.enabled with false — '
+printf '{"env":{"MILL_OUTPUT_DIR":"out"}}\n' > "$sbroot/.claude/settings.local.json"; out=$(sbc "$sbroot")
+sbcase "settings.local.json with another MILL_OUTPUT_DIR is a FAIL" '.claude/settings.local.json overrides env.MILL_OUTPUT_DIR with "out" — '
+printf '{"sandbox":{"excludedCommands":["python3"]}}\n' > "$sbroot/.claude/settings.local.json"; out=$(sbc "$sbroot")
+sbcase "settings.local.json with excludedCommands is a FAIL" '.claude/settings.local.json overrides sandbox.excludedCommands with ["python3"] — '
+printf '{"sandbox":{"allowUnsandboxedCommands":true,"failIfUnavailable":false,"enableWeakerNestedSandbox":true}}\n' > "$sbroot/.claude/settings.local.json"; out=$(sbc "$sbroot")
+sbcase "settings.local.json allowing unsandboxed commands is a FAIL" '.claude/settings.local.json overrides sandbox.allowUnsandboxedCommands with true — '
+sbcase "settings.local.json not failing when unavailable is a FAIL" '.claude/settings.local.json overrides sandbox.failIfUnavailable with false — '
+sbcase "settings.local.json weakening the nested sandbox is a FAIL" '.claude/settings.local.json overrides sandbox.enableWeakerNestedSandbox with true — '
+printf '{' > "$sbroot/.claude/settings.local.json"; out=$(sbc "$sbroot")
+sbcase "an invalid settings.local.json is a FAIL" '.claude/settings.local.json is not valid JSON'
+sbset 's|"enabled": true,|"enabled": false,|'
+printf '{"sandbox":{"enabled":true}}\n' > "$sbroot/.claude/settings.local.json"; out=$(sbc "$sbroot")
+sbclean "settings.local.json enabling the sandbox overrides the project's false"
+rm -f "$sbroot/.claude/settings.local.json"
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"
+
+printf 'holdout = ./mill -j 1 core.compile && ./mill -j 1 holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+sbcase "a holdout command running Mill twice is a FAIL" 'holdout = ./mill -j 1 core.compile && ./mill -j 1 holdout.test runs Mill more than once; only its first ./mill can be routed through mill-gate.sh — split it, or make it one ./mill call'
+printf 'holdout = ./mill holdout.test\nturnEndTests = ./mill a.test | tee x\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+sbclean "a Mill piped into tee is not a FAIL"
+
+printf 'holdout = ./mill -j 1 engine.holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+sbcase "a nested holdout module needs its own output path denied" 'sandbox.filesystem.denyRead lacks "./out-agent/engine/holdout"'
+case "$out" in *'"./out-agent/engine"'*) bad "sandbox-checks: the whole engine output is never required: $out" ;; *) ok "sandbox-checks: the whole engine output is never required" ;; esac
+sbset 's|"./out-agent/holdout"|"./out-agent/engine/holdout"|'; out=$(sbc "$sbroot")
+sbclean "a nested holdout module's output path in denyRead passes"
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"
+printf 'holdout = ./mill -j 1 --ticker false holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"
+
+printf '{"mcpServers":{}}\n' > "$sbroot/.mcp.json"; out=$(sbc "$sbroot")
+has "sandbox-checks: .mcp.json is a note" 'note	MCP servers run outside the sandbox — one that runs Mill or reads holdout/ reopens the seal (see README "Structural holdout seal")' "$out"
+sbclean "a .mcp.json note is not a FAIL"
+rm -f "$sbroot/.mcp.json"
+sbset 's|^{ "env"|{ "mcpServers": { "x": { "command": "x" } }, "env"|'; out=$(sbc "$sbroot")
+has "sandbox-checks: mcpServers in settings.json is a note" 'note	MCP servers run outside the sandbox' "$out"
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"
+printf 'fastTests = ./mill x\n' > "$sbroot/.dsh/contract"; printf '{}\n' > "$sbroot/.mcp.json"; out=$(sbc "$sbroot")
+case "$out" in *MCP*) bad "sandbox-checks: no MCP note without a holdout line: $out" ;; *) ok "sandbox-checks: no MCP note without a holdout line" ;; esac
+rm -f "$sbroot/.mcp.json"
+
+hop() { /bin/sh -c '. "$1/lib.sh"; dsh_holdout_out_path "$2"; printf "rc=%s\n" "$?"' _ "$engine" "$1"; }
+printf 'holdout = ./mill -j 1 --ticker false holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"
+is "holdout-out-path: holdout.test" "holdout
+rc=0" "$(hop "$sbroot")"
+printf 'holdout = ./mill -j 1 engine.holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"
+is "holdout-out-path: engine.holdout.test" "engine/holdout
+rc=0" "$(hop "$sbroot")"
+printf 'holdout = ./mill holdout\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"
+is "holdout-out-path: a single-segment selector is itself" "holdout
+rc=0" "$(hop "$sbroot")"
+printf 'fastTests = ./mill x\n' > "$sbroot/.dsh/contract"
+is "holdout-out-path: empty and rc 1 without a holdout line" "rc=1" "$(hop "$sbroot")"
+
+jg() { /bin/sh -c '. "$1/lib.sh"; dsh_json_get "$2" "$3"; printf "rc=%s\n" "$?"' _ "$engine" "$1" "$2"; }
+is "json-get: true" "true
+rc=0" "$(jg "$sbroot/s.good" sandbox.enabled)"
+is "json-get: string" '"out-agent"
+rc=0' "$(jg "$sbroot/s.good" env.MILL_OUTPUT_DIR)"
+is "json-get: false is kept" "false
+rc=0" "$(jg "$sbroot/s.good" sandbox.allowUnsandboxedCommands)"
+is "json-get: absent is empty" "rc=0" "$(jg "$sbroot/s.good" sandbox.nope)"
+is "json-get: array" '["~/.cache/mill","~/.cache/coursier","~/Library/Caches/Coursier","/var/folders"]
+rc=0' "$(jg "$sbroot/s.good" sandbox.filesystem.allowWrite)"
+printf '{' > "$sbroot/bad.json"
+is "json-get: invalid JSON is rc 3" "rc=3" "$(jg "$sbroot/bad.json" a)"
+if [ "$have_py" = 1 ]; then
+  pyo=$(mktemp -d); ln -s "$python_bin" "$pyo/python3"
+  is "json-get: python3 alone reads sandbox.enabled" "true
+rc=0" "$(PATH="$pyo" jg "$sbroot/s.good" sandbox.enabled)"
+  rm -rf "$pyo"
+else
+  printf 'note python3 is not on PATH — dsh_json_get is not asserted through python3 alone\n'
+fi
+
+ht() { /bin/sh -c '. "$1/lib.sh"; dsh_holdout_target "$2"; printf "rc=%s\n" "$?"' _ "$engine" "$1"; }
+printf 'holdout = ./mill -j 1 --ticker false holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"
+is "holdout-target: first dotted segment of the last word" "holdout
+rc=0" "$(ht "$sbroot")"
+printf 'fastTests = ./mill x\n' > "$sbroot/.dsh/contract"
+is "holdout-target: empty and rc 1 without a holdout line" "rc=1" "$(ht "$sbroot")"
+
+# --- holdoutDir (spec 2026-10-02 §10): dsh_holdout_dir and the checks around it ---------------------------------
+hdr() { /bin/sh -c '. "$1/lib.sh"; dsh_holdout_dir "$2"; printf "rc=%s\n" "$?"' _ "$engine" "$1"; }
+hdbase=$(mktemp -d); hdbase=$(cd "$hdbase" && pwd -P); mkdir -p "$hdbase/repo/.dsh" "$hdbase/hold" "$hdbase/repo/inside"
+hdc() { printf '%s\n' "$1" > "$hdbase/repo/.dsh/contract"; }
+hdc 'holdout = ./mill holdout.test'
+is "holdout-dir: absent is rc 1 and silent" "rc=1" "$(hdr "$hdbase/repo")"
+hdc "holdoutDir = $hdbase/hold"
+is "holdout-dir: an absolute directory is printed" "$hdbase/hold
+rc=0" "$(hdr "$hdbase/repo")"
+hdc 'holdoutDir = ../hold'
+is "holdout-dir: a ../ path is resolved physically" "$hdbase/hold
+rc=0" "$(hdr "$hdbase/repo")"
+ln -s "$hdbase/hold" "$hdbase/link"; hdc "holdoutDir = $hdbase/link"
+is "holdout-dir: a symlink is resolved to the physical directory" "$hdbase/hold
+rc=0" "$(hdr "$hdbase/repo")"
+hdc 'holdoutDir = hold'
+case "$(hdr "$hdbase/repo")" in *"must be absolute or start with ../"*"rc=3") ok "holdout-dir: a plain relative path is rc 3" ;; *) bad "holdout-dir: a plain relative path is rc 3: $(hdr "$hdbase/repo")" ;; esac
+hdc 'holdoutDir = ./hold'
+case "$(hdr "$hdbase/repo")" in *"rc=3") ok "holdout-dir: ./ relative is rc 3" ;; *) bad "holdout-dir: ./ relative is rc 3" ;; esac
+hdc "holdoutDir = $hdbase/nope"
+case "$(hdr "$hdbase/repo")" in *"is not an existing directory"*"rc=3") ok "holdout-dir: a missing directory is rc 3" ;; *) bad "holdout-dir: a missing directory is rc 3: $(hdr "$hdbase/repo")" ;; esac
+hdc "holdoutDir = $hdbase/repo"
+case "$(hdr "$hdbase/repo")" in *"inside the repository"*"rc=3") ok "holdout-dir: the root itself is rc 3" ;; *) bad "holdout-dir: the root itself is rc 3: $(hdr "$hdbase/repo")" ;; esac
+hdc "holdoutDir = $hdbase/repo/inside"
+case "$(hdr "$hdbase/repo")" in *"inside the repository"*"rc=3") ok "holdout-dir: a directory inside the root is rc 3" ;; *) bad "holdout-dir: a directory inside the root is rc 3: $(hdr "$hdbase/repo")" ;; esac
+ln -s "$hdbase/repo/inside" "$hdbase/inlink"; hdc "holdoutDir = $hdbase/inlink"
+case "$(hdr "$hdbase/repo")" in *"rc=3") ok "holdout-dir: a symlink into the root is rc 3" ;; *) bad "holdout-dir: a symlink into the root is rc 3" ;; esac
+hdc 'holdoutDir = ../repo-sibling'; mkdir -p "$hdbase/repo-sibling"
+is "holdout-dir: a sibling whose name starts with the root's is outside" "$hdbase/repo-sibling
+rc=0" "$(hdr "$hdbase/repo")"
+hdc "holdoutDir = /"
+case "$(hdr "$hdbase/repo")" in *"contains the repository root"*"rc=3") ok "holdout-dir: / (an ancestor) is rc 3" ;; *) bad "holdout-dir: / is rc 3: $(hdr "$hdbase/repo")" ;; esac
+hdc 'holdoutDir = ../'
+case "$(hdr "$hdbase/repo")" in *"contains the repository root"*"rc=3") ok "holdout-dir: ../ (the root's parent) is rc 3" ;; *) bad "holdout-dir: ../ is rc 3: $(hdr "$hdbase/repo")" ;; esac
+hdc "holdoutDir = $hdbase"
+case "$(hdr "$hdbase/repo")" in *"contains the repository root"*"rc=3") ok "holdout-dir: the root's parent (absolute) is rc 3" ;; *) bad "holdout-dir: the root's parent is rc 3: $(hdr "$hdbase/repo")" ;; esac
+# A case-variant spelling of the root: only where the filesystem folds case (APFS default) -- elsewhere it names nothing.
+if [ -d "$hdbase/REPO" ]; then
+  hdc "holdoutDir = $hdbase/REPO/inside"
+  case "$(hdr "$hdbase/repo")" in *"inside the repository"*"rc=3") ok "holdout-dir: a case-variant path into the root is rc 3" ;; *) bad "holdout-dir: a case-variant path into the root is rc 3: $(hdr "$hdbase/repo")" ;; esac
+else
+  printf 'note filesystem is case-sensitive — the case-variant holdoutDir row is not asserted\n'
+fi
+rm -rf "$hdbase"
+
+# dsh_sandbox_checks around holdoutDir
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"
+printf 'holdout = ./mill -j 1 --ticker false holdout.test\n' > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+sbcase "an absent holdoutDir is a FAIL" 'holdoutDir is absent from .dsh/contract'
+printf 'holdout = ./mill holdout.test\nholdoutDir = holdout-here\n' > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+sbcase "a relative holdoutDir is a FAIL naming the reason" 'holdoutDir = holdout-here must be absolute or start with ../'
+printf 'holdout = ./mill holdout.test\nholdoutDir = %s/missing\n' "$sbhd" > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+sbcase "a missing holdoutDir is a FAIL naming the reason" 'is not an existing directory'
+mkdir -p "$sbroot/hd-in"; printf 'holdout = ./mill holdout.test\nholdoutDir = %s/hd-in\n' "$sbroot" > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+sbcase "a holdoutDir inside the root is a FAIL naming the reason" 'is inside the repository'
+rmdir "$sbroot/hd-in"
+printf 'holdout = ./mill holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+sbclean "a valid holdoutDir denied in both lists is clean"
+has "sandbox-checks: the holdoutDir denyRead row is ok" "ok	sandbox.filesystem.denyRead has \"$sbhd\"" "$out"
+sbset "s|, \"$sbhd\"||"; out=$(sbc "$sbroot")
+sbcase "holdoutDir missing from denyRead and denyWrite is a FAIL" "sandbox.filesystem.denyRead lacks \"$sbhd\""
+case "$out" in *FAIL*'denyWrite lacks "'"$sbhd"'"'*) ok "sandbox-checks: holdoutDir missing from denyWrite is a FAIL too" ;; *) bad "sandbox-checks: holdoutDir missing from denyWrite is a FAIL too: $out" ;; esac
+sbset '/denyWrite/s|, "'"$sbhd"'"||'; out=$(sbc "$sbroot")
+sbcase "holdoutDir missing from denyWrite alone is a FAIL" "sandbox.filesystem.denyWrite lacks \"$sbhd\""
+case "$out" in *FAIL*'denyRead lacks'*) bad "sandbox-checks: denyRead was present: $out" ;; *) ok "sandbox-checks: denyRead still has the holdoutDir" ;; esac
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"
+
+mkdir -p "$sbroot/holdout"; : > "$sbroot/holdout/T.scala"; : > "$sbroot/other.txt"
+git -C "$sbroot" add -f holdout/T.scala other.txt >/dev/null 2>&1; out=$(sbc "$sbroot")
+sbcase "a tracked file under a sealed row is a FAIL listing it" 'git tracks files under a sealed row (holdout/T.scala)'
+git -C "$sbroot" rm -q --cached -f holdout/T.scala other.txt >/dev/null 2>&1; rm -rf "$sbroot/holdout" "$sbroot/other.txt"
+out=$(sbc "$sbroot")
+sbclean "no tracked sealed file is clean"
+
+sbset 's|{ "env": {|{ "env": { "DSH_HOLDOUT_DIR": "/x",|'; out=$(sbc "$sbroot")
+sbcase "env.DSH_HOLDOUT_DIR in settings.json is a FAIL" '.claude/settings.json sets env DSH_HOLDOUT_DIR'
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"
+printf '{"env":{"DSH_STOP_BUDGET":"1"}}\n' > "$sbroot/.claude/settings.local.json"; out=$(sbc "$sbroot")
+sbcase "env.DSH_* in settings.local.json is a FAIL" '.claude/settings.local.json sets env DSH_STOP_BUDGET'
+rm -f "$sbroot/.claude/settings.local.json"
+printf '{"env":{"OTHER":"1"}}\n' > "$sbroot/.claude/settings.local.json"; out=$(sbc "$sbroot")
+sbclean "a non-DSH env key in settings.local.json is clean"
+rm -f "$sbroot/.claude/settings.local.json"
+printf 'fastTests = ./mill x\n' > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+case "$out" in *FAIL*) bad "sandbox-checks: no holdout line needs no holdoutDir: $out" ;; *) ok "sandbox-checks: no holdout line needs no holdoutDir" ;; esac
+
+
+# --- Ruling 29: the holdout run's own output dir (C1), the whole ./out denied (C2), one ./mill call (I2) ----------
+printf 'holdout = ./mill holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"; out=$(sbc "$sbroot")
+sbclean "good settings with out-holdout and ./out are clean"
+has "sandbox-checks: ./out-holdout in denyRead is ok" 'ok	sandbox.filesystem.denyRead has "./out-holdout"' "$out"
+has "sandbox-checks: ./out-holdout in denyWrite is ok" 'ok	sandbox.filesystem.denyWrite has "./out-holdout"' "$out"
+has "sandbox-checks: ./out in denyRead is ok" 'ok	sandbox.filesystem.denyRead has "./out"' "$out"
+sbset '/denyRead/s|"./out-holdout", ||'; out=$(sbc "$sbroot")
+sbcase "denyRead without ./out-holdout is a FAIL" 'sandbox.filesystem.denyRead lacks "./out-holdout" — '
+sbset '/denyWrite/s|"./out-holdout", ||'; out=$(sbc "$sbroot")
+sbcase "denyWrite without ./out-holdout is a FAIL" 'sandbox.filesystem.denyWrite lacks "./out-holdout" — '
+sbset 's|"./out", |"./out/mill-daemon", |'; out=$(sbc "$sbroot")
+sbcase "denyRead with ./out/mill-daemon but not ./out is a FAIL" 'sandbox.filesystem.denyRead lacks "./out" — '
+printf 'holdout = ./mill holdout.test\nholdoutDir = %s\nholdoutOutputDir = hold-out\n' "$sbhd" > "$sbroot/.dsh/contract"
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"; out=$(sbc "$sbroot")
+sbcase "a custom holdoutOutputDir must be denied" 'sandbox.filesystem.denyRead lacks "./hold-out" — '
+sbset 's|"./out-holdout"|"./hold-out"|g'; out=$(sbc "$sbroot")
+case "$out" in *FAIL*'"./hold-out"'*) bad "sandbox-checks: a custom holdoutOutputDir denied in both lists passes: $out" ;; *) ok "sandbox-checks: a custom holdoutOutputDir denied in both lists passes" ;; esac
+printf 'holdout = ./mill holdout.test\nholdoutDir = %s\nholdoutOutputDir = ../x\n' "$sbhd" > "$sbroot/.dsh/contract"
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"; out=$(sbc "$sbroot")
+sbcase "an invalid holdoutOutputDir is a FAIL" 'holdoutOutputDir = ../x is not a plain relative path; the engine uses out-holdout'
+printf 'holdout = ./mill holdout.test\nholdoutDir = %s\nholdoutOutputDir = out-agent\n' "$sbhd" > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+sbcase "a holdoutOutputDir equal to the agent dir is a FAIL" 'holdoutOutputDir = out-agent is the agent'"'"'s output directory'
+printf 'agentOutputDir = out\nholdout = ./mill holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"
+sbset 's|"MILL_OUTPUT_DIR": "out-agent"|"MILL_OUTPUT_DIR": "out"|'; out=$(sbc "$sbroot")
+sbcase "agentOutputDir = out with a holdout line is a FAIL" 'agentOutputDir = out — the agent would build where the holdout is compiled'
+cp "$sbroot/s.good" "$sbroot/.claude/settings.json"
+for hc in './mill holdout.test | tee x' './mill holdout.test || true' './mill holdout.test; true' './mill holdout.test && echo done' './mill holdout.test &'; do
+  printf 'holdout = %s\nholdoutDir = %s\n' "$hc" "$sbhd" > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+  sbcase "holdout [$hc] is a FAIL: not exactly one ./mill call" "holdout = $hc is not exactly one ./mill call"
+done
+printf 'holdout = ./mill -j 1 --ticker false holdout.test\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+sbclean "a plain one-./mill holdout command is clean"
+printf 'holdout = ./mill holdout.test\nturnEndTests = ./mill a.test || true\nholdoutDir = %s\n' "$sbhd" > "$sbroot/.dsh/contract"; out=$(sbc "$sbroot")
+sbclean "operators in turnEndTests stay allowed (holdout key only)"
+
+rm -rf "$sbroot" "$sbhd"
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" = 0 ]

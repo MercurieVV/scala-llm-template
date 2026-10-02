@@ -1,0 +1,3 @@
+#!/bin/sh
+rm -rf "$SCRATCH_ROOT.holdout"
+echo "post_gate: cap held"

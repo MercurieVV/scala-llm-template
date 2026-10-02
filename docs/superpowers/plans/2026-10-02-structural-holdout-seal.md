@@ -460,3 +460,64 @@ Run after Tasks 1–5 are merged on the branch, in a scratch clone of skreeep2 w
 6. Dependency download inside the sandbox: add a new test-scope dependency to a scratch module and compile; record whether it downloads; if not, record the documented remedy working.
 
 Record every number in `raw/llm-scala-fusion/<date>-local-structural-holdout-seal.md` (scala-coding-guidelines) for the wiki update.
+
+---
+
+## Phase 3 — the holdout leaves the repository (spec §10, approved 2026-10-02; supersedes phase 2, kept under tag `phase2-confined-gate`)
+
+Global Constraints above apply. Additional, exact:
+- `holdoutDir` contract key: absolute, or starting with `../`; resolved with `pwd -P`; must exist; must not equal or lie
+  under the repository root (physical). Required only when the contract has a `holdout =` line.
+- The env var the gate's holdout run sets: `DSH_HOLDOUT_DIR=<physical holdoutDir>` — only that run.
+- Report caps: at most 20 verified failing names, each truncated to 120 characters.
+- No `DSH_*` key may appear under `env` in `.claude/settings.json` or `.claude/settings.local.json`.
+
+### Task 12: holdoutDir — lookup, checks, and the holdout run's environment
+
+**Files:** `kit/harness/lib.sh` (add `dsh_holdout_dir`; extend `dsh_sandbox_checks`), `kit/harness/hooks/turn-end.sh`
+(holdout run env), `kit/harness/seed/contract` (commented `holdoutDir` line), tests.
+
+- `dsh_holdout_dir [root]` → prints the physical `holdoutDir`; rc 1 when the key is absent; rc 3 when present but invalid
+  (relative not starting with `../`, missing directory, inside the root).
+- `dsh_sandbox_checks` (with a holdout line): FAIL when `holdoutDir` is absent or invalid (text names the reason); FAIL per
+  missing `denyRead`/`denyWrite` entry equal to the physical `holdoutDir`; FAIL listing the tracked files when `git ls-files`
+  reports any file under a `sealed` row; FAIL per `env.DSH_*` key in either settings file; FAIL (Ruling 20) when the
+  `holdout =` command is not routable by `dsh_gate_command` (rc 1) — other keys keep the note.
+- turn-end runs the holdout command with `DSH_HOLDOUT_DIR=<physical holdoutDir>` in its environment only (not exported).
+- Tests: lib-test rows for each rule and each `dsh_holdout_dir` outcome; a fixture showing the holdout run's Mill stub env
+  log carries `DSH_HOLDOUT_DIR` and a turnEndTests call in the same case does not (extend the Mill stub env log to record
+  `DSH_HOLDOUT_DIR` too).
+
+### Task 13: the holdout report carries only verified names
+
+**Files:** `kit/harness/lib.sh` (`dsh_weaver_failures` or a new filter it feeds), `kit/harness/hooks/turn-end.sh` (report
+wording, receipt row), tests.
+
+- A failing name is reported only when its test-name text (the part after the suite prefix) occurs verbatim (`grep -rF`)
+  in a regular file under `holdoutDir`; at most 20 names, each cut to 120 characters; unverified lines are dropped and
+  counted (`<n> unverified line(s) dropped`).
+- The report never takes a passed/failed total from the run's output: it states the exit status (`holdout: passed` /
+  `holdout: failed — <k> verified failing name(s)` / the existing did-not-complete and time-cap lines) and the receipt
+  row records the exit status and `k`.
+- Tests: a forged `- <arbitrary text>` line is not printed; a forged `Total 9, Failed 0, Passed 9` with exit 1 reports
+  failed; a real name present in a `holdoutDir` file is printed; the caps.
+
+### Task 14: the Mill recipe — a holdout module fed only by DSH_HOLDOUT_DIR
+
+**Files:** `kit/recipes/mill/Gate.mill` (trait `HoldoutModule`), `kit/recipes/mill.md` (holdout section), test: a real Mill
+1.1.8 scratch build exercised by a script under `kit/harness/tests/` (skipped, not failed, without `mill` on PATH).
+
+- `HoldoutModule`'s test sources are the directories under `DSH_HOLDOUT_DIR` (read as a Mill task input, so a change
+  invalidates); with the variable unset, no sources — compile and test succeed with zero tests.
+- Recipe text: set `holdoutDir`, deny it in the sandbox settings, move the module to `HoldoutModule`, write NEW tests there
+  (anything committed before stays in git history and is not sealed).
+
+### Task 15: documentation
+
+- README "Structural holdout seal": the external holdout, `holdoutDir`, `DSH_HOLDOUT_DIR`, the new FAIL rows, the
+  verified-names report, the residuals of spec §10.3, the history caveat; remove any phase-1 statement §10 makes false.
+
+### Task 16 (controller + human): skreeep2 migration and live check
+
+Human steps (asked first): create `holdoutDir`, write new holdout tests there, `git rm` the old `holdout/` sources,
+update `.claude/settings.json`. Then the controller re-vendors and verifies spec §10.4's criteria with a gated session.

@@ -1,0 +1,7 @@
+# The project's gate interface. The engine never learns a build tool's name: it runs these.
+preCommit  = ./mill -j 1 preCommit
+prePush    = ./mill -j 1 prePush
+checkFormat = ./mill -j 1 --ticker false <module>.checkFormat
+fix        = ./mill -j 1 --ticker false <module>.fix --check
+coverage   = ./mill -j 1 --ticker false moduleMap
+roots      = .

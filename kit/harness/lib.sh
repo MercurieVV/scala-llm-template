@@ -226,12 +226,12 @@ has_cap() {
   return 1
 }
 
-# resolve_mill <root>: print the Mill to run — the repository's own wrapper `./mill` when <root>/mill
+# resolve_real_mill <root>: print the project's own Mill — the repository's wrapper `./mill` when <root>/mill
 # is an executable file, else a `mill` on PATH — and return 1 when there is neither, so the caller can
-# fail closed with its own wording. `./mill` is a relative spelling on purpose: both callers cd to the
+# fail closed with its own wording. `./mill` is a relative spelling on purpose: every caller cd's to the
 # root before running it, and a fixture's scratch root has no wrapper, which is what puts the stub on
 # PATH in charge (and keeps every case hermetic).
-resolve_mill() {
+resolve_real_mill() {
   if [ -f "$1/mill" ] && [ -x "$1/mill" ]; then
     printf '%s\n' './mill'
     return 0
@@ -242,6 +242,110 @@ resolve_mill() {
     return 0
   fi
   return 1
+}
+
+# resolve_mill <root>: the Mill the ENGINE runs — <engine>/mill-gate.sh, which runs resolve_real_mill's Mill
+# with --no-daemon in the agent's output directory. <engine> is `$here`, which every entry point (the hooks,
+# module-map.sh) sets to the engine directory before it sources this file. Exit 1 when there is no Mill at
+# all, or no wrapper beside the entry point, so callers keep their own fail-closed wording. Callers run it
+# as "$mill" args… from the root.
+resolve_mill() {
+  resolve_real_mill "${1:-}" >/dev/null || return 1
+  [ -n "${here:-}" ] && [ -f "$here/mill-gate.sh" ] || return 1
+  printf '%s\n' "$here/mill-gate.sh"
+}
+
+# dsh_gate_command <cmd> [engine dir]: a contract command the engine is about to run, with its Mill routed through
+# mill-gate.sh (spec 2026-10-02 §4.2): the leading `./mill` or `mill` word -- after any leading blanks and
+# NAME=value assignments, which stay in front -- becomes the single-quoted path of <engine>/mill-gate.sh.
+# Exit 1, printing <cmd> unchanged, when the first word is anything else (check-harness notes such commands),
+# or when there is no engine directory (neither the argument nor `$here`). Exit 2, still printing the command
+# with its FIRST Mill routed, when a later `./mill` or `mill` word follows a separator (`&&`, `||`, `;`, `|`):
+# that second Mill runs as written, outside the gate, and check-harness FAILs such a contract command.
+dsh_gate_command() {
+  _gc_eng=${2:-${here:-}}
+  _gc_rest=${1:-}
+  _gc_rest=${_gc_rest#"${_gc_rest%%[! 	]*}"}
+  _gc_pre=''
+  while :; do
+    _gc_w=${_gc_rest%%[ 	]*}
+    case "$_gc_w" in
+      [A-Za-z_]*=*)
+        case "${_gc_w%%=*}" in *[!A-Za-z0-9_]*) break ;; esac
+        _gc_pre="$_gc_pre$_gc_w "
+        _gc_rest=${_gc_rest#"$_gc_w"}
+        _gc_rest=${_gc_rest#"${_gc_rest%%[! 	]*}"} ;;
+      *) break ;;
+    esac
+  done
+  case "$_gc_w" in
+    ./mill|mill)
+      if [ -n "$_gc_eng" ]; then
+        _gc_q=$(printf '%s' "$_gc_eng/mill-gate.sh" | sed "s/'/'\\\\''/g")
+        _gc_tail=${_gc_rest#"$_gc_w"}
+        printf "%s'%s'%s\n" "$_gc_pre" "$_gc_q" "$_gc_tail"
+        if printf '%s\n' "$_gc_tail" |
+           grep -Eq '(&&|[|]|;)[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(\./)?mill([[:space:]]|$)'; then
+          return 2
+        fi
+        return 0
+      fi ;;
+  esac
+  printf '%s\n' "${1:-}"
+  return 1
+}
+
+# dsh_agent_output_dir [root]: the agent's Mill output directory — the contract's `agentOutputDir`, else
+# out-agent when the contract has a `holdout =` line, else out (a project with nothing sealed keeps the one
+# output directory it always had). A value that is not a plain relative path (absolute, a `..` segment, a
+# space, empty) is refused: out-agent is printed and the exit status is 3, so check-harness can name it.
+dsh_agent_output_dir() {
+  _ao_root=${1:-$(gate_root)}
+  _ao_v=$(dsh_contract_get agentOutputDir "$_ao_root" 2>/dev/null) || {
+    if [ -f "$_ao_root/.dsh/contract" ] && grep -Eq '^[[:space:]]*agentOutputDir[[:space:]]*=' "$_ao_root/.dsh/contract"; then
+      printf 'out-agent\n'; return 3
+    fi
+    if dsh_holdout_target "$_ao_root" >/dev/null 2>&1; then
+      printf 'out-agent\n'
+    else
+      printf 'out\n'
+    fi
+    return 0
+  }
+  dsh_plain_relative_dir "$_ao_v" || { printf 'out-agent\n'; return 3; }
+  printf '%s\n' "$_ao_v"
+  return 0
+}
+
+# dsh_plain_relative_dir <value>: exit 0 when <value> is a plain relative path Mill may take as MILL_OUTPUT_DIR
+# (letters, digits, . _ - /; no `.`/`..` segment, not absolute, no trailing or doubled slash, not empty).
+dsh_plain_relative_dir() {
+  case "/${1:-}/" in
+    *'/../'*|*'/./'*) return 1 ;;
+  esac
+  case "${1:-}" in
+    ''|/*|*/|*//*|*[!A-Za-z0-9._/-]*) return 1 ;;
+  esac
+  return 0
+}
+
+# dsh_holdout_output_dir [root]: the Mill output directory of the gate's holdout run (spec 2026-10-02 §10.5.1) --
+# the contract's `holdoutOutputDir`, else out-holdout. Mill --no-daemon writes <output dir>/mill-console-tail with
+# the console's last lines (measured with Mill 1.1.8: verbatim holdout source after a failing run), so the holdout
+# run must not share the agent's directory. Validated like dsh_agent_output_dir: an invalid value prints
+# out-holdout and exits 3.
+dsh_holdout_output_dir() {
+  _hod_root=${1:-$(gate_root)}
+  _hod_v=$(dsh_contract_get holdoutOutputDir "$_hod_root" 2>/dev/null) || {
+    if [ -f "$_hod_root/.dsh/contract" ] && grep -Eq '^[[:space:]]*holdoutOutputDir[[:space:]]*=' "$_hod_root/.dsh/contract"; then
+      printf 'out-holdout\n'; return 3
+    fi
+    printf 'out-holdout\n'
+    return 0
+  }
+  dsh_plain_relative_dir "$_hod_v" || { printf 'out-holdout\n'; return 3; }
+  printf '%s\n' "$_hod_v"
+  return 0
 }
 
 # dsh_check_through_wrapper <label> <mill> <task...>: run one Mill check through the feedback wrapper
@@ -2239,6 +2343,46 @@ dsh_weaver_failures() {
     }'
 }
 
+# dsh_holdout_verify <holdoutDir>: the output of dsh_weaver_failures on stdin -> the names the agent may see.
+# An allowlist is built ONCE: every string literal that is the first argument of `test(`, `pureTest(`,
+# `loggedTest(`, `simpleTest(` or `property(` in a regular file under <holdoutDir> (find -type f, so no
+# symlink is followed), `\"` and `\\` unescaped. A `  - <Suite>.<test>` line survives only when its test
+# name (after the first dot) EQUALS an allowlist entry as a whole string (`grep -Fxq`); a substring of
+# holdout source (`{`, an assertion line) never verifies. Only the test name is printed, never the suite
+# part (it is the runner's text). Interpolated (`s"..."`) and multi-line names fail closed (never in the
+# allowlist). At most 1000 lines are examined (the rest count as unverified); at most 20 names are printed,
+# each cut to 120 bytes (`cut -c`; no portable character-safe cut). Output: the `  - <name>` lines, then
+# `verified <k>`, `unverified <n>` (the caller buckets n) and `declared <d>`, the allowlist's size: 0 means
+# nothing under <holdoutDir> declares a test, and the caller reports the run as not verified (spec §10.5.4) --
+# an emptied holdoutDir must not read as `passed`.
+dsh_holdout_verify() {
+  _hv_dir=${1:-}; _hv_k=0; _hv_u=0; _hv_shown=0; _hv_seen=0
+  _hv_al=$(mktemp "${TMPDIR:-/tmp}/dsh-hv.XXXXXX") || _hv_al=/dev/null
+  if [ -n "$_hv_dir" ]; then
+    find "$_hv_dir" -type f -exec grep -ohE '((pure|logged|simple)?[Tt]est|property)\("([^"\\]|\\.)*"' {} + 2>/dev/null \
+      | sed -e 's/^[^"]*"//' -e 's/"$//' -e 's/\\"/"/g' -e 's/\\\\/\\/g' >"$_hv_al" 2>/dev/null || :
+  fi
+  while IFS= read -r _hv_line; do
+    case "$_hv_line" in '  - '*) ;; *) continue ;; esac
+    _hv_seen=$((_hv_seen + 1))
+    _hv_full=${_hv_line#  - }
+    _hv_name=${_hv_full#*.}
+    if [ "$_hv_seen" -gt 1000 ] || [ "$_hv_name" = "$_hv_full" ] || [ -z "$_hv_name" ] \
+       || ! grep -Fxq -e "$_hv_name" "$_hv_al" 2>/dev/null; then
+      _hv_u=$((_hv_u + 1)); continue
+    fi
+    _hv_k=$((_hv_k + 1))
+    if [ "$_hv_shown" -lt 20 ]; then
+      _hv_shown=$((_hv_shown + 1))
+      printf '  - %s\n' "$(printf '%s' "$_hv_name" | cut -c1-120)"
+    fi
+  done
+  _hv_d=0
+  [ "$_hv_al" = /dev/null ] || _hv_d=$(grep -c '' "$_hv_al" 2>/dev/null) || _hv_d=0
+  [ "$_hv_al" = /dev/null ] || rm -f "$_hv_al"
+  printf 'verified %s\nunverified %s\ndeclared %s\n' "$_hv_k" "$_hv_u" "${_hv_d:-0}"
+}
+
 # --- feedback: parse ------------------------------------------------------------------------------
 # dsh_strip_ansi: stdin -> stdout without SGR/CSI escapes. macOS awk accepts the octal \033 in a regex.
 dsh_strip_ansi() { awk '{ gsub(/\033\[[0-9;]*[A-Za-z]/, ""); print }'; }
@@ -2419,14 +2563,14 @@ dsh_feedback_parse() {
           next
         }
         if (line ~ /[Cc]ompilation failed|compile failed|A Scalafix (test|linter) error was reported/) next
-        if (!(line ~ /^(Exception in thread|java\.lang\.)/ || (infra_pending && line ~ /^(at |Caused by:|\.\.\. [0-9]+ more)/))) next
+        if (!(line ~ /^(Exception in thread|java\.lang\.)|Mill launcher failed|server launch failed/ || (infra_pending && line ~ /^(at |Caused by:|\.\.\. [0-9]+ more)/))) next
       }
       # --- infra: an exception outside any failure block, unless a suite header follows ---------------
       # A Scala 3 diagnostic (`-- [E006] Not Found Error: <file>:<line>:<col>`) is kept whole as the
       # message -- it carries the location -- and is not overwritten by the `Compilation failed` line
       # Mill prints after it (`[error] app.test.compile Compilation failed` / `compilation failed`).
       # `tasks failed` is NOT a marker: Mill prints it after a red test run as well.
-      if (!in_failures && rec_kind == "" && line ~ /^(Exception in thread|java\.lang\.(OutOfMemoryError|NoClassDefFoundError|ClassNotFoundException|NullPointerException|StackOverflowError)|[a-z.]*Error: |-- \[E[0-9]+\] .*Error: |.*compile failed|.*[Cc]ompilation failed|[Nn]o tests? (found|to run)|Test framework .* not found)/) {
+      if (!in_failures && rec_kind == "" && line ~ /^(Exception in thread|java\.lang\.(OutOfMemoryError|NoClassDefFoundError|ClassNotFoundException|NullPointerException|StackOverflowError)|[a-z.]*Error: |-- \[E[0-9]+\] .*Error: |.*compile failed|.*[Cc]ompilation failed|[Nn]o tests? (found|to run)|Test framework .* not found|.*Mill launcher failed|.*server launch failed)/) {
         if (!(infra_pending && infra_line ~ /^-- \[E[0-9]+\] / && line ~ /[Cc]ompilation failed/)) { infra_line = line; infra_detail = ""; ndet = 0 }
         infra_pending = 1; next }
       if (infra_pending && line ~ /^(at |Caused by:|\.\.\. [0-9]+ more)/) {
@@ -3170,6 +3314,348 @@ dsh_bounded_probe() {
   fi
   wait "$_bp_pid" 2>/dev/null
   return "$_bp_rc"
+}
+
+# --- the structural holdout seal: the agent's sandbox settings (spec 2026-10-02 §4.4) ----------------
+# dsh_json_get <file> <dotted.path>: the value at the path as compact JSON (true, "out-agent", ["a","b"]);
+# nothing, exit 0, when the path is absent or null (false is a value and is kept). Exit 2 when neither jq
+# nor python3 exists; exit 3 when the file is unreadable or not valid JSON.
+dsh_json_get() {
+  if command -v jq >/dev/null 2>&1; then
+    jq empty "$1" >/dev/null 2>&1 || return 3
+    jq -c --arg p "${2:-}" 'try getpath($p | split(".")) catch null | if . == null then empty else . end' "$1" 2>/dev/null
+    return 0
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(3)
+for k in sys.argv[2].split("."):
+    d = d.get(k) if isinstance(d, dict) else None
+if d is not None: print(json.dumps(d, separators=(",",":")))' "$1" "${2:-}"
+    return $?
+  fi
+  return 2
+}
+
+# dsh_holdout_target [root]: the first dotted segment of the last word of the contract's `holdout =` line
+# (the derivation tool-policy.sh uses), `holdout` when that is empty. Empty, exit 1, without the line.
+dsh_holdout_target() {
+  _ht_cmd=$(dsh_contract_get holdout "${1:-$(gate_root)}" 2>/dev/null) && [ -n "$_ht_cmd" ] || return 1
+  _ht_sel=${_ht_cmd##* }
+  _ht_target=${_ht_sel%%.*}
+  [ -n "$_ht_target" ] || _ht_target=holdout
+  printf '%s\n' "$_ht_target"
+}
+
+# dsh_holdout_out_path [root]: where Mill writes the holdout module, relative to an output directory -- the
+# selector (the last word of the `holdout =` line) without its final dotted segment (the task: test,
+# testOnly, …), the rest joined with `/`: holdout.test -> holdout, engine.holdout.test -> engine/holdout. A
+# single-segment selector is itself. Empty, exit 1, without the line. (dsh_holdout_target is a different
+# derivation: tool-policy's selector matching keys on the first segment.)
+dsh_holdout_out_path() {
+  _hp_cmd=$(dsh_contract_get holdout "${1:-$(gate_root)}" 2>/dev/null) && [ -n "$_hp_cmd" ] || return 1
+  _hp_sel=${_hp_cmd##* }
+  case "$_hp_sel" in *.*) _hp_sel=${_hp_sel%.*} ;; esac
+  [ -n "$_hp_sel" ] || _hp_sel=holdout
+  printf '%s\n' "$_hp_sel" | tr . /
+}
+
+# dsh_holdout_dir [root]: the physical (`pwd -P`) holdoutDir of the contract (spec 2026-10-02 §10.2.1). Exit 1,
+# nothing printed, when the key is absent. Exit 3 when it is present but invalid, the reason on stdout: a relative
+# value not starting with `../`, a directory that does not exist, or one that is the repository root or inside it.
+dsh_holdout_dir() {
+  _hd_root=${1:-$(gate_root)}
+  _hd_v=$(dsh_contract_get holdoutDir "$_hd_root" 2>/dev/null) || return 1
+  case "$_hd_v" in
+    '') printf 'holdoutDir is empty\n'; return 3 ;;
+    /*) _hd_path=$_hd_v ;;
+    ../*) _hd_path=$_hd_root/$_hd_v ;;
+    *) printf 'holdoutDir = %s must be absolute or start with ../\n' "$_hd_v"; return 3 ;;
+  esac
+  _hd_phys=$(CDPATH= cd -- "$_hd_path" 2>/dev/null && pwd -P) || {
+    printf 'holdoutDir = %s is not an existing directory\n' "$_hd_v"; return 3
+  }
+  _hd_rp=$(CDPATH= cd -- "$_hd_root" 2>/dev/null && pwd -P) || _hd_rp=$_hd_root
+  # By inode (-ef), not by string: a case-insensitive filesystem spells one directory many ways, and an
+  # ANCESTOR of the root (/, ../, $HOME) holds the repository too. Walk each path up to / and compare.
+  _hd_d=$_hd_phys
+  while :; do
+    if [ "$_hd_d" -ef "$_hd_rp" ]; then
+      printf 'holdoutDir = %s is inside the repository (root %s)\n' "$_hd_v" "$_hd_rp"; return 3
+    fi
+    [ "$_hd_d" = / ] && break
+    _hd_d=$(dirname -- "$_hd_d")
+  done
+  _hd_d=$_hd_rp
+  while :; do
+    if [ "$_hd_d" -ef "$_hd_phys" ]; then
+      printf 'holdoutDir = %s contains the repository root %s\n' "$_hd_v" "$_hd_rp"; return 3
+    fi
+    [ "$_hd_d" = / ] && break
+    _hd_d=$(dirname -- "$_hd_d")
+  done
+  printf '%s\n' "$_hd_phys"
+}
+
+# _sb_get <key>: the effective value of a setting in $_sb_val -- .claude/settings.local.json's when that file
+# parsed ($_sb_lok=1) and sets the key, else .claude/settings.json's -- and the file it came from in $_sb_from
+# (local|project). Claude Code lets the local file override the project one, so the local value is the one
+# the session runs with.
+_sb_get() {
+  _sb_from=project
+  if [ "$_sb_lok" = 1 ]; then
+    _sb_val=$(dsh_json_get "$_sb_local" "$1")
+    if [ -n "$_sb_val" ]; then _sb_from=local; return 0; fi
+  fi
+  _sb_val=$(dsh_json_get "$_sb_file" "$1")
+}
+
+# _sb_req <key> <json value>: one row for a required sandbox setting; sets _sb_bad=1 on a FAIL.
+# Reads $_sb_file (and the local file, through _sb_get); the caller has already established that they parse.
+_sb_req() {
+  _sb_get "$1"
+  if [ "$_sb_val" = "$2" ]; then
+    if [ "$_sb_from" = local ]; then
+      printf 'ok\t%s = %s (from .claude/settings.local.json)\n' "$1" "$2"
+    else
+      printf 'ok\t%s = %s\n' "$1" "$2"
+    fi
+  elif [ "$_sb_from" = local ]; then
+    printf 'FAIL\t.claude/settings.local.json overrides %s with %s — the holdout seal needs %s; remove the key from that file or set it to %s\n' "$1" "$_sb_val" "$2" "$2"
+    _sb_bad=1
+  else
+    printf 'FAIL\t%s must be %s (found %s) — add "%s": %s\n' "$1" "$2" "${_sb_val:-absent}" "${1##*.}" "$2"
+    _sb_bad=1
+  fi
+}
+
+# _sb_array <key>: the project file's value at <key> in $_sb_arr. A value that is not a JSON array -- a
+# string would satisfy the substring match below -- is a FAIL, and $_sb_arr is emptied so every entry the
+# caller requires FAILs too. Absent stays empty, without a row of its own.
+_sb_array() {
+  _sb_arr=$(dsh_json_get "$_sb_file" "$1")
+  case "$_sb_arr" in
+    ''|'['*) ;;
+    *) printf 'FAIL\t%s must be a JSON array (found %s)\n' "$1" "$_sb_arr"; _sb_bad=1; _sb_arr='' ;;
+  esac
+}
+
+# _sb_has <key> <entry> <why>: one row for an entry the array $_sb_arr (read from <key>) must hold; sets
+# _sb_bad=1 when it is missing.
+_sb_has() {
+  case "$_sb_arr" in
+    *"\"$2\""*) printf 'ok\t%s has "%s"\n' "$1" "$2" ;;
+    *) printf 'FAIL\t%s lacks "%s" — %s\n' "$1" "$2" "$3"; _sb_bad=1 ;;
+  esac
+}
+
+# dsh_sandbox_checks [root]: one `ok|FAIL|note` TAB <message> row per rule; exit 1 when any FAIL. The sandbox
+# is required only when the contract has a `holdout =` line. check-harness.sh maps the rows onto its
+# ok/bad/note; lib-test.sh drives the function directly (the dsh_holdout_checks shape).
+dsh_sandbox_checks() {
+  _sb_root=${1:-$(gate_root)}
+  _sb_bad=0
+  _sb_tab=$(printf '\t')
+  _sb_target=$(dsh_holdout_target "$_sb_root") || {
+    printf 'note\tno sealed holdout suite in the contract — the sandbox is not required\n'
+    return 0
+  }
+  _sb_ao=$(dsh_agent_output_dir "$_sb_root")
+  if [ $? = 3 ]; then
+    _sb_av=$(dsh_contract_get agentOutputDir "$_sb_root" 2>/dev/null)
+    printf 'FAIL\tagentOutputDir = %s is not a plain relative path; the engine uses out-agent\n' "$_sb_av"
+    _sb_bad=1
+  fi
+  # The human's ./out is denied whole (below); an agent building there would read the holdout compiled by the
+  # human's DSH_HOLDOUT_DIR=… ./mill prePush.
+  if [ "$_sb_ao" = out ]; then
+    printf 'FAIL\tagentOutputDir = out — the agent would build where the holdout is compiled (the human'"'"'s prePush with DSH_HOLDOUT_DIR); remove the key (default out-agent) or name another directory\n'
+    _sb_bad=1
+  fi
+  # The gate's holdout run has its own output directory (spec §10.5.1).
+  _sb_hod=$(dsh_holdout_output_dir "$_sb_root")
+  if [ $? = 3 ]; then
+    _sb_hv=$(dsh_contract_get holdoutOutputDir "$_sb_root" 2>/dev/null)
+    printf 'FAIL\tholdoutOutputDir = %s is not a plain relative path; the engine uses out-holdout\n' "$_sb_hv"
+    _sb_bad=1
+  fi
+  if [ "$_sb_hod" = "$_sb_ao" ]; then
+    printf 'FAIL\tholdoutOutputDir = %s is the agent'"'"'s output directory — the holdout run'"'"'s output (mill-console-tail holds holdout source) would be the agent'"'"'s; name another directory\n' "$_sb_hod"
+    _sb_bad=1
+  fi
+  # The holdout command's exit status is the verdict: exactly one ./mill call, nothing chained or piped after it.
+  _sb_hcmd=$(dsh_contract_get holdout "$_sb_root" 2>/dev/null)
+  _sb_hone=1
+  case "$_sb_hcmd" in *'|'*|*';'*|*'&'*) _sb_hone=0 ;; esac
+  _sb_file="$_sb_root/.claude/settings.json"
+  if [ ! -f "$_sb_file" ]; then
+    printf 'FAIL\t.claude/settings.json is missing — copy .dsh/cc-settings.json there (a human step: the file is frozen)\n'
+    return 1
+  fi
+  dsh_json_get "$_sb_file" sandbox >/dev/null
+  case $? in
+    2) printf 'FAIL\tcannot read .claude/settings.json: neither jq nor python3 is on PATH\n'; return 1 ;;
+    3) printf 'FAIL\t.claude/settings.json is not valid JSON\n'; return 1 ;;
+  esac
+  # .claude/settings.local.json overrides the project file key by key; one that switches the seal off is
+  # as bad as a project file that never switched it on.
+  _sb_local="$_sb_root/.claude/settings.local.json"
+  _sb_lok=0
+  if [ -f "$_sb_local" ]; then
+    if dsh_json_get "$_sb_local" sandbox >/dev/null; then
+      _sb_lok=1
+    else
+      printf 'FAIL\t.claude/settings.local.json is not valid JSON — Claude Code may ignore it or refuse it; fix or delete it\n'
+      _sb_bad=1
+    fi
+  fi
+
+  _sb_req sandbox.enabled true
+  _sb_req sandbox.allowUnsandboxedCommands false
+  _sb_req sandbox.failIfUnavailable true
+  _sb_req sandbox.network.allowLocalBinding true
+
+  _sb_get env.MILL_OUTPUT_DIR
+  if [ "$_sb_val" = "\"$_sb_ao\"" ]; then
+    printf 'ok\tenv.MILL_OUTPUT_DIR = "%s"\n' "$_sb_ao"
+  elif [ "$_sb_from" = local ]; then
+    printf 'FAIL\t.claude/settings.local.json overrides env.MILL_OUTPUT_DIR with %s — it must be "%s", the agent output directory; remove the key from that file\n' "$_sb_val" "$_sb_ao"
+    _sb_bad=1
+  else
+    printf 'FAIL\tenv.MILL_OUTPUT_DIR must be "%s", the agent output directory (found %s) — add "MILL_OUTPUT_DIR": "%s" under "env"\n' "$_sb_ao" "${_sb_val:-absent}" "$_sb_ao"
+    _sb_bad=1
+  fi
+
+  # Commands listed in excludedCommands run outside the sandbox. Each file is checked on its own: a list in
+  # either one reopens the seal, whichever way Claude Code combines them.
+  _sb_x=$(dsh_json_get "$_sb_file" sandbox.excludedCommands)
+  case "$_sb_x" in
+    ''|'[]'|'""') printf 'ok\tsandbox.excludedCommands is empty\n' ;;
+    *) printf 'FAIL\tsandbox.excludedCommands is not empty (%s) — commands listed there run outside the sandbox, which reopens the holdout seal\n' "$_sb_x"; _sb_bad=1 ;;
+  esac
+  if [ "$_sb_lok" = 1 ]; then
+    _sb_x=$(dsh_json_get "$_sb_local" sandbox.excludedCommands)
+    case "$_sb_x" in
+      ''|'[]'|'""') ;;
+      *) printf 'FAIL\t.claude/settings.local.json overrides sandbox.excludedCommands with %s — commands listed there run outside the sandbox, which reopens the holdout seal\n' "$_sb_x"; _sb_bad=1 ;;
+    esac
+  fi
+  _sb_get sandbox.enableWeakerNestedSandbox
+  if [ "$_sb_val" != true ]; then
+    printf 'ok\tsandbox.enableWeakerNestedSandbox is not true\n'
+  elif [ "$_sb_from" = local ]; then
+    printf 'FAIL\t.claude/settings.local.json overrides sandbox.enableWeakerNestedSandbox with true — the weaker nested sandbox is not the seal the harness relies on; remove the key from that file\n'
+    _sb_bad=1
+  else
+    printf 'FAIL\tsandbox.enableWeakerNestedSandbox is true — the weaker nested sandbox is not the seal the harness relies on; remove it\n'
+    _sb_bad=1
+  fi
+
+  _sb_rows=$(dsh_frozen_paths "$_sb_root" 2>/dev/null)
+  _sb_array sandbox.filesystem.denyRead
+  _sb_has sandbox.filesystem.denyRead ./out "the human's Mill output directory (its daemon, and the holdout its DSH_HOLDOUT_DIR=… ./mill prePush compiles there)"
+  _sb_has sandbox.filesystem.denyRead "./$_sb_hod" "the gate's holdout run output directory (holdoutOutputDir)"
+  # Holdout output the agent directory held before the holdout run moved to holdoutOutputDir (an older engine).
+  [ "$_sb_hone" = 0 ] ||
+    _sb_has sandbox.filesystem.denyRead "./$_sb_ao/$(dsh_holdout_out_path "$_sb_root")" "the holdout module's compiled output in the agent's output directory"
+  # The holdout lives outside the repository (spec §10.2): holdoutDir must be set, valid, and denied to the agent.
+  _sb_hd=$(dsh_holdout_dir "$_sb_root")
+  case $? in
+    0) _sb_has sandbox.filesystem.denyRead "$_sb_hd" "the holdoutDir, outside the repository" ;;
+    1) printf 'FAIL\tholdoutDir is absent from .dsh/contract — add holdoutDir = <absolute path, or ../…> of the directory holding the holdout sources, outside the repository\n'; _sb_bad=1; _sb_hd='' ;;
+    *) printf 'FAIL\t%s\n' "$_sb_hd"; _sb_bad=1; _sb_hd='' ;;
+  esac
+  while IFS="$_sb_tab" read -r _sb_acc _sb_kind _sb_path _sb_why; do
+    [ "$_sb_acc" = sealed ] || continue
+    if [ "$_sb_kind" = prefix ]; then _sb_row="$_sb_path/**"; else _sb_row=$_sb_path; fi
+    _sb_has sandbox.filesystem.denyRead "./$_sb_path" "the sealed row $_sb_row"
+  done <<EOF
+$_sb_rows
+EOF
+
+  # The sandbox lets the agent write the working directory; these are what the unsandboxed hooks run or trust.
+  _sb_array sandbox.filesystem.denyWrite
+  _sb_has sandbox.filesystem.denyWrite ./.dsh/engine "the engine the unsandboxed hooks run (mill-gate.sh among it)"
+  _sb_has sandbox.filesystem.denyWrite ./.dsh/contract "the contract whose commands the unsandboxed hooks run"
+  _sb_has sandbox.filesystem.denyWrite ./.dsh/frozen-paths "the frozen and sealed rows themselves"
+  _sb_has sandbox.filesystem.denyWrite ./.claude "the hook and sandbox settings"
+  _sb_has sandbox.filesystem.denyWrite "./$_sb_hod" "the gate's holdout run output directory (holdoutOutputDir)"
+  [ -z "$_sb_hd" ] || _sb_has sandbox.filesystem.denyWrite "$_sb_hd" "the holdoutDir, outside the repository"
+  while IFS="$_sb_tab" read -r _sb_acc _sb_kind _sb_path _sb_why; do
+    [ "$_sb_acc" = sealed ] || continue
+    if [ "$_sb_kind" = prefix ]; then _sb_row="$_sb_path/**"; else _sb_row=$_sb_path; fi
+    _sb_has sandbox.filesystem.denyWrite "./$_sb_path" "the sealed row $_sb_row"
+  done <<EOF
+$_sb_rows
+EOF
+
+  # Nothing of the holdout may stay in the repository: a tracked file under a sealed row is readable from .git.
+  _sb_tracked=''
+  while IFS="$_sb_tab" read -r _sb_acc _sb_kind _sb_path _sb_why; do
+    [ "$_sb_acc" = sealed ] || continue
+    _sb_tracked="$_sb_tracked$(git -C "$_sb_root" -c core.quotepath=off ls-files -- "$_sb_path" 2>/dev/null | tr '\n' ' ')"
+  done <<EOF
+$_sb_rows
+EOF
+  if [ -n "$_sb_tracked" ]; then
+    printf 'FAIL\tgit tracks files under a sealed row (%s) — their content is readable from .git; git rm --cached them and keep the holdout in holdoutDir\n' "${_sb_tracked% }"
+    _sb_bad=1
+  fi
+
+  # Settings `env` reaches the hooks: a DSH_* key there is a seam turned into configuration.
+  for _sb_f in "$_sb_file" "$_sb_local"; do
+    [ -f "$_sb_f" ] || continue
+    if [ "$_sb_f" = "$_sb_local" ] && [ "$_sb_lok" != 1 ]; then continue; fi
+    _sb_dk=$(dsh_json_get "$_sb_f" env 2>/dev/null | grep -o '"DSH_[A-Za-z0-9_]*"[ ]*:' | tr -d '": ' | tr '\n' ' ')
+    if [ -n "$_sb_dk" ]; then
+      printf 'FAIL\t%s sets env %s — DSH_* variables are the engine'"'"'s own seams and must not be configured; remove them\n' "${_sb_f#$_sb_root/}" "${_sb_dk% }"
+      _sb_bad=1
+    fi
+  done
+
+  _sb_array sandbox.filesystem.allowWrite
+  _sb_aw=$_sb_arr
+  for _sb_c in '~/.cache/mill' '~/.cache/coursier' '~/Library/Caches/Coursier' '/var/folders'; do
+    case "$_sb_aw" in
+      *"\"$_sb_c\""*) ;;
+      *)
+        case "$_sb_c" in
+          '/var/folders') printf 'note\tsandbox.filesystem.allowWrite lacks "%s" — on macOS the JVM'"'"'s temp directory (java.io.tmpdir) is under /var/folders, and without it a cold Mill build fails inside the sandbox\n' "$_sb_c" ;;
+          *) printf 'note\tsandbox.filesystem.allowWrite lacks "%s" — Mill and coursier cannot write their caches inside the sandbox, so the build fails loudly\n' "$_sb_c" ;;
+        esac
+        ;;
+    esac
+  done
+
+  git -C "$_sb_root" check-ignore -q "$_sb_ao/x" 2>/dev/null ||
+    printf 'note\t%s/ is not gitignored — add /%s/ to .gitignore\n' "$_sb_ao" "$_sb_ao"
+  git -C "$_sb_root" check-ignore -q "$_sb_hod/x" 2>/dev/null ||
+    printf 'note\t%s/ is not gitignored — add /%s/ to .gitignore\n' "$_sb_hod" "$_sb_hod"
+
+  for _sb_key in turnEndTests fastTests holdout; do
+    _sb_cmd=$(dsh_contract_get "$_sb_key" "$_sb_root" 2>/dev/null) || continue
+    [ -n "$_sb_cmd" ] || continue
+    dsh_gate_command "$_sb_cmd" /engine >/dev/null
+    case $? in
+      1) if [ "$_sb_key" = holdout ]; then
+           printf 'FAIL\t%s = %s does not start with ./mill, so the engine cannot route it through mill-gate.sh — the holdout run must be one ./mill call\n' "$_sb_key" "$_sb_cmd"; _sb_bad=1
+         else
+           printf 'note\t%s = %s does not start with ./mill, so the engine cannot route it through mill-gate.sh — a Mill server it starts is outside the seal\n' "$_sb_key" "$_sb_cmd"
+         fi ;;
+      2) printf 'FAIL\t%s = %s runs Mill more than once; only its first ./mill can be routed through mill-gate.sh — split it, or make it one ./mill call\n' "$_sb_key" "$_sb_cmd"; _sb_bad=1 ;;
+      0) if [ "$_sb_key" = holdout ] && [ "$_sb_hone" = 0 ]; then
+           printf 'FAIL\t%s = %s is not exactly one ./mill call (it contains |, ;, &&, || or &) — its exit status is the verdict, and `… || true` or a pipe would fake a pass; make it one ./mill call\n' "$_sb_key" "$_sb_cmd"; _sb_bad=1
+         fi ;;
+    esac
+  done
+
+  _sb_mcp=$(dsh_json_get "$_sb_file" mcpServers)
+  if [ -f "$_sb_root/.mcp.json" ] || { [ -n "$_sb_mcp" ] && [ "$_sb_mcp" != '{}' ]; }; then
+    printf 'note\tMCP servers run outside the sandbox — one that runs Mill or reads holdout/ reopens the seal (see README "Structural holdout seal")\n'
+  fi
+  [ "$_sb_bad" = 0 ]
 }
 
 # --- diff-scoped verification: the installation rules (spec 2026-09-24 §3) ----------------------

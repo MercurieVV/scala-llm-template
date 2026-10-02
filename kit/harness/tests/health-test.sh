@@ -305,6 +305,20 @@ for segments in 0 1 2 3; do
   rm -rf "${root%%/$pad*}"
 done
 
+# --- DSH_SANDBOX_PROBE is a seam for ok|none only: any other value runs the real probe ---------------
+# A stub `uname` names a platform the probe knows nothing about, so the real probe answers none and the
+# platform note appears; a seam that took `bogus` as "a sandbox exists" would stay quiet instead.
+sp=$(scratch); spbin=$(scratch)
+mkdir -p "$sp/.dsh" "$sp/.claude"
+printf 'holdout = ./mill -j 1 --ticker false holdout.test\n' > "$sp/.dsh/contract"
+printf '{"sandbox":{"enabled":true}}\n' > "$sp/.claude/settings.json"
+printf '#!/bin/sh\necho Plan9\n' > "$spbin/uname"; chmod +x "$spbin/uname"
+sp_out=$(env DSH_SANDBOX_PROBE=bogus GATE_ROOT="$sp" PATH="$spbin:$engine/tests/bin:$PATH" sh "$engine/hooks/health.sh" 2>&1)
+has "sandbox probe: an unknown DSH_SANDBOX_PROBE value runs the real probe" "no OS sandbox on this platform (Plan9)" "$sp_out"
+sp_out=$(env DSH_SANDBOX_PROBE=ok GATE_ROOT="$sp" PATH="$spbin:$engine/tests/bin:$PATH" sh "$engine/hooks/health.sh" 2>&1)
+lacks "sandbox probe: DSH_SANDBOX_PROBE=ok still replaces the probe" "no OS sandbox on this platform" "$sp_out"
+rm -rf "$sp" "$spbin"
+
 rm -rf "$a" "$b" "$c" "$d" "$e" "$f" "$g" "$h" "$i" "$j"
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"

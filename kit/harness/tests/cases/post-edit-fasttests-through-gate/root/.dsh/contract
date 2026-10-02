@@ -1,0 +1,1 @@
+fastTests = ./mill -j 1 --ticker false <module>.test.testOnly '*Props'

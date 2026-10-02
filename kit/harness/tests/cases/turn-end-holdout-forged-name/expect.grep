@@ -1,0 +1,4 @@
+holdout: failed — 1 verified failing name(s)
+  - stop releases device
+unverified lines dropped: some
+post_gate: forged name not printed
