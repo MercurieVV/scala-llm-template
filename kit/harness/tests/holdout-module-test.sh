@@ -6,6 +6,8 @@ set -u
 engine=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 tpl=$(CDPATH= cd -- "$engine/../.." && pwd)
 command -v mill >/dev/null 2>&1 || { echo "SKIP holdout-module-test: no mill on PATH"; exit 0; }
+# A vendored engine (.dsh/engine in a project) has no kit/recipes: the recipe is tested where it lives.
+[ -f "$tpl/kit/recipes/mill/Gate.mill" ] || { echo "SKIP holdout-module-test: no kit/recipes/mill/Gate.mill (vendored engine)"; exit 0; }
 passed=0; failed=0
 ok() { passed=$((passed+1)); echo "ok   $1"; }
 bad() { failed=$((failed+1)); echo "FAIL $1"; printf '%s\n' "$2" | tail -15; }
