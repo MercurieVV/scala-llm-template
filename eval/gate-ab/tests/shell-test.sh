@@ -199,6 +199,31 @@ rm -rf "$tmp/root/runs"; mkdir -p "$tmp/root/runs/noise-g-1" "$tmp/root/runs/noi
 cenv $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
 check "campaign resume 47 runs" "$(wc -l <"$tmp/calls" | tr -d ' ')" "47"
 grep -qx 'noise-u-1' "$tmp/calls" && ! grep -qx 'noise-g-1' "$tmp/calls" && ok "campaign resume redoes half-run, skips done" || bad "campaign resume redoes half-run, skips done"
+# Ruling 17: errored score.json is not done
+cat >"$tmp/fake-score-err" <<'F'
+#!/bin/sh
+echo "$1" >>"$SCORES"; mkdir -p "$1"; echo '{"solved": false, "error": "scoring incomplete"}' >"$1/score.json"
+F
+chmod +x "$tmp/fake-score-err"
+mkr() { mkdir -p "$tmp/root/runs/$1"; printf '%s\n' "$2" >"$tmp/root/runs/$1/score.json"; [ "${3:-}" = norun ] || echo '{}' >"$tmp/root/runs/$1/run.json"; }
+rm -f "$tmp/calls" "$tmp/scores"; rm -rf "$tmp/root/runs" "$tmp/root/campaign.log"
+mkr noise-g-1 '{"solved":false,"error":"scoring incomplete"}'
+mkr noise-u-1 '{"solved":false,"error":"no result event"}'
+mkr mixer-modes-g-1 '{"solved":true,"error":null}'
+mkr mixer-modes-u-1 '{"solved":false,"error":"HEAD baseline missing"}' norun
+cenv SCORES=$tmp/scores $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
+grep -qx 'noise-g-1' "$tmp/calls" && bad "retry rescore-only skips run.sh" || ok "retry rescore-only skips run.sh"
+grep -q 'noise-g-1' "$tmp/root/campaign.log" && grep 'noise-g-1' "$tmp/root/campaign.log" | grep -q 'retry=rescore' && ok "rescore retry logged" || bad "rescore retry logged"
+grep -qx 'noise-u-1' "$tmp/calls" && grep 'noise-u-1' "$tmp/root/campaign.log" | grep -q 'retry=rerun' && ok "no result event reruns the whole run" || bad "no result event reruns the whole run"
+grep -qx 'mixer-modes-u-1' "$tmp/calls" && ok "missing run.json reruns the whole run" || bad "missing run.json reruns the whole run"
+grep -qx 'mixer-modes-g-1' "$tmp/calls" && bad "error null is skipped" || ok "error null is skipped"
+grep -q 'mixer-modes-g-1' "$tmp/root/campaign.log" && bad "skipped run not logged" || ok "skipped run not logged"
+# a run that errors again after its retry: exactly one retry, loop continues
+rm -f "$tmp/calls" "$tmp/scores"; rm -rf "$tmp/root/runs"
+mkr noise-g-1 '{"solved":false,"error":"scoring incomplete"}'
+GA_SCORE=$tmp/fake-score-err cenv GA_SCORE=$tmp/fake-score-err SCORES=$tmp/scores $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
+check "errored retry: score.py once for the retried run" "$(grep -c 'noise-g-1$' "$tmp/scores")" "1"
+check "errored retry: loop continues to all other runs" "$(wc -l <"$tmp/calls" | tr -d ' ')" "47"
 # smoke
 rm -f "$tmp/calls"; rm -rf "$tmp/root/runs"
 cenv $SH "$tmp/home/campaign.sh" --smoke >/dev/null 2>&1

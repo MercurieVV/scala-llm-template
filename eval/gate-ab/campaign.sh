@@ -12,13 +12,26 @@ if [ -z "${GA_CAFFEINATED:-}" ]; then
 fi
 run=${GA_RUN:-sh "$GA_HOME/run.sh"}; sc=${GA_SCORE:-python3 "$GA_HOME/score.py"}
 prep=${GA_PREPARE:-sh "$GA_HOME/prepare.sh"}; bl=${GA_BASELINE:-python3 "$GA_HOME/score.py" --baseline}
+# score_error <id>: "" when score.json has error null, "none" when absent, else the error text (unreadable counts as an error).
+score_error() {
+  [ -f "$GA_ROOT/runs/$1/score.json" ] || { echo none; return 0; }
+  python3 -c "import json,sys;e=json.load(open(sys.argv[1])).get('error');print('' if e is None else e)" "$GA_ROOT/runs/$1/score.json" 2>/dev/null || echo unreadable
+}
+# A score.json with a non-null error is not done (score.py writes one while still running, and on interruption / infra failure).
+# One automatic retry per run per invocation: "no result event" or no run.json -> redo the run; otherwise rescore only.
 one() {
   id=$(ga_run_id "$1" "$2" "$3") || exit 1
-  [ -f "$GA_ROOT/runs/$id/score.json" ] && { echo "skip $id"; return 0; }
-  $run "$1" "$2" "$3"; rc=$?
-  $sc "$GA_ROOT/runs/$id"
-  s=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('solved'))" "$GA_ROOT/runs/$id/score.json" 2>/dev/null || echo none)
-  printf '%s %s exit=%s solved=%s\n' "$(date '+%F %T')" "$id" "$rc" "$s" >> "$GA_ROOT/campaign.log"
+  rd=$GA_ROOT/runs/$id; e=$(score_error "$id"); how=run
+  if [ "$e" = none ]; then how=run
+  elif [ -z "$e" ]; then echo "skip $id"; return 0
+  elif [ "$e" = "no result event" ] || [ ! -f "$rd/run.json" ]; then how=rerun
+  else how=rescore; fi
+  rc=-
+  if [ "$how" != rescore ]; then $run "$1" "$2" "$3"; rc=$?; fi
+  $sc "$rd"
+  s=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('solved'))" "$rd/score.json" 2>/dev/null || echo none)
+  [ "$how" = run ] && note= || note=" retry=$how(was: $e)"
+  printf '%s %s exit=%s solved=%s%s\n' "$(date '+%F %T')" "$id" "$rc" "$s" "$note" >> "$GA_ROOT/campaign.log"
 }
 mkdir -p "$GA_ROOT/runs"
 if [ "${1:-}" = --smoke ]; then tasks=midi-synth; else tasks=$GA_TASKS; fi
