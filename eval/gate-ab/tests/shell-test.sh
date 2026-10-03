@@ -81,5 +81,46 @@ grep -q '???' "$tmp/root/base/t1/tree/m/src/A.scala" && ok "prepare applies stub
 [ ! -e "$tmp/root/cache" ] && ok "prepare never creates cache" || bad "prepare never creates cache"
 rm -rf "$tmp"
 
+# --- run.sh against fakes
+tmp=$(mktemp -d)
+mkdir -p "$tmp/home/tasks/t1" "$tmp/root/base/t1/tree/.dsh" "$tmp/skr/.claude" "$tmp/hsrc"
+cp "$ga/lib.sh" "$ga/timeout.py" "$ga/run.sh" "$tmp/home/" 2>/dev/null
+printf "TASK_MODULE='m.test'\nHIDDEN_SPEC='x'\nCUT_FILES='x'\nFEATURE='f'\n" >"$tmp/home/tasks/t1/task.env"
+echo 'do the task' >"$tmp/home/tasks/t1/prompt.txt"
+( cd "$tmp/root/base/t1/tree" && printf 'holdoutDir = ../x\n' >.dsh/contract && printf '.claude/\nout/\nout-agent/\n' >.gitignore \
+  && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm base )
+( cd "$tmp/hsrc" && echo spec >HSpec.scala && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm h )
+echo "{\"hooks\":\"$tmp/hsrc/bin/check\"}" >"$tmp/skr/.claude/settings.json"
+cat >"$tmp/claude" <<'FAKE'
+#!/bin/sh
+ls -a . >"$FAKE_LS"
+echo '{"type":"system"}'; echo '{"type":"result"}'
+echo 'agent wrote this' >>agent-note.txt
+[ -n "${FAKE_SLEEP:-}" ] && sleep "$FAKE_SLEEP"
+exit 0
+FAKE
+chmod +x "$tmp/claude"
+runenv() { GA_HOME=$tmp/home GA_ROOT=$tmp/root GA_SKREEEP2=$tmp/skr GA_HOLDOUT_SRC=$tmp/hsrc GA_HOLDOUT_COMMIT=HEAD CLAUDE_BIN=$tmp/claude env "$@"; }
+rd=$tmp/root/runs
+runenv FAKE_LS=$tmp/ls-g.txt $SH "$tmp/home/run.sh" t1 g 1 >/dev/null 2>&1; check "run g exit 0" "$?" "0"
+grep -q '"timed_out":false' "$rd/t1-g-1/run.json" && ok "run g not timed out" || bad "run g not timed out"
+hd=$(CDPATH= cd -- "$rd/t1-g-1/holdout" && pwd -P)
+grep -q "$hd" "$rd/t1-g-1/repo/.claude/settings.json" && ! grep -q "$tmp/hsrc" "$rd/t1-g-1/repo/.claude/settings.json" && ok "run g settings rewritten" || bad "run g settings rewritten"
+check "run g contract holdoutDir" "$(cat "$rd/t1-g-1/repo/.dsh/contract")" "holdoutDir = $hd"
+[ -f "$rd/t1-g-1/holdout/HSpec.scala" ] && ok "run g holdout exported" || bad "run g holdout exported"
+cmp -s "$rd/t1-g-1/settings.json" "$rd/t1-g-1/repo/.claude/settings.json" && ok "run g settings copy" || bad "run g settings copy"
+grep -q 'agent wrote this' "$rd/t1-g-1/final.diff" && ok "run g final.diff" || bad "run g final.diff"
+[ -f "$rd/t1-g-1/final-tree.tar.gz" ] && ok "run g tarball" || bad "run g tarball"
+[ -s "$rd/t1-g-1/transcript.jsonl" ] && ok "run g transcript" || bad "run g transcript"
+git -C "$rd/t1-g-1/repo" rev-parse -q --verify refs/tags/base >/dev/null && ok "run g base tag" || bad "run g base tag"
+[ -s "$tmp/ls-g.txt" ] && [ ! -e "$tmp/root/cache" ] && ! grep -qx out "$tmp/ls-g.txt" && ! grep -qx 'out-agent' "$tmp/ls-g.txt" && ok "run g no out dirs at start" || bad "run g no out dirs at start"
+runenv FAKE_LS=$tmp/ls-u.txt $SH "$tmp/home/run.sh" t1 u 1 >/dev/null 2>&1; check "run u exit 0" "$?" "0"
+check "run u settings" "$(cat "$rd/t1-u-1/repo/.claude/settings.json")" '{"permissions":{}}'
+[ ! -e "$rd/t1-u-1/holdout" ] && ok "run u no holdout" || bad "run u no holdout"
+[ -s "$tmp/ls-u.txt" ] && ! grep -qx out "$tmp/ls-u.txt" && ! grep -qx 'out-agent' "$tmp/ls-u.txt" && ok "run u no out dirs at start" || bad "run u no out dirs at start"
+runenv GA_CAP_SECONDS=1 FAKE_SLEEP=20 FAKE_LS=$tmp/ls-t.txt $SH "$tmp/home/run.sh" t1 u 2 >/dev/null 2>&1
+grep -q '"timed_out":true' "$rd/t1-u-2/run.json" && ok "run timeout recorded" || bad "run timeout recorded"
+rm -rf "$tmp"
+
 echo "shell-test: $passed passed, $failed failed"
 [ "$failed" -eq 0 ]
