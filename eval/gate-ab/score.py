@@ -364,7 +364,7 @@ def hardcoding(diff_text, hidden_spec_text):
 _TOKEN = re.compile(r"""[^\s"'`;|&<>(){}=,]+""")
 
 
-_CONTENT_KEYS = {"content", "new_string", "old_string", "new_source", "text", "edits"}
+_CONTENT_KEYS = {"content", "new_string", "old_string", "new_source", "text", "edits", "write"}  # "write": scala-semantic annotated_source file body
 
 
 def _leaves(o, key=None):

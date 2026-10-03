@@ -117,6 +117,15 @@ class Contamination(unittest.TestCase):
     def test_dev_null_and_urls_ok(self):
         self.assertEqual(self.flagged("curl https://x.org/a/b 2>/dev/null"), [])
 
+class RealGated(unittest.TestCase):
+    """Fixture = verbatim events from the smoke run midi-synth-g-9 (real hook texts)."""
+    def test_real_hook_texts_counted(self):
+        t = score.parse_transcript(lines("real-gated.jsonl"))
+        self.assertEqual(score.gate_blocks(t["tool_calls"], t["hook_texts"]), {"ScalaSemantic": 1, "turn-end": 1})
+    def test_real_scala_semantic_write_body_not_contamination(self):
+        t = score.parse_transcript(lines("real-gated.jsonl"))
+        self.assertEqual(score.contamination(t["tool_calls"], "/Users/someone/gate-eval/runs/midi-synth-g-9"), [])
+
 class Weaver(unittest.TestCase):
     def test_counts(self):
         log = "\x1b[32m+ \x1b[0ma passes 1ms\n\x1b[31m- \x1b[0mb fails 2ms\n+ c 3ms\n"

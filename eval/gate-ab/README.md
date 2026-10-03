@@ -57,7 +57,7 @@ Each task needs preparation (e.g., environment setup).
 sh eval/gate-ab/campaign.sh --smoke
 ```
 
-Verify setup with a minimal run (useful for debugging before full campaign).
+Verify setup with a minimal run (useful for debugging before full campaign). Runs `midi-synth` arm g then u at rep 9 (kept out of the 1..3 scored set; report.py ignores rep 9). campaign.sh first unlocks run dirs, prepares any task whose `validation.txt` is not three `=yes` lines (smoke: only midi-synth), computes `head-baseline.json` if missing, and re-execs itself under `caffeinate -dims`.
 
 ### 4. Run the full campaign
 
@@ -131,3 +131,14 @@ Expected: 9 passed, 0 failed (both shells).
 
 - Mill records absolute paths in its output, so an `out` directory is never copied: a copy writes into the original's classes and would leak one run's compiled solution into the next. warm-cache.sh only builds the HEAD reference tree `~/gate-eval/head` (its own `out`); every other tree compiles cold, about 53 s.
 - Test-running Mill calls in prepare.sh are capped at 600 s; a timeout counts as FAIL. On the `noise` cut tree `???` in an object initialiser deadlocks weaver, so `hidden_fails_on_cut=yes` there comes from the cap.
+
+## Smoke run
+
+2026-10-03, `sh campaign.sh --smoke`, model sonnet, midi-synth rep 9:
+
+| run | wall | turns | cost USD | solved | hidden_pass_ratio | gate_blocks | contamination |
+|---|---|---|---|---|---|---|---|
+| midi-synth-g-9 | 195 s | 10 | 0.196 | true | 1.0 | ScalaSemantic 1, turn-end 1 | none (after fix) |
+| midi-synth-u-9 | 60 s | 11 | 0.190 | true | 1.0 | none | none |
+
+Both runs: result event present, `final.diff` and `final-tree.tar.gz` present, no errors, no regressions, holdout passed. Gated arm: its `./mill` ran under `out-agent` (no `repo/out`), the turn-end gate ran the holdout (`repo/.dsh/.state/holdout.log`, 7 tests) and blocked once on `plugin.checkFormat`; one `cat` of a .scala file was blocked by the ScalaSemantic guard. The gate_blocks patterns matched the real hook texts unchanged (fixture `tests/fixtures/transcripts/real-gated.jsonl`, verbatim events). One scorer bug found: the scala-semantic `annotated_source` tool carries the file body in an input key `write`, whose `/**` scaladoc was read as a path and flagged as contamination; `write` is now a content key.
