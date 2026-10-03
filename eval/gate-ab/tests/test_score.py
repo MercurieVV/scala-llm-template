@@ -41,8 +41,18 @@ class Blocks(unittest.TestCase):
     def test_turn_end_from_text(self):
         b = score.gate_blocks([], ["Stop hook feedback: fix it", "turn-end gate: BLOCKED", "fine"])
         self.assertEqual(b, {"turn-end": 2})
-    def test_duplicate_feedback_counted_once(self):
-        self.assertEqual(score.gate_blocks([], ["Stop hook feedback: x", "Stop hook feedback: x"]), {"turn-end": 1})
+    def test_same_block_in_adjacent_events_counted_once(self):
+        ev = lambda t: json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": t}]}})
+        t = score.parse_transcript([ev("Stop hook feedback: x"), ev("Stop hook feedback: x")])
+        self.assertEqual(score.gate_blocks([], t["hook_texts"]), {"turn-end": 1})
+    def test_same_text_duplicated_inside_one_system_event_counted_once(self):
+        t = score.parse_transcript([json.dumps({"type": "system", "output": "Stop hook feedback: x", "stdout": "Stop hook feedback: x"})])
+        self.assertEqual(score.gate_blocks([], t["hook_texts"]), {"turn-end": 1})
+    def test_identical_blocks_in_separate_turns_counted_twice(self):
+        ev = lambda t: json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": t}]}})
+        asst = json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "retrying"}]}})
+        t = score.parse_transcript([ev("Stop hook feedback: x"), asst, ev("Stop hook feedback: x")])
+        self.assertEqual(score.gate_blocks([], t["hook_texts"]), {"turn-end": 2})
     def test_assistant_and_tool_result_text_not_counted(self):
         lns = [json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Stop hook feedback: I quote it"}]}}),
                json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "a", "name": "Bash", "input": {"command": "echo"}}]}}),
@@ -166,15 +176,46 @@ class Parsers(unittest.TestCase):
         self.assertEqual(score.suite_fq(spec), "com.a.b.FooSpec")
         self.assertIsNone(score.suite_fq("class X"))
     def test_hidden_counts_only_that_suite(self):
-        log = (HERE / "fixtures" / "mill" / "hidden-cut.log").read_text()
+        log = (HERE / "fixtures" / "mill" / "hidden-cut.txt").read_text()
         self.assertEqual(score.hidden_counts(log, "com.github.mercurievv.skreeep2.plugin.MidiSynthSpec"), (0, 1, True))
         self.assertEqual(score.hidden_counts(log, "com.github.mercurievv.skreeep2.plugin.HostEventsSpec"), (2, 0, True))
         self.assertEqual(score.hidden_counts(log, "com.nope.Spec"), (0, 0, True))
+    MODS = ["control.test", "plugin.test", "core.test", "bench.test"]
     def test_parse_mill_failures_real_format(self):
-        ids, n = score.parse_mill_failures((HERE / "fixtures" / "mill" / "regress-failed.log").read_text())
-        self.assertEqual(ids, {"control.test", "plugin.test", "core"}); self.assertEqual(n, 4)
+        r = score.parse_mill_failures((HERE / "fixtures" / "mill" / "regress-failed.txt").read_text(), self.MODS)
+        self.assertEqual(r["tests"], {"control.test", "plugin.test"}); self.assertEqual(r["compile"], {"core.test"})
+        self.assertEqual((r["other"], r["failed"]), ([], 4))
+    def test_parse_mill_failures_unattributed_error_line(self):
+        r = score.parse_mill_failures("[error] java.lang.OutOfMemoryError: Java heap space\n[error] 1 tests failed:\n", self.MODS)
+        self.assertEqual((r["tests"], r["compile"]), (set(), set()))
+        self.assertEqual(r["other"], ["java.lang.OutOfMemoryError: Java heap space"])
     def test_parse_mill_failures_clean(self):
-        self.assertEqual(score.parse_mill_failures("+ a 1ms\n[10/10] mill x 3s\n"), (set(), 0))
+        r = score.parse_mill_failures("+ a 1ms\n[10/10] mill x 3s\n", self.MODS)
+        self.assertEqual((r["tests"], r["compile"], r["other"], r["failed"]), (set(), set(), [], 0))
+    EXCERPT = (HERE / "fixtures" / "mill" / "baseline-excerpt.txt").read_text()
+    def test_real_baseline_excerpt_counts_one_failure(self):
+        self.assertEqual(score.weaver_counts(self.EXCERPT), (12, 1, True))
+        self.assertEqual(score.hidden_counts(self.EXCERPT, "com.github.mercurievv.skreeep2.UnderrunSpec"), (4, 1, True))
+    def test_real_baseline_excerpt_failures_attributed(self):
+        r = score.parse_mill_failures(self.EXCERPT, ["bench.test", "control.midi.test"])
+        self.assertEqual(r["tests"], {"bench.test"}); self.assertEqual((r["compile"], r["other"]), (set(), []))
+    def test_failures_block_not_counted(self):
+        log = "Running Test Class a.B\n+ ok 1ms\n- bad 1ms\n*****FAILURES*****\n- bad 1ms\nRunning Test Class a.C\n+ fine 1ms\n"
+        self.assertEqual(score.weaver_counts(log), (2, 1, True))
+        self.assertEqual(score.hidden_counts(log, "a.B"), (1, 1, True))
+    def test_suite_passes_and_module_attribution(self):
+        p = score.suite_passes(self.EXCERPT)
+        self.assertEqual(p, {"com.github.mercurievv.skreeep2.UnderrunSpec": 4,
+                             "com.github.mercurievv.skreeep2.control.midi.ControlSurfaceSpec": 3,
+                             "com.github.mercurievv.skreeep2.control.midi.McuSpec": 5})
+        by = {"bench.test": ["com.github.mercurievv.skreeep2.UnderrunSpec"],
+              "control.midi.test": ["com.github.mercurievv.skreeep2.control.midi.ControlSurfaceSpec",
+                                    "com.github.mercurievv.skreeep2.control.midi.McuSpec"]}
+        self.assertEqual(score.module_passes(p, by), {"bench.test": 4, "control.midi.test": 8})
+    def test_truncated_suite_names(self):
+        log = "Running Test Class a.b.LongNameSp...\n+ x 1ms\n"
+        self.assertEqual(score.hidden_counts(log, "a.b.LongNameSpec"), (1, 0, True))
+        self.assertEqual(score.module_passes(score.suite_passes(log), {"m.test": ["a.b.LongNameSpec"]}), {"m.test": 1})
     def test_other_suites(self):
         with tempfile.TemporaryDirectory() as d:
             p = pathlib.Path(d) / "signals" / "test" / "src" / "pk"
@@ -192,9 +233,12 @@ tree = "score-tree" in os.getcwd()
 if "resolve" in a:
     if os.environ.get("FAKE_RESOLVE_FAIL"):
         print("resolve exploded"); sys.exit(1)
-    print("\n".join(os.environ.get("FAKE_MODULES", "signals.test,holdout.test,control.test,backend.opencl.test").split(","))); sys.exit(0)
+    print("\n".join(os.environ.get("FAKE_MODULES", "signals.test,holdout.test,control.test,backend.opencl.test,bench.test").split(","))); sys.exit(0)
 if a[-1] == "holdout.test":
     if not os.path.isdir(os.environ.get("DSH_HOLDOUT_DIR", "")): sys.exit(9)
+    hm = os.environ.get("FAKE_HOLDOUT", "pass")
+    if hm == "millfail": print("java.lang.OutOfMemoryError: boom"); sys.exit(1)
+    if hm == "hang": time.sleep(30)
     for i in range(7): print("+ h%d 1ms" % i)
     sys.exit(0)
 if "signals.test.testOnly" in a and a[a.index("signals.test.testOnly") + 1].endswith("NoiseSpec") and "-k" not in a:
@@ -207,11 +251,13 @@ if "signals.test.testOnly" in a and a[a.index("signals.test.testOnly") + 1].ends
     print("Running Test Class com.other.OtherSuite"); print("- unrelated 1ms")
     print("Running Test Class " + fq)
     if m == "pass": print("+ a 1ms"); print("+ b 1ms"); sys.exit(0)
-    if m == "fail": print("+ a 1ms"); print("- b 1ms"); sys.exit(1)
+    if m == "fail": print("+ a 1ms"); print("- b 1ms"); print("*****FAILURES*****"); print("- b 1ms"); sys.exit(1)
     if m == "class": print("+ a 1ms"); print("- Unexpected failure 0ms"); sys.exit(1)
 if "-k" in a:
-    if os.environ.get("FAKE_REG_MODE") == "silent": print("weird crash"); sys.exit(1)
-    if os.environ.get("FAKE_REG_MODE") == "hang": time.sleep(30)
+    rm = os.environ.get("FAKE_REG_MODE")
+    if rm == "silent": print("weird crash"); sys.exit(1)
+    if rm == "notests": sys.exit(0)
+    if rm == "hang": time.sleep(30)
     mods = []; cur = []
     for x in a[a.index("-k"):]:
         if x == "+": mods.append(cur); cur = []
@@ -221,8 +267,10 @@ if "-k" in a:
     nf = 0
     for c in mods:
         mod = c[0].replace(".testOnly", "")
-        print("Running Test Class x." + mod); print("+ ok 1ms")
+        print("Running Test Class pk." + mod.replace(".", "_") + "Spec"); print("+ ok 1ms")
         if mod in failing: print("[3] [error] %s.testForked 1 tests failed:" % mod); nf += 1
+    if rm == "oom": print("[error] java.lang.OutOfMemoryError: Java heap space"); nf = max(nf, 1)
+    if rm == "compile": print("[error] core.compile boom"); nf = max(nf, 1)
     if nf: print("9/9, %d FAILED] mill 3s" % nf); sys.exit(1)
 sys.exit(0)
 """
@@ -243,7 +291,7 @@ class FakeBase(unittest.TestCase):
         h = self.root / "base" / "noise" / "hidden" / spec
         h.parent.mkdir(parents=True); h.write_text(SPEC)
         (self.root / "head").mkdir()
-        (self.root / "head-baseline.json").write_text(json.dumps({"modules": {"signals.test": True, "control.test": True}}))
+        (self.root / "head-baseline.json").write_text(json.dumps({"modules": {"signals.test": True, "control.test": True}, "passes": {"signals.test": 1, "control.test": 1}}))
         fm = t / "fakemill"; fm.write_text(FAKE_MILL); fm.chmod(0o755)
         self.log = t / "fake.log"
         ho = t / "holdout"; ho.mkdir(); (ho / "f").write_text("x")
@@ -255,7 +303,7 @@ class FakeBase(unittest.TestCase):
         (self.rd / "transcript.jsonl").write_text((FX / "clean.jsonl").read_text())
         (self.rd / "final.diff").write_text("")
         self.env = dict(GA_ROOT=str(self.root), GA_MILL=str(fm), GA_HOLDOUT_SRC=str(ho), GA_HOLDOUT_COMMIT="HEAD",
-                        FAKE_HIDDEN="pass", GA_TEST_CAP="600", GA_REGRESS_CAP="600", FAKE_LOG=str(self.log))
+                        FAKE_HIDDEN="pass", GA_TEST_CAP="600", GA_REGRESS_CAP="1200", FAKE_LOG=str(self.log))
         self.saved = dict(os.environ)
         os.environ.update(self.env)
     def tearDown(self):
@@ -303,9 +351,28 @@ class MainWithFakeMill(FakeBase):
     def test_unattributed_regression_failure(self):
         s = self.run_score(FAKE_REG_MODE="silent")
         self.assertFalse(s["solved"]); self.assertTrue(s["regressions"]); self.assertIn("regression", s["error"])
-    def test_regression_timeout(self):
+    def test_other_error_line_is_mill_failure(self):
+        s = self.run_score(FAKE_REG_MODE="oom")
+        self.assertFalse(s["solved"]); self.assertTrue(s["error"].startswith("mill failed (regressions):"), s["error"])
+        self.assertIn("OutOfMemoryError", s["error"])
+    def test_regression_timeout_is_an_outcome_not_an_error(self):
         s = self.run_score(FAKE_REG_MODE="hang", GA_REGRESS_CAP="1")
         self.assertFalse(s["solved"]); self.assertIn("regressions", s["score_timeouts"])
+        self.assertEqual(s["regressions"], ["<timeout>"]); self.assertIsNone(s["error"])
+    def test_regression_run_that_ran_no_tests(self):
+        s = self.run_score(FAKE_REG_MODE="notests")
+        self.assertFalse(s["solved"]); self.assertEqual(s["regressions"], ["<tests did not run>"]); self.assertIsNone(s["error"])
+    def test_bench_test_excluded_from_regressions(self):
+        s = self.run_score(FAKE_FAIL_MODS="bench.test")
+        reg = [c["args"] for c in self.calls() if "-k" in c["args"]][0]
+        self.assertNotIn("bench.test", reg); self.assertEqual(s["regressions"], []); self.assertTrue(s["solved"], s)
+    def test_holdout_mill_failure_is_an_error(self):
+        s = self.run_score(FAKE_HOLDOUT="millfail")
+        self.assertFalse(s["solved"]); self.assertTrue(s["error"].startswith("mill failed (holdout):"), s["error"])
+    def test_holdout_timeout_is_unsolved_not_error(self):
+        s = self.run_score(FAKE_HOLDOUT="hang", GA_TEST_CAP="1", FAKE_HIDDEN="pass")
+        self.assertFalse(s["solved"]); self.assertFalse(s["holdout_passed"]); self.assertIn("holdout.test", s["score_timeouts"])
+        self.assertIsNone(s["error"])
     def test_failed_test_ratio_and_false_done(self):
         s = self.run_score(FAKE_HIDDEN="fail")
         self.assertFalse(s["solved"]); self.assertEqual(s["hidden_pass_ratio"], 0.5); self.assertTrue(s["false_done"])
@@ -336,6 +403,11 @@ class MainWithFakeMill(FakeBase):
         (self.rd / "run.json").write_text(json.dumps(run))
         s = self.run_score()
         self.assertFalse(s["solved"]); self.assertFalse(s["false_done"]); self.assertTrue(s["timed_out"])
+    def test_agent_timeout_with_empty_transcript_has_no_error(self):
+        run = json.loads((self.rd / "run.json").read_text()); run.update(timed_out=True, exit_code=124)
+        (self.rd / "run.json").write_text(json.dumps(run)); (self.rd / "transcript.jsonl").write_text("")
+        s = self.run_score()
+        self.assertFalse(s["solved"]); self.assertIsNone(s["error"]); self.assertIsNone(s["turns"])
     def test_empty_transcript(self):
         (self.rd / "transcript.jsonl").write_text("")
         s = self.run_score()
@@ -390,6 +462,7 @@ class BaselineMode(FakeBase):
         score.baseline(str(self.root))
         b = json.loads((self.root / "head-baseline.json").read_text())
         self.assertEqual(b["modules"], {"signals.test": True, "control.test": True})
+        self.assertNotIn("bench.test", b["modules"])
         reg = [c for c in self.calls() if "-k" in c["args"]][0]
         self.assertTrue(reg["cwd"].endswith("/head")); self.assertEqual(reg["out"], "out")
     def test_failing_module_recorded(self):
@@ -397,6 +470,23 @@ class BaselineMode(FakeBase):
         score.baseline(str(self.root))
         b = json.loads((self.root / "head-baseline.json").read_text())
         self.assertEqual(b["modules"], {"signals.test": True, "control.test": False})
+    def test_per_module_pass_counts(self):
+        for m in ("signals.test", "control.test"):
+            d = self.root / "head" / m.replace(".", "/") / "src"; d.mkdir(parents=True)
+            (d / "S.scala").write_text("package pk\nobject %sSpec extends SimpleIOSuite\n" % m.replace(".", "_"))
+        score.baseline(str(self.root))
+        b = json.loads((self.root / "head-baseline.json").read_text())
+        self.assertEqual(b["passes"], {"signals.test": 1, "control.test": 1})
+    def test_oom_is_loud(self):
+        os.environ["FAKE_REG_MODE"] = "oom"
+        with self.assertRaises(score.ScoreError): score.baseline(str(self.root))
+        self.assertFalse((self.root / "head-baseline.json").exists())
+    def test_compile_failure_at_head_is_loud(self):
+        os.environ["FAKE_REG_MODE"] = "compile"
+        with self.assertRaises(score.ScoreError): score.baseline(str(self.root))
+    def test_no_tests_at_head_is_loud(self):
+        os.environ["FAKE_REG_MODE"] = "notests"
+        with self.assertRaises(score.ScoreError): score.baseline(str(self.root))
     def test_resolve_failure_is_loud(self):
         os.environ["FAKE_RESOLVE_FAIL"] = "1"
         with self.assertRaises(score.ScoreError): score.baseline(str(self.root))

@@ -8,24 +8,31 @@ def killpg(pid, sig):
     except ProcessLookupError:
         pass
 
-def main(argv):
-    if len(argv) < 4 or argv[2] != "--":
-        sys.stderr.write("usage: timeout.py <seconds> -- <cmd...>\n")
-        return 2
-    deadline = time.time() + float(argv[1])
-    proc = subprocess.Popen(argv[3:], start_new_session=True)
-    while time.time() < deadline:
-        rc = proc.poll()
-        if rc is not None:
-            return rc
-        time.sleep(0.5)
+def reap(proc):
     killpg(proc.pid, signal.SIGTERM)
     grace = time.time() + 10
     while time.time() < grace and proc.poll() is None:
         time.sleep(0.5)
     killpg(proc.pid, signal.SIGKILL)
     proc.wait()
-    return 124
+
+def main(argv):
+    if len(argv) < 4 or argv[2] != "--":
+        sys.stderr.write("usage: timeout.py <seconds> -- <cmd...>\n")
+        return 2
+    deadline = time.time() + float(argv[1])
+    proc = subprocess.Popen(argv[3:], start_new_session=True)
+    try:
+        while time.time() < deadline:
+            rc = proc.poll()
+            if rc is not None:
+                return rc
+            time.sleep(0.5)
+        reap(proc)
+        return 124
+    except KeyboardInterrupt:  # Ctrl-C / SIGINT to us: the child group is in its own session, so take it down too
+        reap(proc)
+        return 130
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
