@@ -153,5 +153,83 @@ readable=yes; for p in $probe; do ls "$p" >/dev/null 2>&1 || readable=no; done
 check "ga_unlock_all restores access" "$readable" "yes"
 rm -rf "$tmp"
 
+# --- campaign.sh against fakes
+tmp=$(mktemp -d)
+mkdir -p "$tmp/home" "$tmp/root/base" "$tmp/root/runs/noise-u-1" "$tmp/root/runs/noise-g-1"
+cp "$ga/lib.sh" "$ga/campaign.sh" "$tmp/home/"
+cat >"$tmp/fake-run" <<'F'
+#!/bin/sh
+echo "$1-$2-$3" >>"$CALLS"
+F
+cat >"$tmp/fake-score" <<'F'
+#!/bin/sh
+mkdir -p "$1"; echo '{"solved": true}' >"$1/score.json"
+F
+cat >"$tmp/fake-prep" <<'F'
+#!/bin/sh
+echo "$1" >>"$PREPS"
+[ "$1" = "${PREP_FAIL:-}" ] && exit 1
+mkdir -p "$GA_ROOT/base/$1"; printf 'cut_compiles=yes\nhidden_fails_on_cut=yes\nhidden_passes_on_head=yes\n' >"$GA_ROOT/base/$1/validation.txt"
+F
+cat >"$tmp/fake-base" <<'F'
+#!/bin/sh
+echo b >>"$BASES"; echo '{}' >"$GA_ROOT/head-baseline.json"
+F
+cat >"$tmp/fake-caf" <<'F'
+#!/bin/sh
+echo "$*" >>"$CAFS"; exec "$@"
+F
+chmod +x "$tmp"/fake-*
+cenv() { GA_HOME=$tmp/home GA_ROOT=$tmp/root GA_RUN=$tmp/fake-run GA_SCORE=$tmp/fake-score GA_PREPARE=$tmp/fake-prep GA_BASELINE=$tmp/fake-base \
+  CALLS=$tmp/calls PREPS=$tmp/preps BASES=$tmp/bases CAFS=$tmp/cafs GA_CAFFEINATED=1 env "$@"; }
+prepared() { for t in noise mixer-modes mcu note-ring backpressure scope-view modes midi-synth; do
+  mkdir -p "$tmp/root/base/$t"; printf 'cut_compiles=yes\nhidden_fails_on_cut=yes\nhidden_passes_on_head=yes\n' >"$tmp/root/base/$t/validation.txt"; done; echo '{}' >"$tmp/root/head-baseline.json"; }
+prepared; rm -rf "$tmp/root/runs/noise-u-1" "$tmp/root/runs/noise-g-1"
+cenv $SH "$tmp/home/campaign.sh" >/dev/null 2>&1; check "campaign exit 0" "$?" "0"
+check "campaign 48 runs" "$(wc -l <"$tmp/calls" | tr -d ' ')" "48"
+check "campaign order" "$(head -3 "$tmp/calls" | tr '\n' ' ')" "noise-g-1 noise-u-1 mixer-modes-g-1 "
+check "campaign last" "$(tail -1 "$tmp/calls")" "midi-synth-u-3"
+check "campaign log lines" "$(wc -l <"$tmp/root/campaign.log" | tr -d ' ')" "48"
+grep -q 'noise-g-1 exit=0 solved=True' "$tmp/root/campaign.log" && ok "campaign log format" || bad "campaign log format"
+check "campaign no prepare when ready" "$(cat "$tmp/preps" 2>/dev/null | wc -l | tr -d ' ')" "0"
+check "campaign no baseline when cached" "$(cat "$tmp/bases" 2>/dev/null | wc -l | tr -d ' ')" "0"
+# resume: noise-g-1 done, noise-u-1 half-run (dir, no score.json)
+rm -f "$tmp/calls" "$tmp/root/campaign.log"
+rm -rf "$tmp/root/runs"; mkdir -p "$tmp/root/runs/noise-g-1" "$tmp/root/runs/noise-u-1"; echo '{"solved":false}' >"$tmp/root/runs/noise-g-1/score.json"
+cenv $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
+check "campaign resume 47 runs" "$(wc -l <"$tmp/calls" | tr -d ' ')" "47"
+grep -qx 'noise-u-1' "$tmp/calls" && ! grep -qx 'noise-g-1' "$tmp/calls" && ok "campaign resume redoes half-run, skips done" || bad "campaign resume redoes half-run, skips done"
+# smoke
+rm -f "$tmp/calls"; rm -rf "$tmp/root/runs"
+cenv $SH "$tmp/home/campaign.sh" --smoke >/dev/null 2>&1
+check "campaign smoke" "$(tr '\n' ' ' <"$tmp/calls")" "midi-synth-g-9 midi-synth-u-9 "
+# preflight: unlock, prepare only missing/invalid, baseline when missing
+rm -f "$tmp/calls" "$tmp/preps" "$tmp/bases"; rm -rf "$tmp/root/runs" "$tmp/root/head-baseline.json"; mkdir -p "$tmp/root/runs"
+rm -rf "$tmp/root/base/mcu"
+printf 'cut_compiles=yes\nhidden_fails_on_cut=no\nhidden_passes_on_head=yes\n' >"$tmp/root/base/noise/validation.txt"
+chmod 000 "$tmp/root/base"
+cenv $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
+check "preflight unlocked base" "$(ls "$tmp/root/base" >/dev/null 2>&1; echo $?)" "0"
+check "preflight prepares missing and failed only" "$(sort "$tmp/preps" | tr '\n' ' ')" "mcu noise "
+check "preflight baseline once" "$(wc -l <"$tmp/bases" | tr -d ' ')" "1"
+check "preflight then runs all" "$(wc -l <"$tmp/calls" | tr -d ' ')" "48"
+# smoke preflight touches midi-synth only
+rm -f "$tmp/calls" "$tmp/preps"; rm -rf "$tmp/root/runs" "$tmp/root/base/midi-synth" "$tmp/root/base/noise"
+cenv $SH "$tmp/home/campaign.sh" --smoke >/dev/null 2>&1
+check "smoke preflight only midi-synth" "$(tr '\n' ' ' <"$tmp/preps")" "midi-synth "
+# abort when prepare still fails: no runs
+rm -f "$tmp/calls" "$tmp/preps"; rm -rf "$tmp/root/runs" "$tmp/root/base/mcu"
+cenv PREP_FAIL=mcu $SH "$tmp/home/campaign.sh" >/dev/null 2>&1; rc=$?
+[ "$rc" -ne 0 ] && [ ! -e "$tmp/calls" ] && ok "preflight aborts before any run" || bad "preflight aborts before any run" "rc=$rc"
+# caffeinate wrapper: re-exec once, marker prevents loops
+rm -f "$tmp/calls" "$tmp/cafs"; rm -rf "$tmp/root/runs"; mkdir -p "$tmp/root/base/mcu"; cp "$tmp/root/base/noise/validation.txt" "$tmp/root/base/mcu/" 2>/dev/null
+prepared
+GA_HOME=$tmp/home GA_ROOT=$tmp/root GA_RUN=$tmp/fake-run GA_SCORE=$tmp/fake-score GA_PREPARE=$tmp/fake-prep GA_BASELINE=$tmp/fake-base \
+  CALLS=$tmp/calls PREPS=$tmp/preps BASES=$tmp/bases CAFS=$tmp/cafs GA_CAFFEINATE="$tmp/fake-caf" $SH "$tmp/home/campaign.sh" --smoke >/dev/null 2>&1
+check "campaign re-execs under caffeinate once" "$(wc -l <"$tmp/cafs" | tr -d ' ')" "1"
+check "campaign under caffeinate ran smoke" "$(tr '\n' ' ' <"$tmp/calls")" "midi-synth-g-9 midi-synth-u-9 "
+chmod -R 755 "$tmp/root" 2>/dev/null
+rm -rf "$tmp"
+
 echo "shell-test: $passed passed, $failed failed"
 [ "$failed" -eq 0 ]
