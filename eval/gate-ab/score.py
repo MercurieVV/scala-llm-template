@@ -260,6 +260,20 @@ def other_suites(tree, module, hidden_fq):
     return sorted(set(out))
 
 
+BUILD_ERROR = re.compile(r"\[error\]\s+(\S*\.mill:\d+|compile\s)")
+
+
+def build_broken(log_text):
+    """True when Mill failed on the build definition itself (`[error] build.mill:9:19`, `[error] x/package.mill:N`,
+    `[error] compile Compilation failed` of the meta-build): it then fails before running any task, `resolve` included."""
+    return bool(BUILD_ERROR.search(ANSI.sub("", log_text)))
+
+
+class BuildBroken(ScoreError):
+    """The build definition does not compile. In a run's scoring tree an agent outcome (regression `<build>`, no error);
+    at HEAD (baseline) as loud as any ScoreError."""
+
+
 def parse_mill_failures(log_text, modules, all_modules=()):
     """Attribute `[error]` lines. -> dict(tests=test modules whose test task failed,
     compile={`<compile:M>`, `<build>`, `<compile>`} for build breakage (agent-caused),
@@ -267,7 +281,7 @@ def parse_mill_failures(log_text, modules, all_modules=()):
     text = ANSI.sub("", log_text)
     mods, allm = set(modules), set(all_modules)
     tests, compile_, other = set(), set(), []
-    for m in re.finditer(r"\[error\]\s+(\S*?[\w-]+\.mill:\d+[^\n]*)", text):
+    if build_broken(text):
         compile_.add("<build>")
     for m in re.finditer(r"\[error\]\s+(([A-Za-z_]\w*(?:\.\w+)+)[^\n]*)", text):
         line, tok = m.group(1).strip(), m.group(2)
@@ -484,6 +498,8 @@ def _regress_cap():
 
 def _test_modules(cwd, out_dir, log_path):
     rc, _ = run_mill(cwd, ["resolve", "__.test"], out_dir, log_path)
+    if rc != 0 and build_broken(_read(log_path)):
+        raise BuildBroken(_last_line(log_path))
     if rc != 0:
         raise ScoreError("resolve __.test failed: " + _last_line(log_path))
     mods = [ANSI.sub("", l).strip() for l in _read(log_path).splitlines()]
@@ -494,10 +510,13 @@ def _test_modules(cwd, out_dir, log_path):
 
 
 def _all_modules(cwd, out_dir, log_path):
-    """Every Mill module (`resolve __`), to tell build breakage from infrastructure errors; empty if it cannot be listed."""
-    rc, _ = run_mill(cwd, ["resolve", "__"], out_dir, log_path)
+    """Every Mill module, no tasks (`resolve __:Module`), to tell build breakage from infrastructure errors.
+    Raises BuildBroken when the build definition does not compile, ScoreError on any other failure."""
+    rc, _ = run_mill(cwd, ["resolve", "__:Module"], out_dir, log_path)
+    if rc != 0 and build_broken(_read(log_path)):
+        raise BuildBroken(_last_line(log_path))
     if rc != 0:
-        return []
+        raise ScoreError("resolve __:Module failed: " + _last_line(log_path))
     return [m for m in (ANSI.sub("", l).strip() for l in _read(log_path).splitlines()) if re.fullmatch(r"[\w.]+", m)]
 
 
@@ -657,13 +676,17 @@ def main(run_dir):
             if not isinstance(base_passes, dict) or not base_passes:
                 errors.append("baseline outdated, re-run --baseline")
                 regress_ok = False
+        build_ok = True
         if regress_ok and loaded is not None:
             try:
                 mods = _test_modules(tree, "out-score", os.path.join(rd, "resolve-score.log"))
+            except BuildBroken:  # the agent broke build.mill / a package.mill: every task fails, resolve included
+                rec["regressions"] = ["<build>"]
+                build_ok = False
             except ScoreError as e:
                 errors.append(str(e))
                 regress_ok = False
-        if regress_ok:
+        if regress_ok and build_ok:
             entries = []
             for m in mods:
                 if m == task_module:
@@ -676,8 +699,16 @@ def main(run_dir):
                 rlog = os.path.join(rd, "regress-score.log")
                 rrc, rto = run_mill(tree, _chain(entries), "out-score", rlog, cap=_regress_cap(), keep_going=True)
                 text = _read(rlog)
-                r = parse_mill_failures(text, mods, _all_modules(tree, "out-score", os.path.join(rd, "resolve-all.log")))
-                ids = r["tests"] | r["compile"]
+                all_mods, broken = [], False
+                if rrc != 0 and not rto:  # module list only needed to attribute failures
+                    try:
+                        all_mods = _all_modules(tree, "out-score", os.path.join(rd, "resolve-all.log"))
+                    except BuildBroken:
+                        broken = True
+                    except ScoreError as e:
+                        errors.append(str(e))
+                r = parse_mill_failures(text, mods, all_mods)
+                ids = r["tests"] | r["compile"] | ({"<build>"} if broken else set())
                 if rto:
                     rec["score_timeouts"].append("regressions")
                     rec["regressions"] = ["<timeout>"]

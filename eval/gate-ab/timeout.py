@@ -8,7 +8,12 @@ def killpg(pid, sig):
     except ProcessLookupError:
         pass
 
+def ignore_signals():
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, signal.SIG_IGN)
+
 def reap(proc):
+    ignore_signals()  # once reaping starts, a further SIGINT/SIGTERM must not skip the SIGKILL below
     killpg(proc.pid, signal.SIGTERM)
     grace = time.time() + 10
     while time.time() < grace and proc.poll() is None:
@@ -20,12 +25,13 @@ def main(argv):
     if len(argv) < 4 or argv[2] != "--":
         sys.stderr.write("usage: timeout.py <seconds> -- <cmd...>\n")
         return 2
+    def on_signal(signum, frame):  # SIGINT or SIGTERM to us: reap the child group (see except below)
+        ignore_signals()
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGINT, on_signal)
+    signal.signal(signal.SIGTERM, on_signal)
     deadline = time.time() + float(argv[1])
     proc = subprocess.Popen(argv[3:], start_new_session=True)
-
-    def on_term(signum, frame):  # SIGTERM to us reaps the child group exactly like SIGINT
-        raise KeyboardInterrupt
-    signal.signal(signal.SIGTERM, on_term)
     try:
         while time.time() < deadline:
             rc = proc.poll()

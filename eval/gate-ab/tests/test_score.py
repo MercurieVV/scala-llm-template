@@ -193,6 +193,17 @@ class Parsers(unittest.TestCase):
         for line in ("[error] build.mill:12:3: not found: value x", "[error] /r/x/package.mill:7:1: boom"):
             r = score.parse_mill_failures(line + "\n", self.MODS, self.ALL)
             self.assertEqual((r["compile"], r["other"]), ({"<build>"}, []), line)
+    def test_real_broken_build_regression_log(self):
+        r = score.parse_mill_failures((HERE / "fixtures" / "mill" / "build-broken-regress.txt").read_text(), self.MODS, self.ALL)
+        self.assertEqual((r["tests"], r["compile"], r["other"]), (set(), {"<build>"}, []))
+    def test_build_broken_detects_real_meta_build_failures(self):
+        for f in ("build-broken-resolve.txt", "build-broken-package-resolve.txt", "build-broken-regress.txt"):
+            self.assertTrue(score.build_broken((HERE / "fixtures" / "mill" / f).read_text()), f)
+        self.assertTrue(score.build_broken("[error] compile Compilation failed\n"))
+        self.assertTrue(score.build_broken("[2] [error] build.mill:9:19\n"))
+        for f in ("regress-failed.txt", "baseline-excerpt.txt", "hidden-cut.txt"):
+            self.assertFalse(score.build_broken((HERE / "fixtures" / "mill" / f).read_text()), f)
+        self.assertFalse(score.build_broken("resolve exploded\n"))
     def test_compilation_failed_without_a_module(self):
         r = score.parse_mill_failures("[error] Compilation failed\n", self.MODS, self.ALL)
         self.assertEqual((r["compile"], r["other"]), ({"<compile>"}, []))
@@ -242,10 +253,13 @@ a = sys.argv[1:]
 with open(os.environ["FAKE_LOG"], "a") as f:
     f.write(json.dumps({"cwd": os.getcwd(), "args": a, "out": os.environ.get("MILL_OUTPUT_DIR"), "holdout": os.environ.get("DSH_HOLDOUT_DIR")}) + "\n")
 tree = "score-tree" in os.getcwd()
+if tree and os.environ.get("FAKE_BUILD_BROKEN"):  # real Mill output for a broken build.mill: every command fails before any task
+    sys.stdout.write(open(os.environ["FAKE_BUILD_BROKEN"]).read()); sys.exit(1)
 if "resolve" in a:
     if os.environ.get("FAKE_RESOLVE_FAIL"):
         print("resolve exploded"); sys.exit(1)
-    if "__" in a:
+    if "__:Module" in a:
+        if os.environ.get("FAKE_ALL_RESOLVE_FAIL"): print("resolve exploded"); sys.exit(1)
         print("\n".join(os.environ.get("FAKE_ALL_MODULES", "core,signals,control,backpressure").split(","))); sys.exit(0)
     print("\n".join(os.environ.get("FAKE_MODULES", "signals.test,holdout.test,control.test,backend.opencl.test,bench.test").split(","))); sys.exit(0)
 if a[-1] == "holdout.test":
@@ -377,6 +391,18 @@ class MainWithFakeMill(FakeBase):
     def test_agent_broke_the_build_file(self):
         s = self.run_score(FAKE_REG_MODE="build")
         self.assertFalse(s["solved"]); self.assertIsNone(s["error"]); self.assertEqual(s["regressions"], ["<build>"])
+    def test_agent_broke_the_build_file_real_mill_shape(self):
+        s = self.run_score(FAKE_BUILD_BROKEN=str(HERE / "fixtures" / "mill" / "build-broken-resolve.txt"))
+        self.assertFalse(s["solved"]); self.assertIsNone(s["error"], s); self.assertEqual(s["regressions"], ["<build>"])
+        self.assertFalse(s["hidden_compiled"]); self.assertFalse(s["holdout_passed"])
+        self.assertFalse([c for c in self.calls() if "-k" in c["args"]])  # nothing left to run once resolve shows the build is broken
+    def test_module_listing_failure_is_recorded(self):
+        s = self.run_score(FAKE_FAIL_MODS="control.test", FAKE_ALL_RESOLVE_FAIL="1")
+        self.assertFalse(s["solved"]); self.assertEqual(s["regressions"], ["control.test"])
+        self.assertIn("resolve __:Module failed", s["error"])
+    def test_module_listing_only_when_attribution_needed(self):
+        s = self.run_score(FAKE_ALL_RESOLVE_FAIL="1")
+        self.assertTrue(s["solved"], s); self.assertIsNone(s["error"])
     def test_old_format_baseline_is_an_error(self):
         (self.root / "head-baseline.json").write_text(json.dumps({"modules": {"signals.test": True, "control.test": True}}))
         s = self.run_score()
