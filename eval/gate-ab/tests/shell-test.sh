@@ -27,5 +27,20 @@ took=$(( $(date +%s) - start ))
 check "timeout returns 124" "$rc" "124"
 [ "$took" -lt 15 ] && ok "timeout kills the group fast" || bad "timeout kills the group fast" "took ${took}s"
 
+# Test that SIGKILL kills surviving children after SIGTERM grace period
+pidfile=$(mktemp)
+python3 "$ga/timeout.py" 1 -- sh -c "trap '' TERM; (sh -c 'echo \$\$ > $pidfile; trap \"\" TERM; sleep 30') & sleep 30"; rc=$?
+if [ "$rc" = "124" ] && [ -f "$pidfile" ]; then
+  child_pid=$(cat "$pidfile")
+  if ! kill -0 "$child_pid" 2>/dev/null; then
+    ok "timeout kills surviving children"
+  else
+    bad "timeout kills surviving children" "child process $child_pid still running"
+  fi
+else
+  bad "timeout kills surviving children" "rc=$rc or pidfile missing"
+fi
+rm -f "$pidfile" 2>/dev/null
+
 echo "shell-test: $passed passed, $failed failed"
 [ "$failed" -eq 0 ]

@@ -11,16 +11,21 @@ def main(argv):
     try:
         return proc.wait(timeout=limit)
     except subprocess.TimeoutExpired:
-        for sig, grace in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
-            try:
-                os.killpg(proc.pid, sig)
-            except ProcessLookupError:
-                break
-            try:
-                proc.wait(timeout=grace)
-                break
-            except subprocess.TimeoutExpired:
-                continue
+        # Send SIGTERM and give grace period
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return 124
+        try:
+            proc.wait(timeout=10)
+            return 124
+        except subprocess.TimeoutExpired:
+            pass
+        # Always send SIGKILL after SIGTERM grace period
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
         return 124
 
 if __name__ == "__main__":
