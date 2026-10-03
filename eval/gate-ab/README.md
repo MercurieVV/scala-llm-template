@@ -12,7 +12,7 @@ eval/gate-ab/
   lib.sh                    paths, constants, helpers sourced by every script
   timeout.py                run a command with a wall-clock limit, kill its process group
   prepare.sh                <task>: build ~/gate-eval/base/<task>/ (cut tree, hidden spec, validation record)
-  warm-cache.sh             build ~/gate-eval/cache/out/ once from a full HEAD tree
+  warm-cache.sh             build the HEAD reference tree ~/gate-eval/head/ (own out dir)
   run.sh                    <task> <arm> <rep>: one run, collect artefacts
   score.py                  <run-dir>: score.json
   report.py                 <runs-root>: results.csv + summary.md
@@ -28,13 +28,13 @@ eval/gate-ab/
 
 ## Workflow
 
-### 1. Warm the cache (one-time)
+### 1. Build the HEAD reference tree (one-time)
 
 ```bash
 sh eval/gate-ab/warm-cache.sh
 ```
 
-Prebuild necessary components.
+Compiles HEAD once; later steps compile their own trees cold.
 
 ### 2. Prepare each task
 
@@ -95,8 +95,7 @@ Each run lives at `~/gate-eval/runs/<task>-<arm>-<rep>/`, e.g. `noise-g-1`, `noi
 Plus:
 - `~/gate-eval/campaign.log` — campaign execution log
 - `~/gate-eval/base/<task>/` — base tree per task (cut tree, hidden spec, validation record)
-- `~/gate-eval/head/` — full HEAD tree cache
-- `~/gate-eval/cache/out/` — compilation cache
+- `~/gate-eval/head/` — full HEAD reference tree with its own compiled `out`
 - `~/gate-eval/runs/results.csv` — aggregated results from report.py
 - `~/gate-eval/runs/summary.md` — human-readable summary from report.py
 
@@ -114,7 +113,7 @@ Expected: 9 passed, 0 failed (both shells).
 
 ## Preparing the cache and tasks
 
-`sh warm-cache.sh` once (about 1 min), then `sh prepare.sh <task>` per task (about 1 min each; `noise` takes about 11 min because its hidden spec hangs on the stub, see below). Mill selectors used: `__.compile` and `__.test.compile` (both valid in skreeep2 at 6bf6c1b).
+`sh warm-cache.sh` once (builds the HEAD reference tree, about 1 min), then `sh prepare.sh <task>` per task (about 1 min each; `noise` takes about 11 min because its hidden spec hangs on the stub, see below). Mill selectors used: `__.compile` and `__.test.compile` (both valid in skreeep2 at 6bf6c1b).
 
-- Mill records absolute paths in its output, and a run in a copy of the output overwrites the directory those paths name. warm-cache.sh therefore compiles in a sacrificial `~/gate-eval/cache-build` and gives `head/out` and `cache/out` their own copies; compiling in `head` itself made later copies delete `head`'s class directories.
+- Mill records absolute paths in its output, so an `out` directory is never copied: a copy writes into the original's classes and would leak one run's compiled solution into the next. warm-cache.sh only builds the HEAD reference tree `~/gate-eval/head` (its own `out`); every other tree compiles cold, about 53 s.
 - Test-running Mill calls in prepare.sh are capped at 600 s; a timeout counts as FAIL. On the `noise` cut tree `???` in an object initialiser deadlocks weaver, so `hidden_fails_on_cut=yes` there comes from the cap.

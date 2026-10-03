@@ -78,6 +78,7 @@ check "prepare validation" "$(cat "$tmp/root/base/t1/validation.txt" 2>/dev/null
 check "prepare one commit" "$(git -C "$tmp/root/base/t1/tree" rev-list --count HEAD 2>/dev/null)" "1"
 [ ! -e "$tmp/root/base/t1/tree/m/test/src/ASpec.scala" ] && [ -f "$tmp/root/base/t1/hidden/m/test/src/ASpec.scala" ] && ok "prepare hides spec" || bad "prepare hides spec"
 grep -q '???' "$tmp/root/base/t1/tree/m/src/A.scala" && ok "prepare applies stub" || bad "prepare applies stub"
+[ ! -e "$tmp/root/cache" ] && ok "prepare never creates cache" || bad "prepare never creates cache"
 rm -rf "$tmp"
 
 echo "shell-test: $passed passed, $failed failed"

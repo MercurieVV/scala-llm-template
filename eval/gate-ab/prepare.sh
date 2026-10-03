@@ -12,9 +12,8 @@ mv "$base/tree/$HIDDEN_SPEC" "$base/hidden/$HIDDEN_SPEC" || ga_die "hidden spec 
 for f in $CUT_FILES; do cp "$GA_HOME/tasks/$task/stub/$f" "$base/tree/$f" || ga_die "stub $f"; done
 ( cd "$base/tree" && git init -q && git add -A && git -c user.name=gate-eval -c user.email=gate-eval@local -c commit.gpgsign=false commit -qm base ) || ga_die "git init"
 
-mill_in() { # <cap-seconds> <dir> <args...>: Mill with a private output dir, warm-started from the cache
+mill_in() { # <cap-seconds> <dir> <args...>: Mill with the tree's own output dir, compiled cold (an out dir is never copied)
   cap=$1; d=$2; shift 2
-  [ -d "$GA_ROOT/cache/out" ] && [ ! -d "$d/out" ] && cp -R "$GA_ROOT/cache/out" "$d/out"
   ( cd "$d" && MILL_OUTPUT_DIR=out python3 "$GA_HOME/timeout.py" "$cap" -- ./mill --no-daemon -j 1 --ticker false --color false "$@" )
 }
 
