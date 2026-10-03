@@ -42,5 +42,15 @@ else
 fi
 rm -f "$pidfile" 2>/dev/null
 
+# --- task definitions
+for t in $($SH -c ". '$ga/lib.sh'; echo \$GA_TASKS"); do
+  d="$ga/tasks/$t"
+  [ -f "$d/task.env" ] && [ -f "$d/prompt.txt" ] || { bad "task $t has task.env and prompt.txt"; continue; }
+  ( . "$d/task.env"
+    for f in $CUT_FILES; do [ -f "$d/stub/$f" ] || exit 1; grep -q '???' "$d/stub/$f" || exit 1; done
+    [ -n "$TASK_MODULE" ] && [ -n "$HIDDEN_SPEC" ] && [ -n "$FEATURE" ] ) && ok "task $t complete" || bad "task $t complete"
+  grep -q 'Stop when you are done.' "$d/prompt.txt" && ok "task $t prompt" || bad "task $t prompt"
+done
+
 echo "shell-test: $passed passed, $failed failed"
 [ "$failed" -eq 0 ]
