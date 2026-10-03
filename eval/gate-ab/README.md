@@ -161,11 +161,18 @@ Expected: 106 passed, 0 failed (both shells). Python: `python3 -m unittest disco
 
 ## Smoke run
 
-2026-10-03, `sh campaign.sh --smoke`, model sonnet, midi-synth rep 9:
+2026-10-03 (re-run after the final-review fixes), `sh campaign.sh --smoke`, model sonnet, midi-synth rep 9:
 
-| run | wall | turns | cost USD | solved | hidden_pass_ratio | gate_blocks | contamination |
-|---|---|---|---|---|---|---|---|
-| midi-synth-g-9 | 195 s | 10 | 0.196 | true | 1.0 | ScalaSemantic 1, turn-end 1 | none (after fix) |
-| midi-synth-u-9 | 60 s | 11 | 0.190 | true | 1.0 | none | none |
+| run | precompile | wall | turns | cost USD | solved | hidden_pass_ratio | gate_blocks | contamination | error |
+|---|---|---|---|---|---|---|---|---|---|
+| midi-synth-g-9 | 86 s | 159 s | 14 | 0.189 | true | 1.0 | semantic-guard 2, turn-end 1 | none | none |
+| midi-synth-u-9 | 88 s | 34 s | 10 | 0.098 | true | 1.0 | none | none | none |
 
-Both runs: result event present, `final.diff` and `final-tree.tar.gz` present, no errors, no regressions, holdout passed. Gated arm: its `./mill` ran under `out-agent` (no `repo/out`), the turn-end gate ran the holdout (`repo/.dsh/.state/holdout.log`, 7 tests) and blocked once on `plugin.checkFormat`; one `cat` of a .scala file was blocked by the ScalaSemantic guard. The gate_blocks patterns matched the real hook texts unchanged (fixture `tests/fixtures/transcripts/real-gated.jsonl`, verbatim events). One scorer bug found: the scala-semantic `annotated_source` tool carries the file body in an input key `write`, whose `/**` scaladoc was read as a path and flagged as contamination; `write` is now a content key.
+Init events (both arms): MCP servers = scala-semantic only (`source: dynamic`), plugins = Claude Code's three
+built-ins only (`path: builtin`), 17 built-in skills, no user skills. Ungated: no hook event at all. Gated: SessionStart
+reports "semantic guard is active … an index is present at …/out-agent/…" (it stood down on the cold tree before the
+fix); the agent's scala-semantic calls (`find_usages`, `annotated_source` read and write) answered from the index, and
+the guard blocked one text Edit and one Bash on a .scala path. Holdout passed, no regressions, both runs solved.
+
+The first smoke (before the fix: 195 s / 60 s, both solved) ran with the operator's user plugins, hooks and MCP servers
+in both arms and the semantic guard down; its numbers are superseded.
