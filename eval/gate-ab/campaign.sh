@@ -18,14 +18,14 @@ score_error() {
   python3 -c "import json,sys;e=json.load(open(sys.argv[1])).get('error');print('' if e is None else e)" "$GA_ROOT/runs/$1/score.json" 2>/dev/null || echo unreadable
 }
 # A score.json with a non-null error is not done (score.py writes one while still running, and on interruption / infra failure).
-# One automatic retry per run per invocation: "no result event" or no run.json -> redo the run; otherwise rescore only.
+# One automatic retry per run per invocation: an error containing "no result event", or no run.json -> redo the run; otherwise rescore only.
 one() {
   id=$(ga_run_id "$1" "$2" "$3") || exit 1
   rd=$GA_ROOT/runs/$id; e=$(score_error "$id"); how=run
   if [ "$e" = none ]; then how=run
   elif [ -z "$e" ]; then echo "skip $id"; return 0
-  elif [ "$e" = "no result event" ] || [ ! -f "$rd/run.json" ]; then how=rerun
-  else how=rescore; fi
+  elif [ ! -f "$rd/run.json" ]; then how=rerun
+  else case $e in *"no result event"*) how=rerun ;; *) how=rescore ;; esac; fi
   rc=-
   if [ "$how" != rescore ]; then $run "$1" "$2" "$3"; rc=$?; fi
   $sc "$rd"
@@ -36,8 +36,16 @@ one() {
 mkdir -p "$GA_ROOT/runs"
 if [ "${1:-}" = --smoke ]; then tasks=midi-synth; else tasks=$GA_TASKS; fi
 
-# Preflight: readable dirs, every needed task prepared and validated, HEAD baseline cached.
+# Preflight: readable dirs, every needed task prepared and validated, HEAD baseline cached, gated settings snapshotted.
 ga_unlock_all
+# Ruling 22: skreeep2's .claude is live, untracked state; every gated run of this campaign uses one frozen copy.
+snap=$GA_ROOT/gated-settings.json
+if [ ! -f "$snap" ]; then
+  cp "$GA_SKREEEP2/.claude/settings.json" "$snap.tmp" || ga_die "cannot snapshot $GA_SKREEEP2/.claude/settings.json"
+  python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$snap.tmp" > "$snap.sha256" || ga_die "hash"
+  mv "$snap.tmp" "$snap"
+  echo "gated settings snapshot: $snap ($(cat "$snap.sha256"))"
+fi
 for task in $tasks; do
   v=$GA_ROOT/base/$task/validation.txt
   if [ "$(grep -c '=yes$' "$v" 2>/dev/null)" != 3 ] || [ "$(wc -l < "$v" | tr -d ' ')" != 3 ]; then

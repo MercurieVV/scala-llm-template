@@ -51,13 +51,17 @@ sh eval/gate-ab/prepare.sh midi-synth
 
 Each task needs preparation (e.g., environment setup).
 
+Launch the smoke run and the campaign from a plain terminal (not inside a Claude Code session): run.sh unsets the
+outer session's `CLAUDECODE` / `CLAUDE_CODE_*` variables before starting the agent, but a plain terminal is the
+configuration the numbers are meant for.
+
 ### 3. Smoke test
 
 ```bash
 sh eval/gate-ab/campaign.sh --smoke
 ```
 
-Verify setup with a minimal run (useful for debugging before full campaign). Runs `midi-synth` arm g then u at rep 9 (kept out of the 1..3 scored set; report.py ignores rep 9). campaign.sh first unlocks run dirs, prepares any task whose `validation.txt` is not three `=yes` lines (smoke: only midi-synth), computes `head-baseline.json` if missing, and re-execs itself under `caffeinate -dims`.
+Verify setup with a minimal run (useful for debugging before full campaign). Runs `midi-synth` arm g then u at rep 9 (kept out of the 1..3 scored set; report.py ignores rep 9). campaign.sh first unlocks run dirs, prepares any task whose `validation.txt` is not three `=yes` lines (smoke: only midi-synth), computes `head-baseline.json` if missing, snapshots `$GA_SKREEEP2/.claude/settings.json` once to `~/gate-eval/gated-settings.json` (+ `.sha256`) if absent, and re-execs itself under `caffeinate -dims`. Delete the snapshot to pick up a changed skreeep2 gate (only between campaigns).
 
 ### 4. Run the full campaign
 
@@ -84,9 +88,11 @@ Each run lives at `~/gate-eval/runs/<task>-<arm>-<rep>/`, e.g. `noise-g-1`, `noi
   repo/                one-off clone of skreeep2 at GA_COMMIT
   holdout/             gated only — skreeep2-holdout at GA_HOLDOUT_COMMIT
   prompt.txt           the prompt sent to Claude
-  settings.json        Claude API settings (model, temperature, etc.)
+  settings.json        the arm's .claude/settings.json (gated: the snapshot, holdout path rewritten)
+  precompile.log       the pre-agent compile (see below)
   transcript.jsonl     raw Claude conversation (one message per line)
-  run.json             metadata (task, arm, rep, elapsed, tokens, status)
+  run.json             run_id, task, arm, rep, start/end epoch, exit_code, timed_out, precompile_seconds,
+                       gated_settings_sha256 (null for u)
   final.diff           output diff between base and final code
   final-tree.tar.gz    tarred final source tree
   score.json           evaluation result
@@ -101,6 +107,21 @@ Plus:
 
 - `~/gate-eval/head-baseline.json` — per-module pass/fail of HEAD, written by `python3 eval/gate-ab/score.py --baseline` (run once, while head is readable, before the first run; fails loudly on an empty module list, a resolve failure, a timeout or a non-test failure). Scoring a run without it records `error="no baseline"`.
 
+## Agent environment (both arms identical)
+
+- `claude -p … --setting-sources project --strict-mcp-config --mcp-config .mcp.json`: no user/local settings, so none of
+  the operator's plugins, hooks, MCP servers or `~/.claude/CLAUDE.md`; MCP = scala-semantic only. score.py checks the
+  transcript's `system`/`init` event and records `error="agent environment leaked: …"` for any other MCP server, any
+  non-built-in plugin (Claude Code's own `path: builtin` plugins load with any setting source), or (ungated) any hook
+  event; a transcript with a result but no init event is `leaked: no init event`.
+- Before the agent starts, run.sh removes `~/.claude/projects/<repo path, / and . as ->/` (auto-memory and transcripts of
+  an earlier attempt of the same run id).
+- Pre-agent compile (Ruling 19), outside wall time and before locking: `./mill __.compile + __.test.compile +
+  __.semanticDbData + scalaSemanticWriteClasspath` in the run's repo into the arm's out dir (g: `out-agent`, u: `out`),
+  cap `GA_PRECOMPILE_CAP` (1800 s), measured ~92 s cold. It gives the gate's semantic guard a SemanticDB index
+  (`healthy=1`, 166/166 sources on midi-synth) and the MCP its classpath metadata (`.scala-semantic/classpath-mill.json`).
+  A failure aborts the run before the agent starts.
+
 ## score.json notes
 
 - Hidden score runs only the hidden spec's suite (`<TASK_MODULE>.testOnly <package>.<Object>`). The module's other suites, and every other test module, run in one `-k -j 1` Mill invocation (cap `GA_REGRESS_CAP`, default 1200 s) and count as regressions; failures are attributed per module from `[error] <module>.testForked` lines. Build breakage is an agent outcome, not an error: a module that no longer compiles is `<compile:<module>>`; a build definition that no longer compiles (`[error] build.mill:N` / `<dir>/package.mill:N`, `[error] compile Compilation failed`; Mill then fails every command, `resolve __.test` included) is `<build>`. A failure of the module listing (`resolve __:Module`, used only to attribute a failing regression run) for any other reason records `error="resolve __:Module failed: ..."`.
@@ -108,6 +129,12 @@ Plus:
 - `build_edits`: `*.mill` files the agent edited (suspects, reported only; not part of `solved`).
 - `error`: `"scoring incomplete"` in a partial record (scoring died or still running); `"mill failed: ..."` for Mill failures without test output; `"hidden suite did not run"`; `"no baseline"`.
 - Contamination detection is token-based: it resolves path-like tokens against `<run>/repo` and does not follow `cd` chains, variables or subshells, so a multi-`cd` command can evade it. It is a tripwire, not a sandbox (run.sh's mode-000 locking is the enforcement).
+  Protected: `base/`, `head/`, other run dirs, the skreeep2 repo, `~/.claude/projects` (the run's own project dir excepted),
+  and inside the run dir `holdout/`, `repo/out-holdout`, `repo/.dsh/.state/holdout.log`. Any ancestor of an outside
+  protected path is flagged too (`find / …`, `grep -r … ~`, Glob `path: "/"`). Roots `/`, `~`, `$HOME`, `${HOME}`,
+  `~user` resolve; a bare `/` counts only in a command that walks/reads paths (find, grep, rg, ls, cat, …). Here-document
+  bodies are not scanned, tokens starting `//` or `/*` are ignored, and a glob token stands for its literal directory
+  prefix (`/a/b/*.scala` → `/a/b`).
 
 ## Crash recovery
 
@@ -123,7 +150,7 @@ sh eval/gate-ab/tests/shell-test.sh
 SH=dash dash eval/gate-ab/tests/shell-test.sh
 ```
 
-Expected: 9 passed, 0 failed (both shells).
+Expected: 106 passed, 0 failed (both shells). Python: `python3 -m unittest discover -s eval/gate-ab/tests -p 'test_*.py'` → 147 tests OK (~100 s; the fake-Mill tests sleep).
 
 ## Preparing the cache and tasks
 

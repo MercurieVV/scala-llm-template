@@ -51,9 +51,10 @@ def _string_leaves(o):
 
 
 def parse_transcript(lines):
-    """-> dict(turns, input_tokens, output_tokens, cache_read_tokens, cost_usd, tool_calls, final_text, texts, has_result)."""
+    """-> dict(turns, input_tokens, output_tokens, cache_read_tokens, cost_usd, tool_calls, final_text, texts, hook_texts,
+    has_result, init (the system/init event or None), hook_events (hook names of system hook_* events, in order))."""
     out = dict(turns=None, input_tokens=None, output_tokens=None, cache_read_tokens=None, cost_usd=None,
-               tool_calls=[], final_text="", texts=[], hook_texts=[], has_result=False)
+               tool_calls=[], final_text="", texts=[], hook_texts=[], has_result=False, init=None, hook_events=[])
     by_id = {}
     turn = 0
     prev_hooks = []  # hook texts of the immediately preceding event: the same block reported twice in a row counts once
@@ -106,7 +107,11 @@ def parse_transcript(lines):
                 elif b.get("type") == "text" and isinstance(b.get("text"), str):
                     out["texts"].append(b["text"])
                     ev_hooks.append(b["text"])
+        elif t == "system" and ev.get("subtype") == "init":
+            out["init"] = ev  # configuration, not hook output: kept out of texts
         elif t == "system":
+            if ev.get("hook_event") or ev.get("hook_name"):
+                out["hook_events"].append(ev.get("hook_name") or ev.get("hook_event"))
             leaves = [s for s in _string_leaves({k: v for k, v in ev.items() if k != "type"}) if s]
             out["texts"].extend(leaves)
             ev_hooks.extend(leaves)
@@ -122,6 +127,25 @@ def parse_transcript(lines):
                 out["final_text"] = ev["result"]
         hook(ev_hooks)
     return out
+
+
+def env_leaks(t, arm):
+    """Ruling 20: what of the operator's own Claude config reached the agent, from the transcript's init event.
+    Allowed: MCP servers exactly {scala-semantic}; plugins only Claude Code's built-ins (path "builtin": present with any
+    setting source, identical in both arms); hook events only in the gated arm. -> list of leak descriptions."""
+    init = t.get("init")
+    if init is None:
+        return ["no init event"] if t.get("has_result") else []
+    leaks = []
+    mcp = sorted(str(m.get("name")) for m in init.get("mcp_servers") or [] if isinstance(m, dict))
+    if mcp != ["scala-semantic"]:
+        leaks.append("mcp_servers=" + ",".join(mcp))
+    plugins = [str(p.get("name")) for p in init.get("plugins") or [] if isinstance(p, dict) and p.get("path") != "builtin"]
+    if plugins:
+        leaks.append("plugins=" + ",".join(plugins))
+    if arm != "g" and t.get("hook_events"):
+        leaks.append("hooks=" + ",".join(dict.fromkeys(t["hook_events"])))
+    return leaks
 
 
 def first_clean_compile(tool_calls):
@@ -378,8 +402,50 @@ def _leaves(o, key=None):
             yield from _leaves(v, key)
 
 
+_HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
+def _strip_heredocs(cmd):
+    """Drop here-document bodies (written content, often Scala with /** */ and // comments); the `<<EOF` line stays."""
+    out, pending = [], []
+    for ln in cmd.split("\n"):
+        if pending:
+            delim, dash = pending[0]
+            if (ln.lstrip("\t") if dash else ln) == delim:
+                pending.pop(0)
+            continue
+        out.append(ln)
+        pending += [(m.group(3), m.group(1) == "-") for m in _HEREDOC.finditer(ln)]
+    return "\n".join(out)
+
+
+_WALKERS = re.compile(r"\b(find|grep|egrep|fgrep|rg|ag|ls|du|tree|fd|locate|cd|cat|head|tail|less|xargs)\b")
+
+
+def _bash_tokens(cmd):
+    """Tokens of a Bash command, here-document bodies dropped. A bare `/` is the filesystem root only next to a command that
+    walks or reads paths (`find / -name x`); otherwise it is arithmetic (`$((a / 2))`, `python3 -c "print(4 / 2)"`)."""
+    body = _strip_heredocs(cmd).replace("${HOME}", "$HOME")
+    toks = _TOKEN.findall(body)
+    return toks if _WALKERS.search(body) else [t for t in toks if t != "/"]
+
+
+def _path_part(tok):
+    """Comment markers are no paths; a glob token stands for its literal directory prefix (`/a/b/*.scala` -> `/a/b`,
+    `**/*.scala` -> nothing)."""
+    if tok.startswith("//") or tok.startswith("/*"):
+        return None
+    if "*" in tok:
+        pre = tok[:tok.index("*")]
+        if "/" not in pre:
+            return None
+        return pre[:pre.rindex("/")] or "/"
+    return tok
+
+
 def _candidate_paths(tool, inp):
-    """Path-like strings in every string leaf of a tool call's input (written content and Grep regexes excluded)."""
+    """Path-like strings in every string leaf of a tool call's input (written content, here-document bodies and Grep
+    regexes excluded)."""
     out = []
     for key, v in _leaves(inp):
         if key in _CONTENT_KEYS:
@@ -387,48 +453,77 @@ def _candidate_paths(tool, inp):
         if tool == "Grep" and key == "pattern":
             if v.startswith("/"):
                 out.append(v)
-        elif tool == "Bash" and key == "command" or any(c.isspace() for c in v):
+        elif tool == "Bash" and key == "command":
+            out += _bash_tokens(v)
+        elif any(c.isspace() for c in v):
             out += _TOKEN.findall(v)
         else:
             out.append(v)
-    return out
+    return [p for p in (_path_part(t) for t in out) if p]
 
 
 def _resolve(tok, repo):
-    """Absolute/relative path-like token -> normalised absolute path, or None if it is not path-like."""
+    """Absolute/relative path-like token -> normalised absolute path, or None if it is not path-like.
+    Roots resolve too: `/`, `~`, `~/`, `$HOME`, `~user`."""
     if tok.startswith("file://"):
         tok = tok[len("file://"):]
-    if not tok or len(tok) < 2 or "://" in tok:
+    if not tok or "://" in tok:
         return None
-    if tok.startswith("~/"):
-        tok = _home() + tok[1:]
-    elif tok.startswith("$HOME/"):
-        tok = _home() + tok[5:]
+    if tok in ("~", "$HOME") or tok.startswith("~/") or tok.startswith("$HOME/"):
+        tok = _home() + tok[1 if tok.startswith("~") else 5:]
+    elif tok.startswith("~"):
+        user = tok[1:].split("/", 1)[0]
+        if not re.fullmatch(r"[A-Za-z_][\w.-]*", user):
+            return None
+        expanded = os.path.expanduser(tok)
+        if expanded == tok:
+            return None  # no such user
+        tok = expanded
     if tok.startswith("/"):
         return os.path.realpath(tok)
+    if len(tok) < 2:
+        return None
     if "/" in tok or tok == "..":
         return os.path.realpath(os.path.join(repo, tok))
     return None
 
 
+def _claude_slug(path):
+    """Claude Code's per-project dir name under ~/.claude/projects: the cwd with `/` and `.` replaced by `-`."""
+    return re.sub(r"[/.]", "-", path)
+
+
 def contamination(tool_calls, run_dir):
+    """Paths in tool inputs the agent must not touch: base/ (hidden specs), head/ (the solution), other runs, the skreeep2
+    repo, ~/.claude/projects (earlier runs' transcripts; the run's own project dir excepted), any ANCESTOR of those
+    (a search rooted at /, ~, $GA_ROOT ...), the holdout material inside the run dir, and anything outside the run dir
+    and the toolchain prefixes."""
     run_real = os.path.realpath(run_dir)
     repo = os.path.join(run_real, "repo")
     ga_root = os.path.realpath(os.environ.get("GA_ROOT") or os.path.dirname(os.path.dirname(run_real)))
     skreeep2 = os.path.realpath(os.environ.get("GA_SKREEEP2", "/Users/viktorskalinins/IdeaProjects/skreeep2"))
-    protected = [os.path.join(ga_root, "base"), os.path.join(ga_root, "head"), skreeep2]
     home = _home()
+    claude_projects = os.path.realpath(os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude"), "projects"))
+    own_project = os.path.join(claude_projects, _claude_slug(repo))
+    runs = os.path.join(ga_root, "runs")
+    external = [os.path.join(ga_root, "base"), os.path.join(ga_root, "head"), skreeep2, claude_projects]
+    inside = [os.path.join(run_real, "holdout"), os.path.join(repo, "out-holdout"), os.path.join(repo, ".dsh", ".state", "holdout.log")]
     allowed = list(ALLOWED_PREFIXES) + [os.path.join(home, p) for p in (".cache", "Library/Caches", ".local/bin", ".mill")]
     allowed += [os.path.realpath(a) for a in allowed]
 
     def in_run(p):
         return _under(p, run_real)
 
-    def protected_hit(p):
-        if any(_under(p, q) for q in protected):
+    def hit(p):
+        if any(_under(p, q) for q in inside):
             return True
-        runs = os.path.join(ga_root, "runs")
-        return _under(p, runs) and not in_run(p)
+        if in_run(p) or _under(p, own_project):
+            return False
+        if any(_under(p, q) for q in external) or _under(p, runs):
+            return True
+        if any(_under(q, p) for q in external + [runs]):  # an ancestor: a search rooted above protected material
+            return True
+        return not any(_under(p, a) for a in allowed)
 
     out = []
     for c in tool_calls:
@@ -436,14 +531,17 @@ def contamination(tool_calls, run_dir):
         flagged = set()
         for tok in _candidate_paths(tool, inp):
             p = _resolve(tok, repo)
-            if p is None or in_run(p):
+            if p is None:
+                bare = os.path.join(repo, tok)  # `ls out-holdout` from the repo
+                if "/" not in tok and any(_under(bare, q) for q in inside):
+                    flagged.add(bare)
                 continue
-            if protected_hit(p) or not any(_under(p, a) for a in allowed):
+            if hit(p):
                 flagged.add(p)
         if tool == "Bash":
             cmd = inp.get("command", "") or ""
             if re.search(r"\b(chmod|chown)\b", cmd):
-                for tok in _TOKEN.findall(cmd):
+                for tok in _bash_tokens(cmd):
                     p = _resolve(tok, repo)
                     if p is not None and not in_run(p):
                         flagged.add(p)
@@ -609,6 +707,9 @@ def main(run_dir):
             rec[k] = t[k]
         if not t["has_result"] and not rec["timed_out"]:  # a timeout is an outcome, not a scorer error (Ruling 14)
             errors.append("no result event")
+        leaks = env_leaks(t, run["arm"])
+        if leaks:  # Ruling 20: the operator's plugins/hooks/MCPs reached the agent; the arms are not what they claim
+            errors.append("agent environment leaked: " + "; ".join(leaks))
         rec["first_clean_compile_turn"] = first_clean_compile(t["tool_calls"])
         rec["gate_blocks"] = gate_blocks(t["tool_calls"], t["hook_texts"])
         rec["contamination"] = contamination(t["tool_calls"], rd)

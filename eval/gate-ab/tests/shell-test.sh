@@ -87,14 +87,29 @@ mkdir -p "$tmp/home/tasks/t1" "$tmp/root/base/t1/tree/.dsh" "$tmp/skr/.claude" "
 cp "$ga/lib.sh" "$ga/timeout.py" "$ga/run.sh" "$tmp/home/" 2>/dev/null
 printf "TASK_MODULE='m.test'\nHIDDEN_SPEC='x'\nCUT_FILES='x'\nFEATURE='f'\n" >"$tmp/home/tasks/t1/task.env"
 echo 'do the task' >"$tmp/home/tasks/t1/prompt.txt"
+# fake ./mill in the task tree: the pre-agent compile (Ruling 19) logs its output dir and args and emits a SemanticDB file
+cat >"$tmp/root/base/t1/tree/mill" <<'MILL'
+#!/bin/sh
+echo "$MILL_OUTPUT_DIR $*" >>"$FAKE_MILL_LOG"
+[ -n "${FAKE_MILL_FAIL:-}" ] && exit 1
+mkdir -p "$MILL_OUTPUT_DIR/m/semanticDbDataDetailed.dest/classes/META-INF/semanticdb" && : >"$MILL_OUTPUT_DIR/m/semanticDbDataDetailed.dest/classes/META-INF/semanticdb/A.scala.semanticdb"
+exit 0
+MILL
+chmod +x "$tmp/root/base/t1/tree/mill"
 ( cd "$tmp/root/base/t1/tree" && printf 'holdoutDir = ../x\n' >.dsh/contract && printf '.claude/\nout/\nout-agent/\n' >.gitignore \
   && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm base )
 ( cd "$tmp/hsrc" && echo spec >HSpec.scala && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm h )
-echo "{\"denyRead\":\"$tmp/hsrc/bin/check\",\"denyWrite\":\"$tmp/hsrc\"}" >"$tmp/skr/.claude/settings.json"
+echo '{"live":"not the snapshot"}' >"$tmp/skr/.claude/settings.json"
+# Ruling 22: run.sh reads the campaign's snapshot, never the live skreeep2 settings
+echo "{\"denyRead\":\"$tmp/hsrc/bin/check\",\"denyWrite\":\"$tmp/hsrc\"}" >"$tmp/root/gated-settings.json"
+snapsha=$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$tmp/root/gated-settings.json")
+echo "$snapsha" >"$tmp/root/gated-settings.json.sha256"
 mkdir -p "$tmp/root/base/t1/hidden" "$tmp/root/head" "$tmp/root/runs/other-u-1"
 cat >"$tmp/claude" <<'FAKE'
 #!/bin/sh
 ls -a . >"$FAKE_LS"
+find . -path '*/META-INF/semanticdb/*.semanticdb' | head -n 1 >"$FAKE_LS.index"
+env | grep -c '^CLAUDECODE=' >"$FAKE_LS.env"
 printf '%s\n' "$@" >"$FAKE_ARGS"
 cat | wc -c | tr -d ' ' >"$FAKE_ARGS.stdin"
 for p in $FAKE_PROBE; do if ls "$p" >/dev/null 2>&1; then echo "readable $p"; else echo "denied $p"; fi; done >"$FAKE_PROBED"
@@ -105,7 +120,11 @@ echo 'agent wrote this' >>agent-note.txt
 exit 0
 FAKE
 chmod +x "$tmp/claude"
-runenv() { GA_HOME=$tmp/home GA_ROOT=$tmp/root GA_SKREEEP2=$tmp/skr GA_HOLDOUT_SRC=$tmp/hsrc GA_HOLDOUT_COMMIT=HEAD CLAUDE_BIN=$tmp/claude env "$@"; }
+runenv() { GA_HOME=$tmp/home GA_ROOT=$tmp/root GA_SKREEEP2=$tmp/skr GA_HOLDOUT_SRC=$tmp/hsrc GA_HOLDOUT_COMMIT=HEAD CLAUDE_BIN=$tmp/claude \
+  CLAUDE_CONFIG_DIR=$tmp/cfg FAKE_MILL_LOG=$tmp/mill.log CLAUDECODE=1 env "$@"; }
+# M2: auto-memory / transcripts of an earlier run with the same id are removed; other projects stay
+mkdir -p "$tmp/root/runs/t1-g-1/repo" && slug=$(CDPATH= cd -- "$tmp/root/runs/t1-g-1/repo" && pwd -P | sed 's|[/.]|-|g') && rm -rf "$tmp/root/runs/t1-g-1"
+mkdir -p "$tmp/cfg/projects/$slug/memory" "$tmp/cfg/projects/-other-project"; echo old >"$tmp/cfg/projects/$slug/memory/MEMORY.md"
 rd=$tmp/root/runs
 probe="$tmp/root/base/t1/hidden $tmp/root/head $tmp/root/runs/other-u-1"
 runenv FAKE_ARGS=$tmp/args-g.txt FAKE_PROBE="$probe" FAKE_PROBED=$tmp/probed-g.txt FAKE_LS=$tmp/ls-g.txt $SH "$tmp/home/run.sh" t1 g 1 >/dev/null 2>&1; check "run g exit 0" "$?" "0"
@@ -119,11 +138,22 @@ grep -q 'agent wrote this' "$rd/t1-g-1/final.diff" && ok "run g final.diff" || b
 [ -f "$rd/t1-g-1/final-tree.tar.gz" ] && ok "run g tarball" || bad "run g tarball"
 [ -s "$rd/t1-g-1/transcript.jsonl" ] && ok "run g transcript" || bad "run g transcript"
 git -C "$rd/t1-g-1/repo" rev-parse -q --verify refs/tags/base >/dev/null && ok "run g base tag" || bad "run g base tag"
-[ -s "$tmp/ls-g.txt" ] && [ ! -e "$tmp/root/cache" ] && ! grep -qx out "$tmp/ls-g.txt" && ! grep -qx 'out-agent' "$tmp/ls-g.txt" && ok "run g no out dirs at start" || bad "run g no out dirs at start"
+[ -s "$tmp/ls-g.txt" ] && [ ! -e "$tmp/root/cache" ] && ! grep -qx out "$tmp/ls-g.txt" && grep -qx 'out-agent' "$tmp/ls-g.txt" && ok "run g only out-agent at start" || bad "run g only out-agent at start"
+check "run g precompile into out-agent" "$(grep -c '^out-agent --no-daemon -j 1 --ticker false --color false __.compile + __.test.compile + __.semanticDbData + scalaSemanticWriteClasspath$' "$tmp/mill.log")" "1"
+grep -q 'semanticdb/A.scala.semanticdb' "$tmp/ls-g.txt.index" && ok "run g SemanticDB index present at agent start" || bad "run g SemanticDB index present at agent start"
+grep -q '"precompile_seconds":[0-9][0-9]*,' "$rd/t1-g-1/run.json" && ok "run g precompile_seconds recorded" || bad "run g precompile_seconds recorded" "$(cat "$rd/t1-g-1/run.json")"
+grep -q "\"gated_settings_sha256\":\"$snapsha\"" "$rd/t1-g-1/run.json" && ok "run g snapshot hash recorded" || bad "run g snapshot hash recorded"
+! grep -q 'not the snapshot' "$rd/t1-g-1/repo/.claude/settings.json" && ok "run g uses the snapshot, not live settings" || bad "run g uses the snapshot, not live settings"
+tr '\n' ' ' <"$tmp/args-g.txt" | grep -q -e ' --setting-sources project --strict-mcp-config --mcp-config .mcp.json ' && ok "run g agent isolation flags" || bad "run g agent isolation flags" "$(tr '\n' ' ' <"$tmp/args-g.txt")"
+check "run g outer Claude Code env not inherited" "$(cat "$tmp/ls-g.txt.env")" "0"
+[ ! -e "$tmp/cfg/projects/$slug" ] && [ -d "$tmp/cfg/projects/-other-project" ] && ok "run g removes its own Claude project dir only" || bad "run g removes its own Claude project dir only"
 runenv FAKE_ARGS=$tmp/args-u.txt FAKE_PROBE="$probe" FAKE_PROBED=$tmp/probed-u.txt FAKE_LS=$tmp/ls-u.txt $SH "$tmp/home/run.sh" t1 u 1 >/dev/null 2>&1; check "run u exit 0" "$?" "0"
 check "run u settings" "$(cat "$rd/t1-u-1/repo/.claude/settings.json")" '{"permissions":{}}'
 [ ! -e "$rd/t1-u-1/holdout" ] && ok "run u no holdout" || bad "run u no holdout"
-[ -s "$tmp/ls-u.txt" ] && ! grep -qx out "$tmp/ls-u.txt" && ! grep -qx 'out-agent' "$tmp/ls-u.txt" && ok "run u no out dirs at start" || bad "run u no out dirs at start"
+[ -s "$tmp/ls-u.txt" ] && grep -qx out "$tmp/ls-u.txt" && ! grep -qx 'out-agent' "$tmp/ls-u.txt" && ok "run u only out at start" || bad "run u only out at start"
+check "run u precompile into out" "$(grep -c '^out --no-daemon .*__.semanticDbData + scalaSemanticWriteClasspath$' "$tmp/mill.log")" "1"
+grep -q '"gated_settings_sha256":null' "$rd/t1-u-1/run.json" && ok "run u no snapshot hash" || bad "run u no snapshot hash"
+cmp -s "$tmp/args-g.txt" "$tmp/args-u.txt" && ok "agent command line identical in both arms" || bad "agent command line identical in both arms"
 for arm in g u; do
   check "run $arm isolation denied during run" "$(grep -c '^denied' "$tmp/probed-$arm.txt")" "3"
 done
@@ -146,6 +176,21 @@ rm -f "$tmp/ls-bad.txt"
 ( cd "$tmp/root/base/t1/tree" && git checkout -q -b nohd && printf 'other = 1\n' >.dsh/contract && git -c user.name=t -c user.email=t@t commit -qam nohd )
 runenv FAKE_ARGS=$tmp/args-b.txt FAKE_PROBE="$probe" FAKE_PROBED=$tmp/probed-b.txt FAKE_LS=$tmp/ls-bad.txt $SH "$tmp/home/run.sh" t1 g 2 >/dev/null 2>&1
 rc=$?; [ "$rc" -ne 0 ] && [ ! -e "$tmp/ls-bad.txt" ] && ok "run aborts when holdoutDir rewrite fails" || bad "run aborts when holdoutDir rewrite fails" "rc=$rc"
+( cd "$tmp/root/base/t1/tree" && git checkout -q - )
+# a failed pre-agent compile aborts before the agent starts
+rm -f "$tmp/ls-pc.txt"
+runenv FAKE_MILL_FAIL=1 FAKE_ARGS=$tmp/args-pc.txt FAKE_PROBE="$probe" FAKE_PROBED=$tmp/probed-pc.txt FAKE_LS=$tmp/ls-pc.txt $SH "$tmp/home/run.sh" t1 u 3 >/dev/null 2>&1
+rc=$?; [ "$rc" -ne 0 ] && [ ! -e "$tmp/ls-pc.txt" ] && ok "run aborts when precompile fails" || bad "run aborts when precompile fails" "rc=$rc"
+readable=yes; for p in $probe; do ls "$p" >/dev/null 2>&1 || readable=no; done
+check "precompile failure leaves isolation unlocked" "$readable" "yes"
+# Ruling 22: no snapshot -> the gated arm refuses to start
+mv "$tmp/root/gated-settings.json" "$tmp/root/gs.bak"; rm -f "$tmp/ls-ns.txt"
+runenv FAKE_ARGS=$tmp/args-ns.txt FAKE_PROBE="$probe" FAKE_PROBED=$tmp/probed-ns.txt FAKE_LS=$tmp/ls-ns.txt $SH "$tmp/home/run.sh" t1 g 3 >/dev/null 2>&1
+rc=$?; [ "$rc" -ne 0 ] && [ ! -e "$tmp/ls-ns.txt" ] && ok "run g dies without settings snapshot" || bad "run g dies without settings snapshot" "rc=$rc"
+mv "$tmp/root/gs.bak" "$tmp/root/gated-settings.json"
+echo 0000 >"$tmp/root/gated-settings.json.sha256"
+runenv FAKE_ARGS=$tmp/args-ns.txt FAKE_PROBE="$probe" FAKE_PROBED=$tmp/probed-ns.txt FAKE_LS=$tmp/ls-ns.txt $SH "$tmp/home/run.sh" t1 g 3 >/dev/null 2>&1
+rc=$?; [ "$rc" -ne 0 ] && [ ! -e "$tmp/ls-ns.txt" ] && ok "run g dies when snapshot hash differs" || bad "run g dies when snapshot hash differs" "rc=$rc"
 # crash safety net
 chmod 000 "$tmp/root/head" "$tmp/root/base"
 sh -c ". '$ga/lib.sh'; GA_ROOT='$tmp/root' ga_unlock_all"
@@ -155,8 +200,9 @@ rm -rf "$tmp"
 
 # --- campaign.sh against fakes
 tmp=$(mktemp -d)
-mkdir -p "$tmp/home" "$tmp/root/base" "$tmp/root/runs/noise-u-1" "$tmp/root/runs/noise-g-1"
+mkdir -p "$tmp/home" "$tmp/root/base" "$tmp/root/runs/noise-u-1" "$tmp/root/runs/noise-g-1" "$tmp/skr/.claude"
 cp "$ga/lib.sh" "$ga/campaign.sh" "$tmp/home/"
+echo '{"hooks":"v1"}' >"$tmp/skr/.claude/settings.json"
 cat >"$tmp/fake-run" <<'F'
 #!/bin/sh
 echo "$1-$2-$3" >>"$CALLS"
@@ -180,7 +226,7 @@ cat >"$tmp/fake-caf" <<'F'
 echo "$*" >>"$CAFS"; exec "$@"
 F
 chmod +x "$tmp"/fake-*
-cenv() { GA_HOME=$tmp/home GA_ROOT=$tmp/root GA_RUN=$tmp/fake-run GA_SCORE=$tmp/fake-score GA_PREPARE=$tmp/fake-prep GA_BASELINE=$tmp/fake-base \
+cenv() { GA_HOME=$tmp/home GA_ROOT=$tmp/root GA_SKREEEP2=$tmp/skr GA_RUN=$tmp/fake-run GA_SCORE=$tmp/fake-score GA_PREPARE=$tmp/fake-prep GA_BASELINE=$tmp/fake-base \
   CALLS=$tmp/calls PREPS=$tmp/preps BASES=$tmp/bases CAFS=$tmp/cafs GA_CAFFEINATED=1 env "$@"; }
 prepared() { for t in noise mixer-modes mcu note-ring backpressure scope-view modes midi-synth; do
   mkdir -p "$tmp/root/base/$t"; printf 'cut_compiles=yes\nhidden_fails_on_cut=yes\nhidden_passes_on_head=yes\n' >"$tmp/root/base/$t/validation.txt"; done; echo '{}' >"$tmp/root/head-baseline.json"; }
@@ -193,11 +239,15 @@ check "campaign log lines" "$(wc -l <"$tmp/root/campaign.log" | tr -d ' ')" "48"
 grep -q 'noise-g-1 exit=0 solved=True' "$tmp/root/campaign.log" && ok "campaign log format" || bad "campaign log format"
 check "campaign no prepare when ready" "$(cat "$tmp/preps" 2>/dev/null | wc -l | tr -d ' ')" "0"
 check "campaign no baseline when cached" "$(cat "$tmp/bases" 2>/dev/null | wc -l | tr -d ' ')" "0"
+cmp -s "$tmp/skr/.claude/settings.json" "$tmp/root/gated-settings.json" && ok "campaign snapshots gated settings" || bad "campaign snapshots gated settings"
+check "campaign snapshot sha256" "$(cat "$tmp/root/gated-settings.json.sha256" 2>/dev/null)" "$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$tmp/skr/.claude/settings.json")"
+echo '{"hooks":"v2"}' >"$tmp/skr/.claude/settings.json"
 # resume: noise-g-1 done, noise-u-1 half-run (dir, no score.json)
 rm -f "$tmp/calls" "$tmp/root/campaign.log"
 rm -rf "$tmp/root/runs"; mkdir -p "$tmp/root/runs/noise-g-1" "$tmp/root/runs/noise-u-1"; echo '{"solved":false}' >"$tmp/root/runs/noise-g-1/score.json"
 cenv $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
 check "campaign resume 47 runs" "$(wc -l <"$tmp/calls" | tr -d ' ')" "47"
+grep -q v1 "$tmp/root/gated-settings.json" && ok "campaign keeps an existing snapshot" || bad "campaign keeps an existing snapshot"
 grep -qx 'noise-u-1' "$tmp/calls" && ! grep -qx 'noise-g-1' "$tmp/calls" && ok "campaign resume redoes half-run, skips done" || bad "campaign resume redoes half-run, skips done"
 # Ruling 17: errored score.json is not done
 cat >"$tmp/fake-score-err" <<'F'
@@ -211,11 +261,13 @@ mkr noise-g-1 '{"solved":false,"error":"scoring incomplete"}'
 mkr noise-u-1 '{"solved":false,"error":"no result event"}'
 mkr mixer-modes-g-1 '{"solved":true,"error":null}'
 mkr mixer-modes-u-1 '{"solved":false,"error":"HEAD baseline missing"}' norun
+mkr mcu-g-1 '{"solved":false,"error":"no result event; agent environment leaked: no init event"}'
 cenv SCORES=$tmp/scores $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
 grep -qx 'noise-g-1' "$tmp/calls" && bad "retry rescore-only skips run.sh" || ok "retry rescore-only skips run.sh"
 grep -q 'noise-g-1' "$tmp/root/campaign.log" && grep 'noise-g-1' "$tmp/root/campaign.log" | grep -q 'retry=rescore' && ok "rescore retry logged" || bad "rescore retry logged"
 grep -qx 'noise-u-1' "$tmp/calls" && grep 'noise-u-1' "$tmp/root/campaign.log" | grep -q 'retry=rerun' && ok "no result event reruns the whole run" || bad "no result event reruns the whole run"
 grep -qx 'mixer-modes-u-1' "$tmp/calls" && ok "missing run.json reruns the whole run" || bad "missing run.json reruns the whole run"
+grep -qx 'mcu-g-1' "$tmp/calls" && grep 'mcu-g-1' "$tmp/root/campaign.log" | grep -q 'retry=rerun' && ok "combined no-result error reruns the whole run" || bad "combined no-result error reruns the whole run"
 grep -qx 'mixer-modes-g-1' "$tmp/calls" && bad "error null is skipped" || ok "error null is skipped"
 grep -q 'mixer-modes-g-1' "$tmp/root/campaign.log" && bad "skipped run not logged" || ok "skipped run not logged"
 # a run that errors again after its retry: exactly one retry, loop continues

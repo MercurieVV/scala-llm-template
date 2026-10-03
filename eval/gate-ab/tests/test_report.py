@@ -13,8 +13,9 @@ class Stats(unittest.TestCase):
         self.assertAlmostEqual(report.sign_test([1, -1, 0]), 1.0)
 
 class Decide(unittest.TestCase):
-    def d(self, gs, us, gf=0, uf=0, gw=100, uw=100):
-        return report.decide({"solve_rate": gs, "false_done": gf, "median_wall": gw}, {"solve_rate": us, "false_done": uf, "median_wall": uw})
+    def d(self, gs, us, gf=0, uf=0, gw=100, uw=100, gn=24, un=24):
+        return report.decide({"solve_rate": gs, "false_done": gf, "median_wall": gw, "n": gn},
+                             {"solve_rate": us, "false_done": uf, "median_wall": uw, "n": un})
     def test_pays_off_on_solve_rate(self): self.assertEqual(self.d(0.8, 0.5), "pays off")
     def test_pays_off_on_false_done(self): self.assertEqual(self.d(0.6, 0.6, gf=2, uf=6), "pays off")
     def test_too_slow(self): self.assertEqual(self.d(0.8, 0.5, gw=300, uw=100), "does not pay off")
@@ -31,6 +32,14 @@ class Decide(unittest.TestCase):
         self.assertEqual(self.d(0.4, 0.65), "does not pay off")
     def test_no_false_done_win_when_ungated_zero(self):
         self.assertEqual(self.d(0.6, 0.6, gf=0, uf=0), "inconclusive")
+    def test_false_done_needs_three_ungated(self):  # Ruling 21: 1 vs 0 or 2 vs 1 is noise, not "halved"
+        self.assertEqual(self.d(0.6, 0.6, gf=0, uf=1), "inconclusive")
+        self.assertEqual(self.d(0.6, 0.6, gf=1, uf=2), "inconclusive")
+        self.assertEqual(self.d(0.6, 0.6, gf=1, uf=3), "pays off")
+    def test_false_done_compared_as_rates(self):  # Ruling 21: unequal n (excluded runs) must not fake a halving
+        self.assertEqual(self.d(0.6, 0.6, gf=2, uf=4, gn=12, un=24), "inconclusive")   # 0.167 vs 0.167
+        self.assertEqual(self.d(0.6, 0.6, gf=2, uf=4, gn=24, un=12), "pays off")       # 0.083 <= 0.333/2
+        self.assertEqual(self.d(0.6, 0.6, gf=2, uf=3, gn=24, un=24), "inconclusive")   # 0.083 > 0.0625
     def test_worse(self): self.assertEqual(self.d(0.2, 0.6), "does not pay off")
 
 def rec(rid, task, arm, rep, **kw):
@@ -68,7 +77,9 @@ class EndToEnd(unittest.TestCase):
             with open(os.path.join(d, "summary.md")) as f: s = f.read()
             self.assertIn("\nVerdict: pays off\n", s)
             self.assertIn("a-g-9", s)
-            self.assertIn("false_done compared as raw counts; arms have n_g=1 n_u=2", s)
+            self.assertNotIn("raw counts", s)
+            self.assertIn("| false_done (rate) | 0 (0.00) | 0 (0.00) |", s)
+            self.assertIn("u.false_done >= 3", s)
             self.assertIn("1 smoke runs", s)
             self.assertIn("| n (headline) | 1 | 2 |", s)
             self.assertIn("| timeouts (counted, unsolved) | 0 | 1 |", s)

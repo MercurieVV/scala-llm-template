@@ -126,6 +126,102 @@ class RealGated(unittest.TestCase):
         t = score.parse_transcript(lines("real-gated.jsonl"))
         self.assertEqual(score.contamination(t["tool_calls"], "/Users/someone/gate-eval/runs/midi-synth-g-9"), [])
 
+class EnvLeak(unittest.TestCase):
+    """Ruling 20. Fixtures: init + hook events verbatim from the smoke runs midi-synth-{g,u}-9 (before the fix; long hook
+    outputs truncated, user name replaced) and from a `--setting-sources project --strict-mcp-config` probe."""
+    def test_real_leaked_ungated(self):
+        t = score.parse_transcript(lines("real-init-leaked-u.jsonl"))
+        leaks = score.env_leaks(t, "u")
+        self.assertEqual(len(leaks), 3, leaks)
+        self.assertIn("playwright", leaks[0]); self.assertIn("caveman", leaks[1]); self.assertIn("SessionStart", leaks[2])
+    def test_real_leaked_gated_hooks_allowed(self):
+        t = score.parse_transcript(lines("real-init-leaked-g.jsonl"))
+        leaks = score.env_leaks(t, "g")
+        self.assertEqual(len(leaks), 2, leaks)
+        self.assertTrue(leaks[0].startswith("mcp_servers=")); self.assertTrue(leaks[1].startswith("plugins="))
+    def test_isolated_init_clean_in_both_arms(self):
+        t = score.parse_transcript(lines("real-init-isolated.jsonl"))
+        self.assertEqual(score.env_leaks(t, "u"), []); self.assertEqual(score.env_leaks(t, "g"), [])
+    def test_hook_event_leaks_only_ungated(self):
+        hook = json.dumps({"type": "system", "subtype": "hook_started", "hook_name": "PreToolUse:Bash", "hook_event": "PreToolUse"})
+        t = score.parse_transcript(lines("real-init-isolated.jsonl") + [hook])
+        self.assertEqual(score.env_leaks(t, "g"), []); self.assertEqual(score.env_leaks(t, "u"), ["hooks=PreToolUse:Bash"])
+    def test_missing_init_with_result(self):
+        t = score.parse_transcript(lines("clean.jsonl"))
+        self.assertEqual(score.env_leaks(t, "u"), ["no init event"])
+        self.assertEqual(score.env_leaks(score.parse_transcript([]), "u"), [])
+    def test_init_event_not_hook_text(self):
+        t = score.parse_transcript(lines("real-init-isolated.jsonl"))
+        self.assertEqual(t["hook_texts"], []); self.assertNotIn("scala-semantic", t["texts"])
+
+class ContaminationHardening(unittest.TestCase):
+    RUN = "/Users/someone/gate-eval/runs/noise-g-1"
+    def setUp(self):
+        self.saved = dict(os.environ)
+        os.environ["HOME"] = "/Users/someone"; os.environ.pop("CLAUDE_CONFIG_DIR", None); os.environ.pop("GA_ROOT", None)
+    def tearDown(self):
+        os.environ.clear(); os.environ.update(self.saved)
+    def flagged(self, cmd):
+        return score.contamination([bash(cmd)], self.RUN)
+    def tool(self, name, **inp):
+        return score.contamination([{"name": name, "input": inp, "result_text": "", "is_error": False, "turn": 1}], self.RUN)
+    # I1: heredoc bodies and comment/glob tokens
+    def test_heredoc_scala_with_comments_not_flagged(self):
+        cmd = ("cat > signals/src/A.scala <<'EOF'\n/** Doc: see /Users/zzz/q and /etc/x.\n  * @param p /opt/thing\n  */\n"
+               "// https://example.org/a and /Users/elsewhere/b\nobject A { val p = \"/Users/q/r\" } /* c */\nEOF\n./mill signals.compile")
+        self.assertEqual(self.flagged(cmd), [])
+    def test_heredoc_unquoted_and_dash(self):
+        self.assertEqual(self.flagged("cat <<EOF >a.txt\n/Users/x/y\nEOF"), [])
+        self.assertEqual(self.flagged("cat <<-'END' >a.txt\n\t/Users/x/y\n\tEND\nls"), [])
+    def test_heredoc_target_outside_still_flagged(self):
+        c = self.flagged("cat <<EOF > /Users/viktorskalinins/IdeaProjects/skreeep2/x\nbody\nEOF")
+        self.assertEqual(len(c), 1, c)
+    def test_here_string_is_not_heredoc(self):
+        self.assertEqual(len(self.flagged("grep x <<< foo\ncat /Users/viktorskalinins/IdeaProjects/skreeep2/a")), 1)
+    def test_comment_tokens_ignored_outside_heredoc(self):
+        self.assertEqual(self.flagged("echo // not a path /* nor this */"), [])
+    def test_glob_tokens(self):
+        self.assertEqual(self.flagged("ls **/*.scala src/*/x"), [])
+        self.assertEqual(len(self.flagged("ls /Users/viktorskalinins/IdeaProjects/skreeep2/*.scala")), 1)
+    # I2: roots and ancestors of protected paths
+    def test_find_from_root(self):
+        self.assertEqual(self.flagged("find / -name MidiSynthSpec.scala"), ["Bash: /"])
+    def test_bare_slash_as_arithmetic_not_root(self):
+        self.assertEqual(self.flagged('python3 -c "print(4 / 2)"; echo $((6 / 3))'), [])
+    def test_grep_home(self):
+        for h in ("~", "$HOME", "${HOME}", "~/"):
+            self.assertEqual(self.flagged("grep -r MidiSynthSpec %s" % h), ["Bash: /Users/someone"], h)
+    def test_tilde_user(self):
+        root_home = os.path.realpath(os.path.expanduser("~root"))
+        self.assertEqual(self.flagged("ls ~root"), ["Bash: %s" % root_home])
+        self.assertEqual(self.flagged("ls ~nosuchuser4711"), [])
+    def test_glob_and_grep_tool_root(self):
+        self.assertEqual(self.tool("Glob", pattern="**/MidiSynthSpec.scala", path="/"), ["Glob: /"])
+        self.assertEqual(self.tool("Grep", pattern="MidiSynth", path="/Users/someone/gate-eval"), ["Grep: /Users/someone/gate-eval"])
+    def test_ancestor_under_allowed_prefix(self):
+        os.environ["GA_ROOT"] = "/tmp/ga-root"
+        c = score.contamination([bash("find /tmp -name '*Spec.scala'")], "/tmp/ga-root/runs/noise-g-1")
+        self.assertEqual(c, ["Bash: %s" % os.path.realpath("/tmp")])
+    def test_runs_parent_is_ancestor_of_other_runs(self):
+        self.assertEqual(self.flagged("ls ../.."), ["Bash: /Users/someone/gate-eval/runs"])
+    def test_repo_searches_not_flagged(self):
+        self.assertEqual(self.flagged("rg -n MidiSynth ./ && find ./signals -name '*.scala' && ls .. ../repo"), [])
+    def test_claude_projects_protected(self):
+        c = self.flagged("cat ~/.claude/projects/-Users-someone-gate-eval-runs-noise-g-2-repo/x.jsonl")
+        self.assertEqual(len(c), 1, c)
+        self.assertEqual(len(self.flagged("ls ~/.claude")), 1)
+    def test_own_memory_dir_allowed(self):
+        self.assertEqual(self.tool("Write", file_path="/Users/someone/.claude/projects/-Users-someone-gate-eval-runs-noise-g-1-repo/memory/m.md",
+                                   content="x"), [])
+    # I5: holdout material inside the run dir
+    def test_holdout_inside_run_dir(self):
+        self.assertEqual(self.tool("Read", file_path=self.RUN + "/holdout/HSpec.scala"), ["Read: %s/holdout/HSpec.scala" % self.RUN])
+        self.assertEqual(self.flagged("cat ../holdout/HSpec.scala"), ["Bash: %s/holdout/HSpec.scala" % self.RUN])
+        self.assertEqual(self.flagged("ls out-holdout/holdout"), ["Bash: %s/repo/out-holdout/holdout" % self.RUN])
+        self.assertEqual(self.flagged("tail .dsh/.state/holdout.log"), ["Bash: %s/repo/.dsh/.state/holdout.log" % self.RUN])
+    def test_holdout_bare_name_from_repo(self):
+        self.assertEqual(self.flagged("ls -la out-holdout"), ["Bash: %s/repo/out-holdout" % self.RUN])
+
 class Weaver(unittest.TestCase):
     def test_counts(self):
         log = "\x1b[32m+ \x1b[0ma passes 1ms\n\x1b[31m- \x1b[0mb fails 2ms\n+ c 3ms\n"
@@ -339,7 +435,7 @@ class FakeBase(unittest.TestCase):
         subprocess.run(g + ["commit", "-qm", "h"], check=True)
         (self.rd / "run.json").write_text(json.dumps(dict(run_id="noise-g-1", task="noise", arm="g", rep=1,
             start_epoch=100, end_epoch=160, exit_code=0, timed_out=False)))
-        (self.rd / "transcript.jsonl").write_text((FX / "clean.jsonl").read_text())
+        (self.rd / "transcript.jsonl").write_text((FX / "real-init-isolated.jsonl").read_text() + (FX / "clean.jsonl").read_text())
         (self.rd / "final.diff").write_text("")
         self.env = dict(GA_ROOT=str(self.root), GA_MILL=str(fm), GA_HOLDOUT_SRC=str(ho), GA_HOLDOUT_COMMIT="HEAD",
                         FAKE_HIDDEN="pass", GA_TEST_CAP="600", GA_REGRESS_CAP="1200", FAKE_LOG=str(self.log))
@@ -380,6 +476,17 @@ class MainWithFakeMill(FakeBase):
         i = reg.index("signals.test.testOnly"); self.assertEqual(reg[i + 1], "pk.OtherSpec")
         self.assertEqual(s["regressions"], ["signals.test"]); self.assertFalse(s["solved"])
         self.assertEqual(s["hidden_pass_ratio"], 1.0)
+    def test_leaked_agent_environment_is_an_error(self):
+        (self.rd / "transcript.jsonl").write_text((FX / "real-init-leaked-g.jsonl").read_text() + (FX / "clean.jsonl").read_text())
+        s = self.run_score()
+        self.assertTrue(s["error"].startswith("agent environment leaked: mcp_servers="), s["error"])  # error -> excluded from headline
+    def test_ungated_hook_event_is_an_error(self):
+        run = json.loads((self.rd / "run.json").read_text()); run["arm"] = "u"
+        (self.rd / "run.json").write_text(json.dumps(run))
+        hook = json.dumps({"type": "system", "subtype": "hook_started", "hook_name": "Stop", "hook_event": "Stop"})
+        (self.rd / "transcript.jsonl").write_text((FX / "real-init-isolated.jsonl").read_text() + hook + "\n" + (FX / "clean.jsonl").read_text())
+        s = self.run_score()
+        self.assertEqual(s["error"], "agent environment leaked: hooks=Stop")
     def test_regression_attributed_per_module(self):
         s = self.run_score(FAKE_FAIL_MODS="control.test")
         self.assertEqual(s["regressions"], ["control.test"]); self.assertFalse(s["solved"])

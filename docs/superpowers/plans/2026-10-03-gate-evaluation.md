@@ -19,7 +19,7 @@
 - Both arms: `--permission-mode acceptEdits --allowedTools Bash Edit Write Read Grep Glob mcp__scala-semantic`; `.mcp.json` with `scala-semantic` only; no `settings.local.json`.
 - Gated settings = skreeep2's `/Users/viktorskalinins/IdeaProjects/skreeep2/.claude/settings.json` with every `/Users/viktorskalinins/IdeaProjects/skreeep2-holdout` string replaced by the run's holdout copy path; ungated settings = `{"permissions":{}}`.
 - 8 tasks × 2 arms × 3 repeats = 48 scored runs; order G,U alternating; run ids `<task>-<arm>-<rep>` with arm `g`/`u`, rep `1..3`.
-- Decision rule (fixed): gate pays off if gated solve rate − ungated ≥ 0.20, or `false_done` count halved or better, AND median gated wall time ≤ 2 × ungated; |Δ solve rate| < 0.25 reported as inconclusive.
+- Decision rule (fixed; false_done branch amended by Ruling 21 before any scored run): gate pays off if gated solve rate − ungated ≥ 0.20, or (ungated `false_done` ≥ 3 and gated `false_done` RATE over headline runs ≤ half the ungated rate), AND median gated wall time ≤ 2 × ungated; |Δ solve rate| < 0.25 reported as inconclusive; timeouts reported beside `false_done`.
 - Commits end with `Claude-Session: https://claude.ai/code/session_01NYhZujY9dqgFF2eCQLXzKw`; no `Co-Authored-By`; stage explicit paths.
 - Never modify `/Users/viktorskalinins/IdeaProjects/skreeep2` or the holdout repo from this plan; read them only (`git archive`, `cp`).
 - macOS has no `timeout(1)`: time limits go through `eval/gate-ab/timeout.py`.
@@ -524,7 +524,7 @@ if __name__ == "__main__":
 - Consumes: `~/gate-eval/runs/*/score.json` (Task 5 keys).
 - Produces: `<runs-root>/results.csv` (one row per run, columns = score.json scalar keys + `gate_blocks_total`), `<runs-root>/summary.md`; functions `wilson(k, n, z=1.96) -> (lo, hi)`, `sign_test(diffs) -> p_two_sided` (ties dropped, exact binomial), `decide(g, u) -> str` where `g`/`u` are dicts `{solve_rate, false_done, median_wall}` returning one of `pays off`, `does not pay off`, `inconclusive`.
 
-Decision (from Global Constraints): `pays off` if (`g.solve_rate - u.solve_rate >= 0.20` or (`u.false_done > 0` and `g.false_done <= u.false_done / 2`)) and `g.median_wall <= 2 * u.median_wall`; else `inconclusive` if `abs(g.solve_rate - u.solve_rate) < 0.25`; else `does not pay off`. Contaminated runs and runs with `error` are excluded from the headline and counted separately.
+Decision (from Global Constraints, Ruling 21): `pays off` if (`g.solve_rate - u.solve_rate >= 0.20` or (`u.false_done >= 3` and `g.false_done / g.n <= (u.false_done / u.n) / 2`)) and `g.median_wall <= 2 * u.median_wall`; else `inconclusive` if `abs(g.solve_rate - u.solve_rate) < 0.25`; else `does not pay off`. Contaminated runs and runs with `error` are excluded from the headline and counted separately.
 
 summary.md sections: per-arm table (n, solved, solve rate + Wilson CI, false_done, tampering runs, contaminated, timeouts, median wall, median turns, median cost, total cost); per-task table (gated solved/3, ungated solved/3, diff); sign test p; gate_blocks by hook summed over the gated arm and the number of gated runs each hook fired in; the verdict line `Verdict: <decide>` with the rule quoted.
 

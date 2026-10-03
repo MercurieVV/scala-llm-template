@@ -13,9 +13,11 @@ import statistics
 import sys
 
 SMOKE_REP = 9
-RULE = ("pays off if (g.solve_rate - u.solve_rate >= 0.20 or (u.false_done > 0 and g.false_done <= u.false_done / 2)) "
+RULE = ("pays off if (g.solve_rate - u.solve_rate >= 0.20 or (u.false_done >= 3 and g.false_done_rate <= u.false_done_rate / 2)) "
         "and g.median_wall <= 2 * u.median_wall; else inconclusive if |g.solve_rate - u.solve_rate| < 0.25; "
-        "else does not pay off")
+        "else does not pay off. false_done_rate = false_done / headline runs of the arm; timeouts are reported beside it "
+        "(a timeout is neither solved nor false_done)")
+FALSE_DONE_MIN = 3  # Ruling 21: fewer ungated false_done runs cannot show a halving
 
 
 def wilson(k, n, z=1.96):
@@ -42,9 +44,16 @@ def sign_test(diffs):
 EPS = 1e-9  # exact-boundary tolerance for rates derived from k/n floats
 
 
+def fd_rate(a):
+    return a["false_done"] / a["n"] if a.get("n") else None
+
+
 def decide(g, u):
+    """g/u: solve_rate, false_done (count), n (headline runs), median_wall. false_done compared as rates (Ruling 21)."""
     diff = g["solve_rate"] - u["solve_rate"]
-    better = diff >= 0.20 - EPS or (u["false_done"] > 0 and g["false_done"] <= u["false_done"] / 2)
+    gr, ur = fd_rate(g), fd_rate(u)
+    fewer_false_done = (u["false_done"] >= FALSE_DONE_MIN and gr is not None and ur is not None and gr <= ur / 2 + EPS)
+    better = diff >= 0.20 - EPS or fewer_false_done
     if better:
         if g.get("median_wall") is None or u.get("median_wall") is None:
             return "inconclusive"  # mandatory wall-time term cannot be checked
@@ -145,10 +154,10 @@ def build_summary(runs, smoke, unreadable):
     row("n (headline)", lambda s: s["n"])
     row("solved", lambda s: s["solved"])
     row("solve rate [Wilson 95%]", lambda s: "%.2f [%.2f, %.2f]" % ((s["solve_rate"],) + s["ci"]))
-    row("false_done", lambda s: s["false_done"])
+    row("false_done (rate)", lambda s: "%d (%.2f)" % (s["false_done"], s["false_done"] / s["n"] if s["n"] else 0.0))
+    row("timeouts (counted, unsolved)", lambda s: s["timeouts"])
     row("tampering runs", lambda s: s["tampering"])
     row("runs with build_edits", lambda s: s["build_edit_runs"])
-    row("timeouts (counted, unsolved)", lambda s: s["timeouts"])
     row("contaminated (excluded)", lambda s: s["contaminated"])
     row("error (excluded)", lambda s: s["errors"])
     row("median wall s", lambda s: fmt(s["median_wall"], 0))
@@ -212,11 +221,11 @@ def build_summary(runs, smoke, unreadable):
         out.append("| none | 0 | 0 |")
 
     verdict = "inconclusive" if not (st["g"]["n"] and st["u"]["n"]) else decide(
-        {k: st["g"][k] for k in ("solve_rate", "false_done", "median_wall")},
-        {k: st["u"][k] for k in ("solve_rate", "false_done", "median_wall")})
-    out += ["", "Verdict: %s" % verdict, "", "Rule: " + RULE, ""]
-    if st["g"]["n"] != st["u"]["n"]:
-        out += ["Caveat: false_done compared as raw counts; arms have n_g=%d n_u=%d" % (st["g"]["n"], st["u"]["n"]), ""]
+        {k: st["g"][k] for k in ("solve_rate", "false_done", "median_wall", "n")},
+        {k: st["u"][k] for k in ("solve_rate", "false_done", "median_wall", "n")})
+    out += ["", "Verdict: %s" % verdict, "", "Rule: " + RULE, "",
+            "false_done: gated %d/%d, ungated %d/%d; timeouts: gated %d, ungated %d" % (
+                st["g"]["false_done"], st["g"]["n"], st["u"]["false_done"], st["u"]["n"], st["g"]["timeouts"], st["u"]["timeouts"]), ""]
     return "\n".join(out)
 
 
