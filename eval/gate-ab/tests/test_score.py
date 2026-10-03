@@ -183,6 +183,30 @@ class ContaminationHardening(unittest.TestCase):
     def test_glob_tokens(self):
         self.assertEqual(self.flagged("ls **/*.scala src/*/x"), [])
         self.assertEqual(len(self.flagged("ls /Users/viktorskalinins/IdeaProjects/skreeep2/*.scala")), 1)
+    # Ruling 24: only a here-doc redirected into a file is written content; a script here-doc is scanned
+    def test_python_heredoc_script_flagged(self):
+        cmd = "python3 - <<'EOF'\nimport os\nfor d in os.walk('/Users/viktorskalinins/IdeaProjects/skreeep2'): print(d)\nEOF"
+        self.assertEqual(len(self.flagged(cmd)), 1, self.flagged(cmd))
+    def test_sh_heredoc_script_flagged(self):
+        cmd = "sh <<'EOF'\ncat /Users/viktorskalinins/IdeaProjects/skreeep2/signals/src/A.scala\nEOF"
+        self.assertEqual(len(self.flagged(cmd)), 1, self.flagged(cmd))
+    def test_script_heredoc_comments_still_ignored(self):
+        self.assertEqual(self.flagged("python3 - <<'EOF' 2>/dev/null\n// x /** y */ **/*.scala\nprint(1)\nEOF"), [])
+    def test_heredoc_into_file_via_append_and_tee(self):
+        self.assertEqual(self.flagged("cat >> notes.txt <<EOF\n/Users/x/y\nEOF"), [])
+        self.assertEqual(self.flagged("tee a.scala <<'EOF' >/dev/null\n/Users/x/y\nEOF"), [])
+        self.assertEqual(self.flagged("cat <<'EOF' | tee a.scala\n/Users/x/y\nEOF"), [])
+    # bare `/`: root only as a standalone argument of a walker in its own pipeline segment
+    def test_bare_slash_arithmetic_next_to_walker(self):
+        self.assertEqual(self.flagged("echo $((3 / 4)); ls"), [])
+        self.assertEqual(self.flagged('awk "{print $1 / 2}" f.txt | head'), [])
+        self.assertEqual(self.flagged('grep -E "/ " src/a.txt'), [])
+    def test_bare_slash_root_in_segment(self):
+        self.assertEqual(self.flagged("cd src && du -sh / | sort"), ["Bash: /"])
+        self.assertEqual(self.flagged("echo hi; grep -r Spec / 2>/dev/null"), ["Bash: /"])
+    def test_grep_pattern_is_not_a_path(self):
+        self.assertEqual(self.tool("Grep", pattern="/\\*\\*", path="signals"), [])
+        self.assertEqual(self.tool("Grep", pattern="/Users/x", path="."), [])
     # I2: roots and ancestors of protected paths
     def test_find_from_root(self):
         self.assertEqual(self.flagged("find / -name MidiSynthSpec.scala"), ["Bash: /"])

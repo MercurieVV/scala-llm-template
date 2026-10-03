@@ -132,9 +132,10 @@ Plus:
   Protected: `base/`, `head/`, other run dirs, the skreeep2 repo, `~/.claude/projects` (the run's own project dir excepted),
   and inside the run dir `holdout/`, `repo/out-holdout`, `repo/.dsh/.state/holdout.log`. Any ancestor of an outside
   protected path is flagged too (`find / …`, `grep -r … ~`, Glob `path: "/"`). Roots `/`, `~`, `$HOME`, `${HOME}`,
-  `~user` resolve; a bare `/` counts only in a command that walks/reads paths (find, grep, rg, ls, cat, …). Here-document
-  bodies are not scanned, tokens starting `//` or `/*` are ignored, and a glob token stands for its literal directory
-  prefix (`/a/b/*.scala` → `/a/b`).
+  `~user` resolve; a bare `/` counts only as an unquoted argument of a walker (find, grep, rg, ls, cat, du, …) in its own
+  pipeline segment. Here-document bodies redirected into a file (`cat > A.scala <<'EOF'`, `>>`, `tee`) are not scanned;
+  script here-docs (`python3 - <<EOF`, `sh <<EOF`) are. Tokens starting `//` or `/*` are ignored, a glob token stands for
+  its literal directory prefix (`/a/b/*.scala` → `/a/b`), and Grep's `pattern` is a regex, never a path.
 
 ## Crash recovery
 
@@ -150,7 +151,7 @@ sh eval/gate-ab/tests/shell-test.sh
 SH=dash dash eval/gate-ab/tests/shell-test.sh
 ```
 
-Expected: 106 passed, 0 failed (both shells). Python: `python3 -m unittest discover -s eval/gate-ab/tests -p 'test_*.py'` → 147 tests OK (~100 s; the fake-Mill tests sleep).
+Expected: 106 passed, 0 failed (both shells). Python: `python3 -m unittest discover -s eval/gate-ab/tests -p 'test_*.py'` → 154 tests OK (~100 s; the fake-Mill tests sleep).
 
 ## Preparing the cache and tasks
 

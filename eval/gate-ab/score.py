@@ -7,7 +7,7 @@ GA_HOLDOUT_COMMIT, GA_SKREEEP2 (lib.sh defaults), GA_MILL (Mill launcher, defaul
 GA_REGRESS_CAP (seconds, default 1200; the single regression / baseline invocation).
 `score.py --baseline` computes the HEAD results once (eagerly) into $GA_ROOT/head-baseline.json.
 """
-import json, os, re, shutil, subprocess, sys, tempfile, time
+import json, os, re, shlex, shutil, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -405,29 +405,63 @@ def _leaves(o, key=None):
 _HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 
 
+_TO_FILE = re.compile(r"(?<![<>&0-9])>>?\s*[^\s&|;>]|\btee\b")
+
+
 def _strip_heredocs(cmd):
-    """Drop here-document bodies (written content, often Scala with /** */ and // comments); the `<<EOF` line stays."""
+    """Drop the bodies of here-documents redirected into a file (`cat > A.scala <<'EOF'`, `>>`, `tee`): written content,
+    often Scala with /** */ and // comments. A here-doc fed to an interpreter (`python3 - <<EOF`, `sh <<EOF`) is a script
+    and stays to be scanned (Ruling 24). The `<<EOF` line itself always stays."""
     out, pending = [], []
     for ln in cmd.split("\n"):
         if pending:
-            delim, dash = pending[0]
+            delim, dash, drop = pending[0]
             if (ln.lstrip("\t") if dash else ln) == delim:
                 pending.pop(0)
+            elif not drop:
+                out.append(ln)
             continue
         out.append(ln)
-        pending += [(m.group(3), m.group(1) == "-") for m in _HEREDOC.finditer(ln)]
+        docs = list(_HEREDOC.finditer(ln))
+        if docs:
+            drop = bool(_TO_FILE.search(_HEREDOC.sub(" ", ln)))
+            pending += [(m.group(3), m.group(1) == "-", drop) for m in docs]
     return "\n".join(out)
 
 
-_WALKERS = re.compile(r"\b(find|grep|egrep|fgrep|rg|ag|ls|du|tree|fd|locate|cd|cat|head|tail|less|xargs)\b")
+_WALKERS = {"find", "grep", "egrep", "fgrep", "rg", "ag", "ls", "du", "tree", "fd", "locate", "cd", "cat", "head", "tail",
+            "less", "stat", "file"}
+_OPS = {"|", "||", "&", "&&", ";", ";;", "|&"}
+
+
+def _root_arg(body):
+    """True when a bare `/` is a standalone (unquoted) argument of a walker command in its own pipeline segment."""
+    for line in body.split("\n"):
+        lex = shlex.shlex(line, posix=True, punctuation_chars="|&;")
+        lex.whitespace_split = True
+        try:
+            words = list(lex)
+        except ValueError:
+            continue
+        cmd = None
+        for w in words:
+            if w in _OPS:
+                cmd = None
+            elif cmd is None:
+                if re.fullmatch(r"\w+=.*", w) or w in ("sudo", "env", "time", "command"):
+                    continue
+                cmd = os.path.basename(w)
+            elif w == "/" and cmd in _WALKERS:
+                return True
+    return False
 
 
 def _bash_tokens(cmd):
-    """Tokens of a Bash command, here-document bodies dropped. A bare `/` is the filesystem root only next to a command that
-    walks or reads paths (`find / -name x`); otherwise it is arithmetic (`$((a / 2))`, `python3 -c "print(4 / 2)"`)."""
+    """Tokens of a Bash command, file-bound here-document bodies dropped. A bare `/` is the filesystem root only as an
+    unquoted argument of a walker (`find / -name x`, `ls /`); otherwise it is arithmetic or a regex."""
     body = _strip_heredocs(cmd).replace("${HOME}", "$HOME")
     toks = _TOKEN.findall(body)
-    return toks if _WALKERS.search(body) else [t for t in toks if t != "/"]
+    return toks if _root_arg(body) else [t for t in toks if t != "/"]
 
 
 def _path_part(tok):
@@ -451,8 +485,7 @@ def _candidate_paths(tool, inp):
         if key in _CONTENT_KEYS:
             continue
         if tool == "Grep" and key == "pattern":
-            if v.startswith("/"):
-                out.append(v)
+            continue  # a regex, not a path (Ruling 24); Grep's path/glob are scanned
         elif tool == "Bash" and key == "command":
             out += _bash_tokens(v)
         elif any(c.isspace() for c in v):
