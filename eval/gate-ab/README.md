@@ -99,6 +99,16 @@ Plus:
 - `~/gate-eval/runs/results.csv` — aggregated results from report.py
 - `~/gate-eval/runs/summary.md` — human-readable summary from report.py
 
+- `~/gate-eval/head-baseline.json` — per-module pass/fail of HEAD, written by `python3 eval/gate-ab/score.py --baseline` (run once, while head is readable, before the first run; fails loudly on an empty module list, a resolve failure, a timeout or a non-test failure). Scoring a run without it records `error="no baseline"`.
+
+## score.json notes
+
+- Hidden score runs only the hidden spec's suite (`<TASK_MODULE>.testOnly <package>.<Object>`). The module's other suites, and every other test module, run in one `-k -j 1` Mill invocation (cap `GA_REGRESS_CAP`, default 3600 s) and count as regressions; failures are attributed per module from `[error] <module>.testForked` lines.
+- `score_timeouts`: steps that hit the Mill cap during scoring (`<TASK_MODULE>`, `holdout.test`, `regressions`); a timeout counts as FAIL.
+- `build_edits`: `*.mill` files the agent edited (suspects, reported only; not part of `solved`).
+- `error`: `"scoring incomplete"` in a partial record (scoring died or still running); `"mill failed: ..."` for Mill failures without test output; `"hidden suite did not run"`; `"no baseline"`.
+- Contamination detection is token-based: it resolves path-like tokens against `<run>/repo` and does not follow `cd` chains, variables or subshells, so a multi-`cd` command can evade it. It is a tripwire, not a sandbox (run.sh's mode-000 locking is the enforcement).
+
 ## Crash recovery
 
 While an agent runs, run.sh makes `~/gate-eval/base`, `~/gate-eval/head` and the other run dirs mode 000 (agent isolation) and restores them on exit, including on INT/TERM. After a hard crash (kill -9, power loss) they may stay locked: run `. eval/gate-ab/lib.sh; ga_unlock_all` (campaign.sh does this at start).
