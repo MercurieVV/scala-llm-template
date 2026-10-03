@@ -19,6 +19,18 @@ class Decide(unittest.TestCase):
     def test_pays_off_on_false_done(self): self.assertEqual(self.d(0.6, 0.6, gf=2, uf=6), "pays off")
     def test_too_slow(self): self.assertEqual(self.d(0.8, 0.5, gw=300, uw=100), "does not pay off")
     def test_inconclusive(self): self.assertEqual(self.d(0.6, 0.5), "inconclusive")
+    def test_missing_wall_blocks_pays_off(self):
+        for gw, uw in ((None, 100), (100, None), (None, None)):
+            self.assertEqual(self.d(0.8, 0.5, gw=gw, uw=uw), "inconclusive")
+    def test_exact_gain_boundary(self):
+        self.assertEqual(report.decide({"solve_rate": 12 / 20, "false_done": 0, "median_wall": 100}, {"solve_rate": 8 / 20, "false_done": 0, "median_wall": 100}), "pays off")
+        self.assertEqual(self.d(0.6, 0.4), "pays off")
+    def test_exact_quarter_not_inconclusive(self):
+        self.assertEqual(self.d(0.25, 0.5), "does not pay off")
+        self.assertEqual(self.d(0.75, 0.5), "pays off")
+        self.assertEqual(self.d(0.4, 0.65), "does not pay off")
+    def test_no_false_done_win_when_ungated_zero(self):
+        self.assertEqual(self.d(0.6, 0.6, gf=0, uf=0), "inconclusive")
     def test_worse(self): self.assertEqual(self.d(0.2, 0.6), "does not pay off")
 
 def rec(rid, task, arm, rep, **kw):
@@ -54,7 +66,9 @@ class EndToEnd(unittest.TestCase):
             self.assertEqual(by["a-u-2"]["counted"], "no")
             self.assertEqual(by["a-u-3"]["counted"], "yes")
             with open(os.path.join(d, "summary.md")) as f: s = f.read()
-            self.assertIn("Verdict:", s)
+            self.assertIn("\nVerdict: pays off\n", s)
+            self.assertIn("a-g-9", s)
+            self.assertIn("false_done compared as raw counts; arms have n_g=1 n_u=2", s)
             self.assertIn("1 smoke runs", s)
             self.assertIn("| n (headline) | 1 | 2 |", s)
             self.assertIn("| timeouts (counted, unsolved) | 0 | 1 |", s)

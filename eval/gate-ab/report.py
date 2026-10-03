@@ -39,16 +39,18 @@ def sign_test(diffs):
     return min(1.0, 2 * tail)
 
 
+EPS = 1e-9  # exact-boundary tolerance for rates derived from k/n floats
+
+
 def decide(g, u):
-    if g.get("median_wall") is None or u.get("median_wall") is None:
-        fast_enough = True  # no wall data: cannot veto
-    else:
-        fast_enough = g["median_wall"] <= 2 * u["median_wall"]
     diff = g["solve_rate"] - u["solve_rate"]
-    better = diff >= 0.20 or (u["false_done"] > 0 and g["false_done"] <= u["false_done"] / 2)
-    if better and fast_enough:
-        return "pays off"
-    if abs(diff) < 0.25:
+    better = diff >= 0.20 - EPS or (u["false_done"] > 0 and g["false_done"] <= u["false_done"] / 2)
+    if better:
+        if g.get("median_wall") is None or u.get("median_wall") is None:
+            return "inconclusive"  # mandatory wall-time term cannot be checked
+        if g["median_wall"] <= 2 * u["median_wall"]:
+            return "pays off"
+    if abs(diff) < 0.25 - EPS:
         return "inconclusive"
     return "does not pay off"
 
@@ -63,7 +65,7 @@ def fmt(x, nd=1):
 
 
 def load_runs(root):
-    runs, smoke, unreadable = [], 0, []
+    runs, smoke, unreadable = [], [], []
     for p in sorted(glob.glob(os.path.join(root, "*", "score.json"))):
         try:
             with open(p) as f:
@@ -72,7 +74,7 @@ def load_runs(root):
             unreadable.append("%s: %s" % (os.path.basename(os.path.dirname(p)), e))
             continue
         if r.get("rep") == SMOKE_REP:
-            smoke += 1
+            smoke.append(r.get("run_id") or os.path.basename(os.path.dirname(p)))
             continue
         runs.append(r)
     return runs, smoke, unreadable
@@ -132,7 +134,7 @@ def build_summary(runs, smoke, unreadable):
     arms = {a: [r for r in runs if r.get("arm") == a] for a in ("g", "u")}
     st = {a: arm_stats(arms[a]) for a in arms}
     out = ["# Gate A/B results", ""]
-    out.append("Runs: %d scored; %d smoke runs (rep %d) skipped." % (len(runs), smoke, SMOKE_REP))
+    out.append("Runs: %d scored; %d smoke runs (rep %d) skipped: %s." % (len(runs), len(smoke), SMOKE_REP, ", ".join(smoke) or "none"))
     if unreadable:
         out.append("Unreadable score.json skipped: " + "; ".join(unreadable))
     out += ["", "## Per arm (g = gated, u = ungated)", "",
@@ -213,6 +215,8 @@ def build_summary(runs, smoke, unreadable):
         {k: st["g"][k] for k in ("solve_rate", "false_done", "median_wall")},
         {k: st["u"][k] for k in ("solve_rate", "false_done", "median_wall")})
     out += ["", "Verdict: %s" % verdict, "", "Rule: " + RULE, ""]
+    if st["g"]["n"] != st["u"]["n"]:
+        out += ["Caveat: false_done compared as raw counts; arms have n_g=%d n_u=%d" % (st["g"]["n"], st["u"]["n"]), ""]
     return "\n".join(out)
 
 
