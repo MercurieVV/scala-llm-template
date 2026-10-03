@@ -1,6 +1,6 @@
 package com.github.mercurievv.skreeep2.control.midi
 
-import com.github.mercurievv.skreeep2.control.{Button, Control, Feedback}
+import com.github.mercurievv.skreeep2.control.{Control, Feedback}
 
 /** The Mackie Control (MCU) protocol, as a [[SurfaceCodec]].
   *
