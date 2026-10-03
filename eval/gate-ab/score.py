@@ -260,12 +260,15 @@ def other_suites(tree, module, hidden_fq):
     return sorted(set(out))
 
 
-def parse_mill_failures(log_text, modules):
-    """Attribute `[error]` lines. -> dict(tests=ids of test modules whose test task failed, compile=test modules whose
-    main module failed to build, other=[error] lines with a dotted token that is no known module, failed=N of `N FAILED]`)."""
+def parse_mill_failures(log_text, modules, all_modules=()):
+    """Attribute `[error]` lines. -> dict(tests=test modules whose test task failed,
+    compile={`<compile:M>`, `<build>`, `<compile>`} for build breakage (agent-caused),
+    other=[error] lines with a dotted token that is no Mill module (infrastructure), failed=N of `N FAILED]`)."""
     text = ANSI.sub("", log_text)
-    mods = set(modules)
+    mods, allm = set(modules), set(all_modules)
     tests, compile_, other = set(), set(), []
+    for m in re.finditer(r"\[error\]\s+(\S*?[\w-]+\.mill:\d+[^\n]*)", text):
+        compile_.add("<build>")
     for m in re.finditer(r"\[error\]\s+(([A-Za-z_]\w*(?:\.\w+)+)[^\n]*)", text):
         line, tok = m.group(1).strip(), m.group(2)
         parent = tok.rsplit(".", 1)[0]
@@ -273,10 +276,12 @@ def parse_mill_failures(log_text, modules):
             tests.add(tok)
         elif parent in mods:
             tests.add(parent)
-        elif parent + ".test" in mods:
-            compile_.add(parent + ".test")
-        else:
+        elif parent in allm or tok in allm:
+            compile_.add("<compile:%s>" % (parent if parent in allm else tok))
+        elif not re.search(r"\.mill:\d+", line):
             other.append(line[:200])
+    if "Compilation failed" in text and not (tests or compile_):
+        compile_.add("<compile>")
     n = 0
     for m in re.finditer(r"(\d+) FAILED\]", text):
         n = max(n, int(m.group(1)))
@@ -488,6 +493,14 @@ def _test_modules(cwd, out_dir, log_path):
     return mods
 
 
+def _all_modules(cwd, out_dir, log_path):
+    """Every Mill module (`resolve __`), to tell build breakage from infrastructure errors; empty if it cannot be listed."""
+    rc, _ = run_mill(cwd, ["resolve", "__"], out_dir, log_path)
+    if rc != 0:
+        return []
+    return [m for m in (ANSI.sub("", l).strip() for l in _read(log_path).splitlines()) if re.fullmatch(r"[\w.]+", m)]
+
+
 def _chain(entries):
     """Mill command line for several tasks: entries are arg lists, joined with `+`."""
     out = []
@@ -510,7 +523,7 @@ def baseline(ga_root):
         raise ScoreError("HEAD baseline timed out (see %s)" % log)
     if "Compilation failed" in text:
         raise ScoreError("HEAD does not compile (see %s)" % log)
-    r = parse_mill_failures(text, mods)
+    r = parse_mill_failures(text, mods, _all_modules(head, "out", os.path.join(ga_root, "baseline-all.log")))
     if r["compile"] or r["other"]:
         raise ScoreError("HEAD baseline failed for a non-test reason: %s (see %s)" %
                          (r["other"][0] if r["other"] else "build failure in " + ", ".join(sorted(r["compile"])), log))
@@ -545,7 +558,7 @@ def _read_baseline(ga_root):
         with open(os.path.join(ga_root, "head-baseline.json")) as f:
             b = json.load(f)
         mods = b.get("modules")
-        return (mods, b.get("passes") or {}) if isinstance(mods, dict) and mods else None
+        return (mods, b.get("passes")) if isinstance(mods, dict) and mods else None
     except (OSError, ValueError, AttributeError):
         return None
 
@@ -641,6 +654,10 @@ def main(run_dir):
             regress_ok = False
         else:
             base, base_passes = loaded
+            if not isinstance(base_passes, dict) or not base_passes:
+                errors.append("baseline outdated, re-run --baseline")
+                regress_ok = False
+        if regress_ok and loaded is not None:
             try:
                 mods = _test_modules(tree, "out-score", os.path.join(rd, "resolve-score.log"))
             except ScoreError as e:
@@ -659,7 +676,7 @@ def main(run_dir):
                 rlog = os.path.join(rd, "regress-score.log")
                 rrc, rto = run_mill(tree, _chain(entries), "out-score", rlog, cap=_regress_cap(), keep_going=True)
                 text = _read(rlog)
-                r = parse_mill_failures(text, mods)
+                r = parse_mill_failures(text, mods, _all_modules(tree, "out-score", os.path.join(rd, "resolve-all.log")))
                 ids = r["tests"] | r["compile"]
                 if rto:
                     rec["score_timeouts"].append("regressions")

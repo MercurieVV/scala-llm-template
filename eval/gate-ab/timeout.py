@@ -22,6 +22,10 @@ def main(argv):
         return 2
     deadline = time.time() + float(argv[1])
     proc = subprocess.Popen(argv[3:], start_new_session=True)
+
+    def on_term(signum, frame):  # SIGTERM to us reaps the child group exactly like SIGINT
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, on_term)
     try:
         while time.time() < deadline:
             rc = proc.poll()

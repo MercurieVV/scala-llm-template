@@ -103,7 +103,7 @@ Plus:
 
 ## score.json notes
 
-- Hidden score runs only the hidden spec's suite (`<TASK_MODULE>.testOnly <package>.<Object>`). The module's other suites, and every other test module, run in one `-k -j 1` Mill invocation (cap `GA_REGRESS_CAP`, default 3600 s) and count as regressions; failures are attributed per module from `[error] <module>.testForked` lines.
+- Hidden score runs only the hidden spec's suite (`<TASK_MODULE>.testOnly <package>.<Object>`). The module's other suites, and every other test module, run in one `-k -j 1` Mill invocation (cap `GA_REGRESS_CAP`, default 1200 s) and count as regressions; failures are attributed per module from `[error] <module>.testForked` lines.
 - `score_timeouts`: steps that hit the Mill cap during scoring (`<TASK_MODULE>`, `holdout.test`, `regressions`); a timeout counts as FAIL.
 - `build_edits`: `*.mill` files the agent edited (suspects, reported only; not part of `solved`).
 - `error`: `"scoring incomplete"` in a partial record (scoring died or still running); `"mill failed: ..."` for Mill failures without test output; `"hidden suite did not run"`; `"no baseline"`.

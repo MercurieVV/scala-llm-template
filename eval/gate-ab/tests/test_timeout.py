@@ -8,6 +8,10 @@ def slurp(p):
 
 class Interrupt(unittest.TestCase):
     def test_sigint_kills_the_child_group(self):
+        self.check(signal.SIGINT)
+    def test_sigterm_kills_the_child_group(self):
+        self.check(signal.SIGTERM)
+    def check(self, sig):
         with tempfile.TemporaryDirectory() as d:
             pidfile = os.path.join(d, "pid")
             p = subprocess.Popen([sys.executable, TIMEOUT, "60", "--", "sh", "-c", 'echo $$ > "%s"; exec sleep 100' % pidfile])
@@ -15,14 +19,14 @@ class Interrupt(unittest.TestCase):
                 if os.path.exists(pidfile) and slurp(pidfile): break
                 time.sleep(0.1)
             child = int(slurp(pidfile))
-            p.send_signal(signal.SIGINT)
+            p.send_signal(sig)
             self.assertNotEqual(p.wait(timeout=30), 0)
             for _ in range(100):
                 try: os.kill(child, 0)
                 except ProcessLookupError: break
                 time.sleep(0.1)
             else:
-                os.kill(child, signal.SIGKILL); self.fail("child survived SIGINT to timeout.py")
+                os.kill(child, signal.SIGKILL); self.fail("child survived %s to timeout.py" % sig)
 
 if __name__ == "__main__":
     unittest.main()

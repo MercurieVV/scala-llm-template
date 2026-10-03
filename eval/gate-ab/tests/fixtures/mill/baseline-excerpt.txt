@@ -30,6 +30,7 @@ Running Test Class com.github.mercurievv.skreeep2.control.midi.McuSpec
 [36mcom.github.mercurievv.skreeep2.control.midi.McuSpec[0m
 [32m+ [0ma pitch bend is a fader, little end first, on its own channel [37m[1m1ms[0m
 [32m+ [0ma motor fader round-trips through the wire to within one step of the desk's own resolution [37m[1m1ms[0m
+Running Test Class com.github.mercurievv.skreeep2.wiring.WiringDetailsSpec
 [36mcom.github.mercurievv.skreeep2.wiring.WiringDetailsSpec[0m
 [32m+ [0mwiring one instrument through WiringDetails.wired publishes its value [37m[1m30ms[0m
 [32m+ [0mthe two WiringDetails factories build a real band, and WiringDetails.wired publishes through it [37m[1m61ms[0m

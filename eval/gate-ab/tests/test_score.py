@@ -181,23 +181,34 @@ class Parsers(unittest.TestCase):
         self.assertEqual(score.hidden_counts(log, "com.github.mercurievv.skreeep2.plugin.HostEventsSpec"), (2, 0, True))
         self.assertEqual(score.hidden_counts(log, "com.nope.Spec"), (0, 0, True))
     MODS = ["control.test", "plugin.test", "core.test", "bench.test"]
+    ALL = ["core", "backpressure", "control", "plugin", "bench"]
     def test_parse_mill_failures_real_format(self):
-        r = score.parse_mill_failures((HERE / "fixtures" / "mill" / "regress-failed.txt").read_text(), self.MODS)
-        self.assertEqual(r["tests"], {"control.test", "plugin.test"}); self.assertEqual(r["compile"], {"core.test"})
+        r = score.parse_mill_failures((HERE / "fixtures" / "mill" / "regress-failed.txt").read_text(), self.MODS, self.ALL)
+        self.assertEqual(r["tests"], {"control.test", "plugin.test"}); self.assertEqual(r["compile"], {"<compile:core>"})
         self.assertEqual((r["other"], r["failed"]), ([], 4))
+    def test_module_without_test_module_failing_to_compile(self):
+        r = score.parse_mill_failures("[error] backpressure.compile task failed\n", self.MODS, self.ALL)
+        self.assertEqual((r["compile"], r["other"]), ({"<compile:backpressure>"}, []))
+    def test_build_file_error(self):
+        for line in ("[error] build.mill:12:3: not found: value x", "[error] /r/x/package.mill:7:1: boom"):
+            r = score.parse_mill_failures(line + "\n", self.MODS, self.ALL)
+            self.assertEqual((r["compile"], r["other"]), ({"<build>"}, []), line)
+    def test_compilation_failed_without_a_module(self):
+        r = score.parse_mill_failures("[error] Compilation failed\n", self.MODS, self.ALL)
+        self.assertEqual((r["compile"], r["other"]), ({"<compile>"}, []))
     def test_parse_mill_failures_unattributed_error_line(self):
-        r = score.parse_mill_failures("[error] java.lang.OutOfMemoryError: Java heap space\n[error] 1 tests failed:\n", self.MODS)
+        r = score.parse_mill_failures("[error] java.lang.OutOfMemoryError: Java heap space\n[error] 1 tests failed:\n", self.MODS, self.ALL)
         self.assertEqual((r["tests"], r["compile"]), (set(), set()))
         self.assertEqual(r["other"], ["java.lang.OutOfMemoryError: Java heap space"])
     def test_parse_mill_failures_clean(self):
-        r = score.parse_mill_failures("+ a 1ms\n[10/10] mill x 3s\n", self.MODS)
+        r = score.parse_mill_failures("+ a 1ms\n[10/10] mill x 3s\n", self.MODS, self.ALL)
         self.assertEqual((r["tests"], r["compile"], r["other"], r["failed"]), (set(), set(), [], 0))
     EXCERPT = (HERE / "fixtures" / "mill" / "baseline-excerpt.txt").read_text()
     def test_real_baseline_excerpt_counts_one_failure(self):
         self.assertEqual(score.weaver_counts(self.EXCERPT), (12, 1, True))
         self.assertEqual(score.hidden_counts(self.EXCERPT, "com.github.mercurievv.skreeep2.UnderrunSpec"), (4, 1, True))
     def test_real_baseline_excerpt_failures_attributed(self):
-        r = score.parse_mill_failures(self.EXCERPT, ["bench.test", "control.midi.test"])
+        r = score.parse_mill_failures(self.EXCERPT, ["bench.test", "control.midi.test"], ["bench"])
         self.assertEqual(r["tests"], {"bench.test"}); self.assertEqual((r["compile"], r["other"]), (set(), []))
     def test_failures_block_not_counted(self):
         log = "Running Test Class a.B\n+ ok 1ms\n- bad 1ms\n*****FAILURES*****\n- bad 1ms\nRunning Test Class a.C\n+ fine 1ms\n"
@@ -207,11 +218,12 @@ class Parsers(unittest.TestCase):
         p = score.suite_passes(self.EXCERPT)
         self.assertEqual(p, {"com.github.mercurievv.skreeep2.UnderrunSpec": 4,
                              "com.github.mercurievv.skreeep2.control.midi.ControlSurfaceSpec": 3,
-                             "com.github.mercurievv.skreeep2.control.midi.McuSpec": 5})
+                             "com.github.mercurievv.skreeep2.control.midi.McuSpec": 2,
+                             "com.github.mercurievv.skreeep2.wiring.WiringDetailsSpec": 3})
         by = {"bench.test": ["com.github.mercurievv.skreeep2.UnderrunSpec"],
               "control.midi.test": ["com.github.mercurievv.skreeep2.control.midi.ControlSurfaceSpec",
                                     "com.github.mercurievv.skreeep2.control.midi.McuSpec"]}
-        self.assertEqual(score.module_passes(p, by), {"bench.test": 4, "control.midi.test": 8})
+        self.assertEqual(score.module_passes(p, by), {"bench.test": 4, "control.midi.test": 5})
     def test_truncated_suite_names(self):
         log = "Running Test Class a.b.LongNameSp...\n+ x 1ms\n"
         self.assertEqual(score.hidden_counts(log, "a.b.LongNameSpec"), (1, 0, True))
@@ -233,6 +245,8 @@ tree = "score-tree" in os.getcwd()
 if "resolve" in a:
     if os.environ.get("FAKE_RESOLVE_FAIL"):
         print("resolve exploded"); sys.exit(1)
+    if "__" in a:
+        print("\n".join(os.environ.get("FAKE_ALL_MODULES", "core,signals,control,backpressure").split(","))); sys.exit(0)
     print("\n".join(os.environ.get("FAKE_MODULES", "signals.test,holdout.test,control.test,backend.opencl.test,bench.test").split(","))); sys.exit(0)
 if a[-1] == "holdout.test":
     if not os.path.isdir(os.environ.get("DSH_HOLDOUT_DIR", "")): sys.exit(9)
@@ -271,6 +285,8 @@ if "-k" in a:
         if mod in failing: print("[3] [error] %s.testForked 1 tests failed:" % mod); nf += 1
     if rm == "oom": print("[error] java.lang.OutOfMemoryError: Java heap space"); nf = max(nf, 1)
     if rm == "compile": print("[error] core.compile boom"); nf = max(nf, 1)
+    if rm == "compile-nomodule": print("[error] backpressure.compile task failed"); nf = max(nf, 1)
+    if rm == "build": print("[error] build.mill:3:1: boom"); nf = max(nf, 1)
     if nf: print("9/9, %d FAILED] mill 3s" % nf); sys.exit(1)
 sys.exit(0)
 """
@@ -345,7 +361,7 @@ class MainWithFakeMill(FakeBase):
         s = self.run_score(FAKE_FAIL_MODS="control.test")
         self.assertEqual(s["regressions"], ["control.test"]); self.assertFalse(s["solved"])
     def test_module_failing_at_head_is_not_a_regression(self):
-        (self.root / "head-baseline.json").write_text(json.dumps({"modules": {"signals.test": True, "control.test": False}}))
+        (self.root / "head-baseline.json").write_text(json.dumps({"modules": {"signals.test": True, "control.test": False}, "passes": {"signals.test": 1, "control.test": 1}}))
         s = self.run_score(FAKE_FAIL_MODS="control.test")
         self.assertEqual(s["regressions"], []); self.assertTrue(s["solved"])
     def test_unattributed_regression_failure(self):
@@ -355,6 +371,16 @@ class MainWithFakeMill(FakeBase):
         s = self.run_score(FAKE_REG_MODE="oom")
         self.assertFalse(s["solved"]); self.assertTrue(s["error"].startswith("mill failed (regressions):"), s["error"])
         self.assertIn("OutOfMemoryError", s["error"])
+    def test_agent_broke_a_module_without_tests_is_a_regression_not_an_error(self):
+        s = self.run_score(FAKE_REG_MODE="compile-nomodule")
+        self.assertFalse(s["solved"]); self.assertIsNone(s["error"]); self.assertEqual(s["regressions"], ["<compile:backpressure>"])
+    def test_agent_broke_the_build_file(self):
+        s = self.run_score(FAKE_REG_MODE="build")
+        self.assertFalse(s["solved"]); self.assertIsNone(s["error"]); self.assertEqual(s["regressions"], ["<build>"])
+    def test_old_format_baseline_is_an_error(self):
+        (self.root / "head-baseline.json").write_text(json.dumps({"modules": {"signals.test": True, "control.test": True}}))
+        s = self.run_score()
+        self.assertFalse(s["solved"]); self.assertIn("baseline outdated", s["error"])
     def test_regression_timeout_is_an_outcome_not_an_error(self):
         s = self.run_score(FAKE_REG_MODE="hang", GA_REGRESS_CAP="1")
         self.assertFalse(s["solved"]); self.assertIn("regressions", s["score_timeouts"])
