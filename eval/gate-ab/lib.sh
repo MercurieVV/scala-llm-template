@@ -21,3 +21,11 @@ ga_run_id() {
   case $3 in [1-9]) ;; *) ga_die "rep must be 1..9, got $3" ;; esac
   printf '%s-%s-%s\n' "$1" "$2" "$3"
 }
+
+# Safety net after a crashed run: make base/, head/ and every run dir readable again.
+ga_unlock_all() {
+  for d in "$GA_ROOT/base" "$GA_ROOT/head" "$GA_ROOT"/runs/*; do
+    [ -d "$d" ] && chmod 755 "$d"
+  done
+  return 0
+}

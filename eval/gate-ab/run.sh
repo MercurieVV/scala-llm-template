@@ -20,17 +20,36 @@ if [ "$arm" = g ]; then
   hd=$(CDPATH= cd -- "$rd/holdout" && pwd -P)
   sed "s|$GA_HOLDOUT_SRC|$hd|g" "$GA_SKREEEP2/.claude/settings.json" > "$rd/repo/.claude/settings.json"
   sed -i.bak "s|^holdoutDir *=.*|holdoutDir = $hd|" "$rd/repo/.dsh/contract" && rm -f "$rd/repo/.dsh/contract.bak"
+  grep -qx "holdoutDir = $hd" "$rd/repo/.dsh/contract" || ga_die "contract rewrite failed (no holdoutDir line?)"
+  ! grep -qF "$GA_HOLDOUT_SRC" "$rd/repo/.claude/settings.json" || ga_die "settings still mention $GA_HOLDOUT_SRC"
 else
   printf '{"permissions":{}}\n' > "$rd/repo/.claude/settings.json"
 fi
 cp "$rd/repo/.claude/settings.json" "$rd/settings.json"
 ( cd "$rd/repo" && git -c user.name=gate-eval -c user.email=gate-eval@local -c commit.gpgsign=false commit -qam "arm $arm" --allow-empty && git tag base )
+# Isolation: while the agent runs, base/ (hidden specs), head/ (the solution) and other runs are unreadable.
+modes=$rd/modes.txt; : > "$modes"
+for d in "$GA_ROOT/base" "$GA_ROOT/head" "$GA_ROOT"/runs/*; do
+  [ -d "$d" ] || continue
+  [ "$d" = "$rd" ] && continue
+  m=$(python3 -c 'import os,sys;print(format(os.stat(sys.argv[1]).st_mode&0o7777,"o"))' "$d") || ga_die "stat $d"
+  printf '%s %s\n' "$m" "$d" >> "$modes"
+done
+ga_restore() {
+  [ -f "$modes" ] || return 0
+  while read -r m d; do chmod "$m" "$d"; done < "$modes"
+  rm -f "$modes"
+}
+trap ga_restore EXIT
+trap 'ga_restore; exit 130' INT TERM
+while read -r m d; do chmod 000 "$d"; done < "$modes"
 start=$(date +%s)
 ( cd "$rd/repo" && python3 "$GA_HOME/timeout.py" "$GA_CAP_SECONDS" -- "${CLAUDE_BIN:-claude}" -p "$(cat "$rd/prompt.txt")" \
     --model "$GA_MODEL" --output-format stream-json --verbose \
-    --permission-mode acceptEdits --allowedTools Bash Edit Write Read Grep Glob mcp__scala-semantic ) \
+    --permission-mode acceptEdits --allowedTools Bash Edit Write Read Grep Glob mcp__scala-semantic </dev/null ) \
   > "$rd/transcript.jsonl" 2> "$rd/agent-stderr.log"
 rc=$?; end=$(date +%s)
+ga_restore
 to=false; [ "$rc" -eq 124 ] && to=true
 printf '{"run_id":"%s","task":"%s","arm":"%s","rep":%s,"start_epoch":%s,"end_epoch":%s,"exit_code":%s,"timed_out":%s}\n' \
   "$id" "$task" "$arm" "$rep" "$start" "$end" "$rc" "$to" > "$rd/run.json"

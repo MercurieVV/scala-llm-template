@@ -99,6 +99,10 @@ Plus:
 - `~/gate-eval/runs/results.csv` — aggregated results from report.py
 - `~/gate-eval/runs/summary.md` — human-readable summary from report.py
 
+## Crash recovery
+
+While an agent runs, run.sh makes `~/gate-eval/base`, `~/gate-eval/head` and the other run dirs mode 000 (agent isolation) and restores them on exit, including on INT/TERM. After a hard crash (kill -9, power loss) they may stay locked: run `. eval/gate-ab/lib.sh; ga_unlock_all` (campaign.sh does this at start).
+
 ## Testing
 
 ```bash

@@ -90,10 +90,15 @@ echo 'do the task' >"$tmp/home/tasks/t1/prompt.txt"
 ( cd "$tmp/root/base/t1/tree" && printf 'holdoutDir = ../x\n' >.dsh/contract && printf '.claude/\nout/\nout-agent/\n' >.gitignore \
   && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm base )
 ( cd "$tmp/hsrc" && echo spec >HSpec.scala && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm h )
-echo "{\"hooks\":\"$tmp/hsrc/bin/check\"}" >"$tmp/skr/.claude/settings.json"
+echo "{\"denyRead\":\"$tmp/hsrc/bin/check\",\"denyWrite\":\"$tmp/hsrc\"}" >"$tmp/skr/.claude/settings.json"
+mkdir -p "$tmp/root/base/t1/hidden" "$tmp/root/head" "$tmp/root/runs/other-u-1"
 cat >"$tmp/claude" <<'FAKE'
 #!/bin/sh
 ls -a . >"$FAKE_LS"
+printf '%s\n' "$@" >"$FAKE_ARGS"
+cat | wc -c | tr -d ' ' >"$FAKE_ARGS.stdin"
+for p in $FAKE_PROBE; do if ls "$p" >/dev/null 2>&1; then echo "readable $p"; else echo "denied $p"; fi; done >"$FAKE_PROBED"
+mkdir -p out out-agent; echo junk >out/junk.txt; echo junk >out-agent/junk.txt
 echo '{"type":"system"}'; echo '{"type":"result"}'
 echo 'agent wrote this' >>agent-note.txt
 [ -n "${FAKE_SLEEP:-}" ] && sleep "$FAKE_SLEEP"
@@ -102,7 +107,8 @@ FAKE
 chmod +x "$tmp/claude"
 runenv() { GA_HOME=$tmp/home GA_ROOT=$tmp/root GA_SKREEEP2=$tmp/skr GA_HOLDOUT_SRC=$tmp/hsrc GA_HOLDOUT_COMMIT=HEAD CLAUDE_BIN=$tmp/claude env "$@"; }
 rd=$tmp/root/runs
-runenv FAKE_LS=$tmp/ls-g.txt $SH "$tmp/home/run.sh" t1 g 1 >/dev/null 2>&1; check "run g exit 0" "$?" "0"
+probe="$tmp/root/base/t1/hidden $tmp/root/head $tmp/root/runs/other-u-1"
+runenv FAKE_ARGS=$tmp/args-g.txt FAKE_PROBE="$probe" FAKE_PROBED=$tmp/probed-g.txt FAKE_LS=$tmp/ls-g.txt $SH "$tmp/home/run.sh" t1 g 1 >/dev/null 2>&1; check "run g exit 0" "$?" "0"
 grep -q '"timed_out":false' "$rd/t1-g-1/run.json" && ok "run g not timed out" || bad "run g not timed out"
 hd=$(CDPATH= cd -- "$rd/t1-g-1/holdout" && pwd -P)
 grep -q "$hd" "$rd/t1-g-1/repo/.claude/settings.json" && ! grep -q "$tmp/hsrc" "$rd/t1-g-1/repo/.claude/settings.json" && ok "run g settings rewritten" || bad "run g settings rewritten"
@@ -114,12 +120,37 @@ grep -q 'agent wrote this' "$rd/t1-g-1/final.diff" && ok "run g final.diff" || b
 [ -s "$rd/t1-g-1/transcript.jsonl" ] && ok "run g transcript" || bad "run g transcript"
 git -C "$rd/t1-g-1/repo" rev-parse -q --verify refs/tags/base >/dev/null && ok "run g base tag" || bad "run g base tag"
 [ -s "$tmp/ls-g.txt" ] && [ ! -e "$tmp/root/cache" ] && ! grep -qx out "$tmp/ls-g.txt" && ! grep -qx 'out-agent' "$tmp/ls-g.txt" && ok "run g no out dirs at start" || bad "run g no out dirs at start"
-runenv FAKE_LS=$tmp/ls-u.txt $SH "$tmp/home/run.sh" t1 u 1 >/dev/null 2>&1; check "run u exit 0" "$?" "0"
+runenv FAKE_ARGS=$tmp/args-u.txt FAKE_PROBE="$probe" FAKE_PROBED=$tmp/probed-u.txt FAKE_LS=$tmp/ls-u.txt $SH "$tmp/home/run.sh" t1 u 1 >/dev/null 2>&1; check "run u exit 0" "$?" "0"
 check "run u settings" "$(cat "$rd/t1-u-1/repo/.claude/settings.json")" '{"permissions":{}}'
 [ ! -e "$rd/t1-u-1/holdout" ] && ok "run u no holdout" || bad "run u no holdout"
 [ -s "$tmp/ls-u.txt" ] && ! grep -qx out "$tmp/ls-u.txt" && ! grep -qx 'out-agent' "$tmp/ls-u.txt" && ok "run u no out dirs at start" || bad "run u no out dirs at start"
-runenv GA_CAP_SECONDS=1 FAKE_SLEEP=20 FAKE_LS=$tmp/ls-t.txt $SH "$tmp/home/run.sh" t1 u 2 >/dev/null 2>&1
+for arm in g u; do
+  check "run $arm isolation denied during run" "$(grep -c '^denied' "$tmp/probed-$arm.txt")" "3"
+done
+readable=yes; for p in $probe; do ls "$p" >/dev/null 2>&1 || readable=no; done
+check "isolation restored after run" "$readable" "yes"
+check "agent receives prompt" "$(grep -c '^do the task$' "$tmp/args-g.txt")" "1"
+check "agent stdin is empty" "$(cat "$tmp/args-u.txt.stdin")" "0"
+grep -q '"scala-semantic"' "$rd/t1-g-1/repo/.mcp.json" && grep -q 'scalasemantic-mcp' "$rd/t1-u-1/repo/.mcp.json" && ok "run .mcp.json written" || bad "run .mcp.json written"
+check "run g settings has two rewritten entries" "$(grep -o "$hd" "$rd/t1-g-1/repo/.claude/settings.json" | wc -l | tr -d ' ')" "2"
+for arm in g u; do
+  if [ -s "$rd/t1-$arm-1/final.diff" ] && ! grep -q 'junk' "$rd/t1-$arm-1/final.diff" && ! tar -tzf "$rd/t1-$arm-1/final-tree.tar.gz" | grep -q 'repo/out'; then ok "run $arm out dirs excluded from artefacts"; else bad "run $arm out dirs excluded from artefacts"; fi
+done
+runenv GA_CAP_SECONDS=1 FAKE_SLEEP=20 FAKE_ARGS=$tmp/args-t.txt FAKE_PROBE="$probe" FAKE_PROBED=$tmp/probed-t.txt FAKE_LS=$tmp/ls-t.txt $SH "$tmp/home/run.sh" t1 u 2 >/dev/null 2>&1
 grep -q '"timed_out":true' "$rd/t1-u-2/run.json" && ok "run timeout recorded" || bad "run timeout recorded"
+[ -f "$rd/t1-u-2/final.diff" ] && [ -f "$rd/t1-u-2/final-tree.tar.gz" ] && ok "run timeout keeps artefacts" || bad "run timeout keeps artefacts"
+readable=yes; for p in $probe; do ls "$p" >/dev/null 2>&1 || readable=no; done
+check "isolation restored after timeout" "$readable" "yes"
+# gated rewrite must verify itself: a contract without holdoutDir aborts before the agent starts
+rm -f "$tmp/ls-bad.txt"
+( cd "$tmp/root/base/t1/tree" && git checkout -q -b nohd && printf 'other = 1\n' >.dsh/contract && git -c user.name=t -c user.email=t@t commit -qam nohd )
+runenv FAKE_ARGS=$tmp/args-b.txt FAKE_PROBE="$probe" FAKE_PROBED=$tmp/probed-b.txt FAKE_LS=$tmp/ls-bad.txt $SH "$tmp/home/run.sh" t1 g 2 >/dev/null 2>&1
+rc=$?; [ "$rc" -ne 0 ] && [ ! -e "$tmp/ls-bad.txt" ] && ok "run aborts when holdoutDir rewrite fails" || bad "run aborts when holdoutDir rewrite fails" "rc=$rc"
+# crash safety net
+chmod 000 "$tmp/root/head" "$tmp/root/base"
+sh -c ". '$ga/lib.sh'; GA_ROOT='$tmp/root' ga_unlock_all"
+readable=yes; for p in $probe; do ls "$p" >/dev/null 2>&1 || readable=no; done
+check "ga_unlock_all restores access" "$readable" "yes"
 rm -rf "$tmp"
 
 echo "shell-test: $passed passed, $failed failed"
