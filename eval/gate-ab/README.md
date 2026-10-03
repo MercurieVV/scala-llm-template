@@ -111,3 +111,10 @@ SH=dash dash eval/gate-ab/tests/shell-test.sh
 ```
 
 Expected: 9 passed, 0 failed (both shells).
+
+## Preparing the cache and tasks
+
+`sh warm-cache.sh` once (about 1 min), then `sh prepare.sh <task>` per task (about 1 min each; `noise` takes about 11 min because its hidden spec hangs on the stub, see below). Mill selectors used: `__.compile` and `__.test.compile` (both valid in skreeep2 at 6bf6c1b).
+
+- Mill records absolute paths in its output, and a run in a copy of the output overwrites the directory those paths name. warm-cache.sh therefore compiles in a sacrificial `~/gate-eval/cache-build` and gives `head/out` and `cache/out` their own copies; compiling in `head` itself made later copies delete `head`'s class directories.
+- Test-running Mill calls in prepare.sh are capped at 600 s; a timeout counts as FAIL. On the `noise` cut tree `???` in an object initialiser deadlocks weaver, so `hidden_fails_on_cut=yes` there comes from the cap.
