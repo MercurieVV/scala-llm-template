@@ -69,6 +69,8 @@ Verify setup with a minimal run (useful for debugging before full campaign). Run
 sh eval/gate-ab/campaign.sh
 ```
 
+`GA_REPS` (space-separated, default `"1 2 3"`, each 1..3, anything else aborts) limits the full campaign to those reps, e.g. `GA_REPS="2" sh eval/gate-ab/campaign.sh`; task/arm order is kept within each rep.
+
 Execute the A/B evaluation across all tasks and replications.
 
 ### 5. Generate reports

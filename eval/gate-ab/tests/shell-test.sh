@@ -278,6 +278,14 @@ mkr noise-g-1 '{"solved":false,"error":"scoring incomplete"}'
 GA_SCORE=$tmp/fake-score-err cenv GA_SCORE=$tmp/fake-score-err SCORES=$tmp/scores $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
 check "errored retry: score.py once for the retried run" "$(grep -c 'noise-g-1$' "$tmp/scores")" "1"
 check "errored retry: loop continues to all other runs" "$(wc -l <"$tmp/calls" | tr -d ' ')" "47"
+# Ruling 27: GA_REPS
+rm -f "$tmp/calls"; rm -rf "$tmp/root/runs"
+cenv GA_REPS=2 $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
+check "GA_REPS=2: 16 runs" "$(wc -l <"$tmp/calls" | tr -d ' ')" "16"
+check "GA_REPS=2: order" "$(head -3 "$tmp/calls" | tr '\n' ' ')" "noise-g-2 noise-u-2 mixer-modes-g-2 "
+rm -f "$tmp/calls"; rm -rf "$tmp/root/runs"
+cenv GA_REPS="2 4" $SH "$tmp/home/campaign.sh" >/dev/null 2>&1 && bad "GA_REPS invalid rep dies" || ok "GA_REPS invalid rep dies"
+[ -s "$tmp/calls" ] && bad "GA_REPS invalid: no runs" || ok "GA_REPS invalid: no runs"
 # smoke
 rm -f "$tmp/calls"; rm -rf "$tmp/root/runs"
 cenv $SH "$tmp/home/campaign.sh" --smoke >/dev/null 2>&1

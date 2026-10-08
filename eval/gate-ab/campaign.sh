@@ -34,6 +34,10 @@ one() {
   printf '%s %s exit=%s solved=%s%s\n' "$(date '+%F %T')" "$id" "$rc" "$s" "$note" >> "$GA_ROOT/campaign.log"
 }
 mkdir -p "$GA_ROOT/runs"
+# Ruling 27: GA_REPS, a space-separated rep list (default "1 2 3"), each 1..3.
+reps=${GA_REPS:-1 2 3}
+[ -n "$(echo $reps)" ] || ga_die "GA_REPS is empty"
+for r in $reps; do case $r in 1|2|3) ;; *) ga_die "GA_REPS: invalid rep '$r' (want 1, 2 or 3)" ;; esac; done
 if [ "${1:-}" = --smoke ]; then tasks=midi-synth; else tasks=$GA_TASKS; fi
 
 # Preflight: readable dirs, every needed task prepared and validated, HEAD baseline cached, gated settings snapshotted.
@@ -56,4 +60,4 @@ done
 [ -f "$GA_ROOT/head-baseline.json" ] || $bl || ga_die "HEAD baseline failed"
 
 if [ "${1:-}" = --smoke ]; then one midi-synth g 9; one midi-synth u 9; exit 0; fi
-for rep in 1 2 3; do for task in $tasks; do for arm in g u; do one "$task" "$arm" "$rep"; done; done; done
+for rep in $reps; do for task in $tasks; do for arm in g u; do one "$task" "$arm" "$rep"; done; done; done
