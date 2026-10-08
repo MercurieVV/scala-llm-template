@@ -1,0 +1,11 @@
+[2178/2217] control.test.testForked
+Running Test Class com.github.mercurievv.skreeep2.control.ControlSpec
+com.github.mercurievv.skreeep2.control.ControlSpec
++ a knob maps linearly 3ms
+- a knob clamps at the end 2ms
+2180] [error] control.test.testForked
+  Compiler.scala:163        flatMap @ fs2.Compiler$Target#flatMap
+[error] plugin.test.testForked 1 tests failed: 
+  com.github.mercurievv.skreeep2.plugin.MidiSynthSpec Unexpected failure
+[error] core.compile Compilation failed
+2181/2217, 4 FAILED] mill prePush 24s

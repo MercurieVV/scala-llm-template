@@ -1,0 +1,4 @@
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"./mill -j 1 signals.compile"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"compiling 3 Scala sources\n","is_error":false}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Done."}]}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":2,"total_cost_usd":0.42,"duration_ms":1000,"usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":5000},"result":"Done."}

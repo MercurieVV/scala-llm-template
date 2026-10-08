@@ -1,0 +1,10 @@
+compiling 1 Scala source to out-probe/mill-build/compile.dest/classes ...
+[error] build.mill:9:19
+val broken: Int = "x"
+                  ^^^
+Found:    ("x" : String)
+Required: Int
+
+[error] one error found
+[error] compile task failed
+[error] compile Compilation failed

@@ -1,0 +1,9 @@
+Running Test Class com.github.mercurievv.skreeep2.plugin.HostEventsSpec
+com.github.mercurievv.skreeep2.plugin.HostEventsSpec
++ a note-off keeps its note-on's strike time and supplies the duration 33ms
++ notes are timed by when they arrived, not by when the consumer drained them 32ms
+Running Test Class com.github.mercurievv.skreeep2.plugin.MidiSynthSpec
+com.github.mercurievv.skreeep2.plugin.MidiSynthSpec
+- Unexpected failure 0ms
+[error] plugin.test.testForked 1 tests failed: 
+  com.github.mercurievv.skreeep2.plugin.MidiSynthSpec Unexpected failure

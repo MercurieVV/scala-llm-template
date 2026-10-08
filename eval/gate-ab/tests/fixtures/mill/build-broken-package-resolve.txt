@@ -1,0 +1,9 @@
+compiling 2 Scala sources to out-probe/mill-build/compile.dest/classes ...
+[error] clapBridge/package.mill:252:20
+val broken2: Int = "y"
+                   ^^^
+Found:    ("y" : String)
+Required: Int
+
+[error] one error found
+[error] compile Compilation failed

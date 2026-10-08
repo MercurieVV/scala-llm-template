@@ -1,0 +1,39 @@
+Running Test Class com.github.mercurievv.skreeep2.UnderrunSpec
+[36mcom.github.mercurievv.skreeep2.UnderrunSpec[0m
+[32m+ [0mcnt=50 — real-time budget [37m[1m6s[0m
+[32m+ [0mcnt=100 — real-time budget [37m[1m6s[0m
+[32m+ [0mcnt=200 — real-time budget [37m[1m6s[0m
+[32m+ [0mcnt=400 — real-time budget [37m[1m6s[0m
+[31m- [0mcnt=800 — real-time budget [37m[1m6s[0m
+[31m*************[0mFAILURES[31m**************[0m
+[36mcom.github.mercurievv.skreeep2.UnderrunSpec[0m
+[31m- [0mcnt=800 — real-time budget [37m[1m6s[0m
+[31m  assertion failed: cnt=800 chunks=740 p50=4677us p99=5985us max=6266us overruns=20 budget=2902us (../../../../bench/test/src/com/github/mercurievv/skreeep2/UnderrunSpec.scala:143)
+[31m
+[31m  s.overruns == 0
+[31m  | |        |
+[31m  | 20       false
+[31m  Stats(740,4677,5985,6266,20)[0m
+
+
+
+[error] bench.test.testForked task failed
+java.lang.NoClassDefFoundError: cats/effect/unsafe/UnsafeNonFatal
+	at cats.effect.unsafe.WorkerThread.lookForWork$1(WorkerThread.scala:551)
+	at cats.effect.unsafe.WorkerThread.run(WorkerThread.scala:942)
+Running Test Class com.github.mercurievv.skreeep2.control.midi.ControlSurfaceSpec
+[36mcom.github.mercurievv.skreeep2.control.midi.ControlSurfaceSpec[0m
+[32m+ [0ma fader on the wire becomes a command, and the desk is painted before anything is read [37m[1m18ms[0m
+[32m+ [0ma control the mode answers with feedback reaches the desk [37m[1m18ms[0m
+[32m+ [0ma message no mode uses costs nothing and stops nothing after it [37m[1m18ms[0m
+Running Test Class com.github.mercurievv.skreeep2.control.midi.McuSpec
+[36mcom.github.mercurievv.skreeep2.control.midi.McuSpec[0m
+[32m+ [0ma pitch bend is a fader, little end first, on its own channel [37m[1m1ms[0m
+[32m+ [0ma motor fader round-trips through the wire to within one step of the desk's own resolution [37m[1m1ms[0m
+Running Test Class com.github.mercurievv.skreeep2.wiring.WiringDetailsSpec
+[36mcom.github.mercurievv.skreeep2.wiring.WiringDetailsSpec[0m
+[32m+ [0mwiring one instrument through WiringDetails.wired publishes its value [37m[1m30ms[0m
+[32m+ [0mthe two WiringDetails factories build a real band, and WiringDetails.wired publishes through it [37m[1m61ms[0m
+[32m+ [0ma control event before the first note publishes nothing, and a later one republishes the mix [37m[1m102ms[0m
+[error] bench.test.testForked 1 tests failed: 
+  com.github.mercurievv.skreeep2.UnderrunSpec cnt=800 — real-time budget

@@ -1,0 +1,1 @@
+The implementation of the scope's View and Axes geometry in scope/src/io/github/mercurievv/scope/View.scala has been removed: its members are ???. Implement it as its scaladoc and the project's docs describe. The existing tests must keep passing. Stop when you are done.
