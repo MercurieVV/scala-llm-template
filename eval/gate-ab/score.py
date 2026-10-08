@@ -54,7 +54,7 @@ def parse_transcript(lines):
     """-> dict(turns, input_tokens, output_tokens, cache_read_tokens, cost_usd, tool_calls, final_text, texts, hook_texts,
     has_result, init (the system/init event or None), hook_events (hook names of system hook_* events, in order))."""
     out = dict(turns=None, input_tokens=None, output_tokens=None, cache_read_tokens=None, cost_usd=None,
-               tool_calls=[], final_text="", texts=[], hook_texts=[], has_result=False, init=None, hook_events=[])
+               tool_calls=[], final_text="", texts=[], hook_texts=[], has_result=False, init=None, hook_events=[], api_error=None)
     by_id = {}
     turn = 0
     prev_hooks = []  # hook texts of the immediately preceding event: the same block reported twice in a row counts once
@@ -117,6 +117,8 @@ def parse_transcript(lines):
             ev_hooks.extend(leaves)
         elif t == "result":
             out["has_result"] = True
+            if ev.get("is_error"):  # Ruling 26: API error / usage limit, an infrastructure failure
+                out["api_error"] = ("%s %s" % (ev.get("api_error_status"), ev.get("result") or "")).strip()
             u = ev.get("usage") or {}
             out["turns"] = ev.get("num_turns")
             out["cost_usd"] = ev.get("total_cost_usd")
@@ -740,6 +742,8 @@ def main(run_dir):
             rec[k] = t[k]
         if not t["has_result"] and not rec["timed_out"]:  # a timeout is an outcome, not a scorer error (Ruling 14)
             errors.append("no result event")
+        if t["api_error"] and not rec["timed_out"]:  # Ruling 26 (a timeout stays an outcome, Ruling 14)
+            errors.append("agent api error: " + t["api_error"][:120])
         leaks = env_leaks(t, run["arm"])
         if leaks:  # Ruling 20: the operator's plugins/hooks/MCPs reached the agent; the arms are not what they claim
             errors.append("agent environment leaked: " + "; ".join(leaks))

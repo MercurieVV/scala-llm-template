@@ -261,11 +261,13 @@ mkr noise-g-1 '{"solved":false,"error":"scoring incomplete"}'
 mkr noise-u-1 '{"solved":false,"error":"no result event"}'
 mkr mixer-modes-g-1 '{"solved":true,"error":null}'
 mkr mixer-modes-u-1 '{"solved":false,"error":"HEAD baseline missing"}' norun
+mkr midi-synth-g-1 '{"solved":false,"error":"agent api error: 429 You have hit your weekly limit"}'
 mkr mcu-g-1 '{"solved":false,"error":"no result event; agent environment leaked: no init event"}'
 cenv SCORES=$tmp/scores $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
 grep -qx 'noise-g-1' "$tmp/calls" && bad "retry rescore-only skips run.sh" || ok "retry rescore-only skips run.sh"
 grep -q 'noise-g-1' "$tmp/root/campaign.log" && grep 'noise-g-1' "$tmp/root/campaign.log" | grep -q 'retry=rescore' && ok "rescore retry logged" || bad "rescore retry logged"
 grep -qx 'noise-u-1' "$tmp/calls" && grep 'noise-u-1' "$tmp/root/campaign.log" | grep -q 'retry=rerun' && ok "no result event reruns the whole run" || bad "no result event reruns the whole run"
+grep -qx 'midi-synth-g-1' "$tmp/calls" && grep 'midi-synth-g-1' "$tmp/root/campaign.log" | grep -q 'retry=rerun' && ok "agent api error reruns the whole run" || bad "agent api error reruns the whole run"
 grep -qx 'mixer-modes-u-1' "$tmp/calls" && ok "missing run.json reruns the whole run" || bad "missing run.json reruns the whole run"
 grep -qx 'mcu-g-1' "$tmp/calls" && grep 'mcu-g-1' "$tmp/root/campaign.log" | grep -q 'retry=rerun' && ok "combined no-result error reruns the whole run" || bad "combined no-result error reruns the whole run"
 grep -qx 'mixer-modes-g-1' "$tmp/calls" && bad "error null is skipped" || ok "error null is skipped"

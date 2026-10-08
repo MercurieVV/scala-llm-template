@@ -126,6 +126,14 @@ class RealGated(unittest.TestCase):
         t = score.parse_transcript(lines("real-gated.jsonl"))
         self.assertEqual(score.contamination(t["tool_calls"], "/Users/someone/gate-eval/runs/midi-synth-g-9"), [])
 
+class ApiError(unittest.TestCase):
+    """Ruling 26. Fixture = verbatim result event of noise-g-2 (usage limit, 429)."""
+    def test_parse_flags_error_result(self):
+        t = score.parse_transcript(lines("real-api-error.jsonl"))
+        self.assertTrue(t["has_result"]); self.assertEqual(t["api_error"], "429 You've hit your weekly limit \u00b7 resets Oct 8 at 4am (Europe/Riga)")
+    def test_clean_result_has_no_api_error(self):
+        self.assertIsNone(score.parse_transcript(lines("clean.jsonl"))["api_error"])
+
 class EnvLeak(unittest.TestCase):
     """Ruling 20. Fixtures: init + hook events verbatim from the smoke runs midi-synth-{g,u}-9 (before the fix; long hook
     outputs truncated, user name replaced) and from a `--setting-sources project --strict-mcp-config` probe."""
@@ -600,6 +608,15 @@ class MainWithFakeMill(FakeBase):
         (self.rd / "run.json").write_text(json.dumps(run)); (self.rd / "transcript.jsonl").write_text("")
         s = self.run_score()
         self.assertFalse(s["solved"]); self.assertIsNone(s["error"]); self.assertIsNone(s["turns"])
+    def test_api_error_result_is_infra_error(self):
+        (self.rd / "transcript.jsonl").write_text((FX / "real-init-isolated.jsonl").read_text() + (FX / "real-api-error.jsonl").read_text())
+        s = self.run_score()
+        self.assertIn("agent api error: 429 You've hit your weekly limit", s["error"])
+    def test_api_error_result_on_timeout_is_no_error(self):
+        run = json.loads((self.rd / "run.json").read_text()); run.update(timed_out=True, exit_code=124)
+        (self.rd / "run.json").write_text(json.dumps(run))
+        (self.rd / "transcript.jsonl").write_text((FX / "real-init-isolated.jsonl").read_text() + (FX / "real-api-error.jsonl").read_text())
+        self.assertIsNone(self.run_score()["error"])
     def test_empty_transcript(self):
         (self.rd / "transcript.jsonl").write_text("")
         s = self.run_score()

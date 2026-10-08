@@ -18,14 +18,14 @@ score_error() {
   python3 -c "import json,sys;e=json.load(open(sys.argv[1])).get('error');print('' if e is None else e)" "$GA_ROOT/runs/$1/score.json" 2>/dev/null || echo unreadable
 }
 # A score.json with a non-null error is not done (score.py writes one while still running, and on interruption / infra failure).
-# One automatic retry per run per invocation: an error containing "no result event", or no run.json -> redo the run; otherwise rescore only.
+# One automatic retry per run per invocation: an error containing "no result event" or "agent api error", or no run.json -> redo the run; otherwise rescore only.
 one() {
   id=$(ga_run_id "$1" "$2" "$3") || exit 1
   rd=$GA_ROOT/runs/$id; e=$(score_error "$id"); how=run
   if [ "$e" = none ]; then how=run
   elif [ -z "$e" ]; then echo "skip $id"; return 0
   elif [ ! -f "$rd/run.json" ]; then how=rerun
-  else case $e in *"no result event"*) how=rerun ;; *) how=rescore ;; esac; fi
+  else case $e in *"no result event"*|*"agent api error"*) how=rerun ;; *) how=rescore ;; esac; fi
   rc=-
   if [ "$how" != rescore ]; then $run "$1" "$2" "$3"; rc=$?; fi
   $sc "$rd"
