@@ -7,8 +7,10 @@ GA_HOLDOUT_SRC=${GA_HOLDOUT_SRC:-/Users/viktorskalinins/IdeaProjects/skreeep2-ho
 GA_HOLDOUT_COMMIT=${GA_HOLDOUT_COMMIT:-8207d2f}
 GA_CAP_SECONDS=${GA_CAP_SECONDS:-2700}
 GA_MODEL=${GA_MODEL:-sonnet}
-GA_ALL_TASKS="noise mixer-modes mcu note-ring backpressure scope-view modes midi-synth"
-GA_TASKS=${GA_TASKS:-$GA_ALL_TASKS}
+GA_ALL_TASKS="noise mixer-modes mcu note-ring backpressure scope-view modes midi-synth adsr sine by-offset sines-gen"
+# The 4 gate-visible tasks (spec 2026-10-09) run only when named in GA_TASKS.
+GA_AB_TASKS="noise mixer-modes mcu note-ring backpressure scope-view modes midi-synth"
+GA_TASKS=${GA_TASKS:-$GA_AB_TASKS}
 
 ga_die() { printf 'gate-ab: %s\n' "$1" >&2; exit 1; }
 

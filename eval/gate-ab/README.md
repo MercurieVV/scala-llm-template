@@ -200,3 +200,20 @@ The verdict is printed twice: strict (contaminated runs excluded) and audited. F
 whose contamination flag you reviewed and found to be a false positive, one per line, in `<runs-root>/audit-cleared.txt`
 (`#` comments and blank lines ignored). A listed run counts if it has no `error`; errors are never cleared. Without the
 file, only the strict verdict is shown.
+
+## Gate-visible tasks (screen, then same-day test)
+
+Tasks `adsr`, `sine`, `by-offset`, `sines-gen` cut code that the holdout or downstream test modules exercise. Their
+hidden specs were written for the study and live in `tasks/<task>/hidden/` (`HIDDEN_SPEC_SRC` in `task.env`);
+`GATE_VISIBLE=1` makes `prepare.sh` add `gate_visible_on_cut` to `validation.txt`: on the cut tree, some test module
+other than `TASK_MODULE`, or the holdout, must fail. They are not in the default task list. Spec:
+`docs/superpowers/specs/2026-10-09-gate-visible-tasks-design.md` in scala-coding-guidelines.
+
+```sh
+R=~/gate-eval-hard   # own root: head/ copied from ~/gate-eval/head, settings snapshot and head-baseline.json copied
+GA_ROOT=$R GA_ARMS=u GA_REPS="1 2" GA_TASKS="adsr sine by-offset sines-gen" sh eval/gate-ab/campaign.sh   # screen
+GA_ROOT=$R/test GA_ARMS="g u" GA_REPS="1 2" GA_TASKS="<kept>" sh eval/gate-ab/campaign.sh               # test phase
+```
+
+The test root links `base` and `head` from `$R`; its `u` runs are the fresh ungated runs (screen runs are not
+counted, they were selected for failing).
