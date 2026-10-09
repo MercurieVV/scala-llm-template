@@ -49,7 +49,7 @@ fi
 rm -f "$pidfile" 2>/dev/null
 
 # --- task definitions
-for t in $($SH -c ". '$ga/lib.sh'; echo \$GA_TASKS") adsr sine; do
+for t in $($SH -c ". '$ga/lib.sh'; echo \$GA_TASKS") adsr sine by-offset sines-gen; do
   d="$ga/tasks/$t"
   [ -f "$d/task.env" ] && [ -f "$d/prompt.txt" ] || { bad "task $t has task.env and prompt.txt"; continue; }
   ( . "$d/task.env"
