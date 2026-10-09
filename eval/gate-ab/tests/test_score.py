@@ -160,6 +160,17 @@ class EnvLeak(unittest.TestCase):
         t = score.parse_transcript(lines("real-init-isolated.jsonl") + [hook])
         self.assertEqual(score.env_leaks(t, "t"), [])
         self.assertEqual(score.env_leaks(t, "u"), ["hooks=PreToolUse:Bash"])
+    def test_arm_t_turn_end_is_a_leak(self):
+        ev = json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Stop hook feedback: fix it"}]}})
+        t = score.parse_transcript(lines("real-init-isolated.jsonl") + [ev])
+        self.assertEqual(score.env_leaks(t, "t"), ["turn-end in arm t"])
+        self.assertEqual(score.env_leaks(t, "g"), [])
+        t2 = score.parse_transcript(lines("real-init-isolated.jsonl"))
+        self.assertEqual(score.env_leaks(t2, "t"), [])
+    def test_is_turn_end_text(self):
+        self.assertTrue(score.is_turn_end_text("Stop hook feedback: x"))
+        self.assertTrue(score.is_turn_end_text("turn-end gate: BLOCKED"))
+        self.assertFalse(score.is_turn_end_text("fine"))
     def test_missing_init_with_result(self):
         t = score.parse_transcript(lines("clean.jsonl"))
         self.assertEqual(score.env_leaks(t, "u"), ["no init event"])

@@ -135,7 +135,8 @@ class AblationSection(unittest.TestCase):
         self.assertIn("| n (headline) | 1 | 8 | 1 |", s)          # g, t, u over task a only (b excluded)
         self.assertIn("| solved | 1 | 6 | 0 |", s)
         self.assertIn("| median wall s | 200 | 60 | 50 |", s)
-        self.assertIn("\nAblation verdict: unclear\n", s)
+        self.assertIn("\nAblation verdict (strict): unclear\n", s)
+        self.assertIn("Strict (contamination flags excluded):", s)
         self.assertIn("\nVerdict: ", s)                            # the A/B verdict is still there
 
     def test_contaminated_t_run_makes_incomplete(self):
@@ -143,7 +144,63 @@ class AblationSection(unittest.TestCase):
         t_runs[0]["contaminated"] = True
         with tempfile.TemporaryDirectory() as d:
             s = self.write(d, self.base() + t_runs)
-        self.assertIn("\nAblation verdict: incomplete (7 of 8)\n", s)
+        self.assertIn("\nAblation verdict (strict): incomplete (7 of 8)\n", s)
+
+    def t8(self, **over):
+        return [rec("a-t-%d" % i, "a", "t", i, solved=True) for i in range(1, 9)]
+
+    def write_audit(self, d, text):
+        with open(os.path.join(d, "audit-cleared.txt"), "w") as f:
+            f.write(text)
+
+    def test_audit_clears_contaminated_run(self):
+        t_runs = self.t8()
+        t_runs[0]["contaminated"] = True
+        with tempfile.TemporaryDirectory() as d:
+            self.write_audit(d, "a-t-1\n")
+            s = self.write(d, self.base() + t_runs)
+        self.assertIn("\nAblation verdict (strict): incomplete (7 of 8)\n", s)
+        self.assertIn("Audited (cleared: a-t-1):", s)
+        self.assertIn("\nAblation verdict (audited): the gain comes without turn-end\n", s)
+
+    def test_audit_never_clears_errors(self):
+        t_runs = self.t8()
+        t_runs[0]["error"] = "boom"
+        t_runs[1]["contaminated"] = True
+        with tempfile.TemporaryDirectory() as d:
+            self.write_audit(d, "a-t-1\na-t-2\n")
+            s = self.write(d, self.base() + t_runs)
+        self.assertIn("Audited (cleared: a-t-2):", s)
+        self.assertIn("\nAblation verdict (audited): incomplete (7 of 8)\n", s)
+
+    def test_no_audit_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = self.write(d, self.base() + self.t8())
+        self.assertIn("Audited: no audit-cleared.txt; the strict verdict stands.", s)
+        self.assertNotIn("Ablation verdict (audited)", s)
+
+    def test_audit_comments_blanks_and_noncontaminated_ignored(self):
+        t_runs = self.t8()
+        t_runs[0]["contaminated"] = True
+        with tempfile.TemporaryDirectory() as d:
+            self.write_audit(d, "# note\n\n   \n  a-t-1  \n# a-t-9\na-t-5\n")
+            s = self.write(d, self.base() + t_runs)
+        self.assertIn("Audited (cleared: a-t-1):", s)
+        self.assertIn("\nAblation verdict (audited): the gain comes without turn-end\n", s)
+
+    def test_audit_file_without_matches_says_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.write_audit(d, "# nothing\n")
+            s = self.write(d, self.base() + self.t8())
+        self.assertIn("Audited (cleared: none):", s)
+
+    def test_ablation_g_u_restricted_to_t_reps(self):
+        t_runs = [rec("a-t-%d" % i, "a", "t", i, solved=True) for i in (1, 2)]
+        extra = [rec("a-g-3", "a", "g", 3, solved=True)]
+        with tempfile.TemporaryDirectory() as d:
+            s = self.write(d, self.base() + t_runs + extra)
+        self.assertIn("| n (headline) | 1 | 2 | 1 |", s)
+        self.assertIn("| solved | 1 | 2 | 0 |", s)
 
 
 if __name__ == "__main__":

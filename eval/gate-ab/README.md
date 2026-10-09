@@ -195,3 +195,8 @@ python3 eval/gate-ab/report.py ~/gate-eval/runs
 `summary.md` gets an "Ablation" section comparing g, t and u on the tasks `t` ran, with the pre-registered verdict:
 over 8 counted `t` runs, solved ≤ 5 → "turn-end carries the gain"; 8 → "the gain comes without turn-end"; 6 or 7 →
 "unclear"; fewer than 8 counted → "incomplete".
+
+The verdict is printed twice: strict (contaminated runs excluded) and audited. For the audited one, list the ids of runs
+whose contamination flag you reviewed and found to be a false positive, one per line, in `<runs-root>/audit-cleared.txt`
+(`#` comments and blank lines ignored). A listed run counts if it has no `error`; errors are never cleared. Without the
+file, only the strict verdict is shown.
