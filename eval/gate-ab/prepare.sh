@@ -43,15 +43,24 @@ fi
 g=
 if [ "${GATE_VISIBLE:-}" = 1 ]; then
   # Spec 2026-10-09 §4: on the cut tree, some test module other than TASK_MODULE, or the holdout, must fail.
-  mods=$(python3 -c 'import json,sys;print(" ".join(m for m in sorted(json.load(open(sys.argv[1]))["modules"]) if m != sys.argv[2]))' \
+  # Mill runs several tasks in one invocation only when they are joined with "+".
+  mods=$(python3 -c 'import json,sys;print(" + ".join(m for m in sorted(json.load(open(sys.argv[1]))["modules"]) if m != sys.argv[2]))' \
     "$GA_ROOT/head-baseline.json" "$TASK_MODULE") || ga_die "read $GA_ROOT/head-baseline.json"
   rm -f "$v/$HIDDEN_SPEC"
   ho=$base/holdout-validate; rm -rf "$ho"; mkdir -p "$ho"
   git -C "$GA_HOLDOUT_SRC" archive "$GA_HOLDOUT_COMMIT" | tar -x -C "$ho" || ga_die "holdout export"
   hod=$(CDPATH= cd -- "$ho" && pwd -P)
+  gl=$base/gate-visible.log
   # shellcheck disable=SC2086
-  { mill_in 1800 "$v" -k $mods && ( export DSH_HOLDOUT_DIR="$hod"; mill_in 600 "$v" holdout.test ); } >"$base/gate-visible.log" 2>&1 && g=no || g=yes
+  mill_in 1800 "$v" -k $mods >"$gl" 2>&1; drc=$?
+  ( export DSH_HOLDOUT_DIR="$hod"; mill_in 600 "$v" holdout.test ) >"$gl.holdout" 2>&1; hrc=$?
+  cat "$gl.holdout" >>"$gl"; rm -f "$gl.holdout"
   rm -rf "$ho"
+  # Only a failing test is evidence; a timeout (124), crash or build failure says nothing about visibility.
+  for r in $drc $hrc; do [ "$r" != 124 ] || { rm -rf "$v"; ga_die "gate-visible check timed out (see $gl)"; }; done
+  if [ "$drc$hrc" = 00 ]; then g=no
+  elif grep -Eq 'tests? failed' "$gl"; then g=yes
+  else rm -rf "$v"; ga_die "gate-visible check failed without a test failure (see $gl)"; fi
 fi
 rm -rf "$v"
 printf 'cut_compiles=%s\nhidden_fails_on_cut=%s\nhidden_passes_on_head=%s\n' "$c" "$f" "$p" > "$base/validation.txt"

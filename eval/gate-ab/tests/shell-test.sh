@@ -94,6 +94,10 @@ fake=$tmp/skreeep2; mkdir -p "$fake/m/src" "$fake/d/src" "$tmp/home/tasks/t2/stu
 cat >"$fake/mill" <<'MILL'
 #!/bin/sh
 case $PWD in */head|*/head-validate) exit 0 ;; esac
+# real Mill runs one task per invocation unless tasks are joined with "+": refuse several tasks without it
+nt=0; plus=; for a; do case $a in +) plus=1 ;; -*) ;; *.*) nt=$((nt+1)) ;; esac; done
+[ "$nt" -gt 1 ] && [ -z "$plus" ] && { echo "several tasks without +" >&2; exit 2; }
+[ -n "${MILL_CRASH:-}" ] && [ "$nt" -gt 0 ] && case " $* " in *" d.test "*) exit 3 ;; esac
 rc=0
 for a; do case $a in
   __.compile) ;;
@@ -101,6 +105,7 @@ for a; do case $a in
   d.test) [ -z "${NO_DOWN:-}" ] && grep -q '???' m/src/A.scala && rc=1 ;;
   holdout.test) [ -n "${FAIL_HOLDOUT:-}" ] && rc=1 ;;
 esac; done
+[ $rc = 0 ] || echo "[error] fake.test 1 tests failed:"
 exit $rc
 MILL
 chmod +x "$fake/mill"; cp "$fake/mill" "$tmp/root/head/mill"
@@ -109,24 +114,29 @@ echo 'object A { def f = 1 }' >"$fake/m/src/A.scala"; echo 'object D' >"$fake/d/
 head=$(git -C "$fake" rev-parse HEAD)
 ( cd "$tmp/hsrc" && echo x >x && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm h )
 hhead=$(git -C "$tmp/hsrc" rev-parse HEAD)
-printf '{"modules": {"m.test": true, "d.test": true}}\n' >"$tmp/root/head-baseline.json"
+printf '{"modules": {"m.test": true, "d.test": true, "e.test": true}}\n' >"$tmp/root/head-baseline.json"
 printf "TASK_MODULE='m.test'\nHIDDEN_SPEC='m/test/src/ASpec.scala'\nHIDDEN_SPEC_SRC='hidden/m/test/src/ASpec.scala'\nGATE_VISIBLE=1\nCUT_FILES='m/src/A.scala'\nFEATURE='f'\n" >"$tmp/home/tasks/t2/task.env"
 echo 'object A { def f = ??? }' >"$tmp/home/tasks/t2/stub/m/src/A.scala"
 echo 'class ASpec' >"$tmp/home/tasks/t2/hidden/m/test/src/ASpec.scala"
 cp "$ga/lib.sh" "$ga/timeout.py" "$ga/prepare.sh" "$tmp/home/" 2>/dev/null
-penv() { GA_HOME=$tmp/home GA_ROOT=$tmp/root GA_SKREEEP2=$fake GA_COMMIT=${PC:-$head} GA_HOLDOUT_SRC=$tmp/hsrc GA_HOLDOUT_COMMIT=$hhead "$@"; }
+# penv [VAR=value ...] cmd: env assignments, never shell-function prefix assignments (their scope differs between shells)
+penv() { env GA_HOME=$tmp/home GA_ROOT=$tmp/root GA_SKREEEP2=$fake GA_COMMIT=$head GA_HOLDOUT_SRC=$tmp/hsrc GA_HOLDOUT_COMMIT=$hhead "$@"; }
 penv $SH "$tmp/home/prepare.sh" t2 >/dev/null 2>&1
 check "prepare authored exit 0" "$?" "0"
 check "prepare authored validation" "$(cat "$tmp/root/base/t2/validation.txt" 2>/dev/null | tr '\n' ' ')" "cut_compiles=yes hidden_fails_on_cut=yes hidden_passes_on_head=yes gate_visible_on_cut=yes "
 [ -f "$tmp/root/base/t2/hidden/m/test/src/ASpec.scala" ] && [ ! -e "$tmp/root/base/t2/tree/m/test/src/ASpec.scala" ] && ok "prepare authored spec hidden" || bad "prepare authored spec hidden"
 [ ! -e "$tmp/root/head/m/test/src/ASpec.scala" ] && ok "prepare leaves head untouched" || bad "prepare leaves head untouched"
 # downstream does not see the cut, holdout passes -> not gate-visible -> exit 1, 4th line no
-NO_DOWN=1 penv $SH "$tmp/home/prepare.sh" t2 >/dev/null 2>&1; rc=$?
+penv NO_DOWN=1 $SH "$tmp/home/prepare.sh" t2 >/dev/null 2>&1; rc=$?
 [ "$rc" != 0 ] && ok "prepare not gate-visible fails" || bad "prepare not gate-visible fails"
 check "prepare not gate-visible line" "$(sed -n 4p "$tmp/root/base/t2/validation.txt" 2>/dev/null)" "gate_visible_on_cut=no"
 # holdout failing alone is enough
-NO_DOWN=1 FAIL_HOLDOUT=1 penv $SH "$tmp/home/prepare.sh" t2 >/dev/null 2>&1
+penv NO_DOWN=1 FAIL_HOLDOUT=1 $SH "$tmp/home/prepare.sh" t2 >/dev/null 2>&1
 check "prepare holdout-visible exit 0" "$?" "0"
+# a downstream run that fails without a test failure (crash, infra) is not evidence: die, no validation
+penv MILL_CRASH=1 $SH "$tmp/home/prepare.sh" t2 >"$tmp/out" 2>&1; rc=$?
+[ "$rc" != 0 ] && grep -q 'without a test failure' "$tmp/out" && ok "prepare gate-visible crash dies" || bad "prepare gate-visible crash dies"
+[ ! -f "$tmp/root/base/t2/validation.txt" ] && ok "prepare crash leaves no validation" || bad "prepare crash leaves no validation"
 # missing authored spec -> die
 rm "$tmp/home/tasks/t2/hidden/m/test/src/ASpec.scala"
 penv $SH "$tmp/home/prepare.sh" t2 >"$tmp/out" 2>&1; rc=$?
@@ -136,7 +146,7 @@ penv $SH "$tmp/home/prepare.sh" t2 >"$tmp/out" 2>&1; rc=$?
 echo 'class ASpec' >"$tmp/home/tasks/t2/hidden/m/test/src/ASpec.scala"
 mkdir -p "$fake/m/test/src"; echo 'class ASpec' >"$fake/m/test/src/ASpec.scala"
 ( cd "$fake" && git add -A && git -c user.name=t -c user.email=t@t commit -qm real )
-PC=$(git -C "$fake" rev-parse HEAD) penv $SH "$tmp/home/prepare.sh" t2 >"$tmp/out" 2>&1; rc=$?
+penv GA_COMMIT=$(git -C "$fake" rev-parse HEAD) $SH "$tmp/home/prepare.sh" t2 >"$tmp/out" 2>&1; rc=$?
 [ "$rc" != 0 ] && grep -q 'already in the tree' "$tmp/out" && ok "prepare authored shadow dies" || bad "prepare authored shadow dies"
 rm -rf "$tmp"
 

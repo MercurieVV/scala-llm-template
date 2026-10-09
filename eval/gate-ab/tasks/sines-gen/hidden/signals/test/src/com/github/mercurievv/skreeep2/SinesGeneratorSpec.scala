@@ -23,7 +23,7 @@ object SinesGeneratorSpec extends SimpleIOSuite:
     expect(SinesGenerator.createSines[Double](1.0, 2, 0).size == 2)
   }
 
-  // "each partial's multiple of the fundamental and its own amplitude, in the caller's order"
+  // "each partial's multiple of the fundamental and its own amplitude, in the caller's order"; ids: "Ids are positional" (createSines' doc, same object)
   pureTest("fromRatios keeps the caller's ratios, amplitudes and order, ids from idBase") {
     val s = SinesGenerator.fromRatios(List((1.0, 0.5), (2.76, 0.25), (5.4, 0.1)), 7)
     expect(s.map(_._1) == List(7, 8, 9)) and
@@ -34,7 +34,8 @@ object SinesGeneratorSpec extends SimpleIOSuite:
   // "clustered around the fundamental (`multiple = 1`), spread symmetrically by `spread` per step and each carrying `vol / cnt`"
   pureTest("detuned: symmetric cluster around 1 with step spread, each vol / cnt") {
     val s = SinesGenerator.detuned[Double](0.9, 3, 0.01, 0)
-    expect(s.map(_._2.multiple).zip(List(0.99, 1.0, 1.01)).forall(near)) and expect(s.map(_._2.volume).forall(v => near(v, 0.3)))
+    // the scaladoc does not state an order, so compare as a set
+    expect(s.map(_._2.multiple).sorted.zip(List(0.99, 1.0, 1.01)).forall(near)) and expect(s.map(_._2.volume).forall(v => near(v, 0.3)))
   }
 
   pureTest("detuned with an even count has no partial exactly at 1 and stays symmetric") {
