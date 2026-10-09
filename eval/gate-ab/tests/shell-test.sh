@@ -20,6 +20,8 @@ out=$($SH -c "GA_ROOT=/tmp/x; . '$ga/lib.sh'; echo \$GA_ROOT")
 check "GA_ROOT override" "$out" "/tmp/x"
 out=$($SH -c ". '$ga/lib.sh'; echo \$GA_TASKS" | wc -w | tr -d ' ')
 check "eight tasks" "$out" "8"
+out=$(env -u GA_TASKS $SH -c ". '$ga/lib.sh'; echo \$GA_TASKS")
+check "default GA_TASKS is all tasks" "$out" "noise mixer-modes mcu note-ring backpressure scope-view modes midi-synth"
 
 # --- timeout.py
 python3 "$ga/timeout.py" 5 -- sh -c 'exit 3'; check "timeout passes exit code" "$?" "3"
@@ -314,6 +316,18 @@ check "GA_REPS=2: order" "$(head -3 "$tmp/calls" | tr '\n' ' ')" "noise-g-2 nois
 rm -f "$tmp/calls"; rm -rf "$tmp/root/runs"
 cenv GA_REPS="2 4" $SH "$tmp/home/campaign.sh" >/dev/null 2>&1 && bad "GA_REPS invalid rep dies" || ok "GA_REPS invalid rep dies"
 [ -s "$tmp/calls" ] && bad "GA_REPS invalid: no runs" || ok "GA_REPS invalid: no runs"
+# gate ablation: GA_ARMS and GA_TASKS
+rm -f "$tmp/calls"; rm -rf "$tmp/root/runs"
+cenv GA_ARMS=t GA_REPS="1 2" GA_TASKS="backpressure mcu mixer-modes scope-view" $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
+check "ablation campaign: 8 runs" "$(wc -l <"$tmp/calls" | tr -d ' ')" "8"
+check "ablation campaign: order" "$(tr '\n' ' ' <"$tmp/calls")" "backpressure-t-1 mcu-t-1 mixer-modes-t-1 scope-view-t-1 backpressure-t-2 mcu-t-2 mixer-modes-t-2 scope-view-t-2 "
+rm -f "$tmp/calls"; rm -rf "$tmp/root/runs"
+cenv GA_ARMS="g x" $SH "$tmp/home/campaign.sh" >/dev/null 2>&1 && bad "GA_ARMS invalid arm dies" || ok "GA_ARMS invalid arm dies"
+[ -s "$tmp/calls" ] && bad "GA_ARMS invalid: no runs" || ok "GA_ARMS invalid: no runs"
+cenv GA_ARMS=" " $SH "$tmp/home/campaign.sh" >/dev/null 2>&1 && bad "GA_ARMS empty dies" || ok "GA_ARMS empty dies"
+cenv GA_TASKS="mcu nosuch" $SH "$tmp/home/campaign.sh" >/dev/null 2>&1 && bad "GA_TASKS unknown task dies" || ok "GA_TASKS unknown task dies"
+[ -s "$tmp/calls" ] && bad "GA_TASKS invalid: no runs" || ok "GA_TASKS invalid: no runs"
+cenv GA_TASKS=" " $SH "$tmp/home/campaign.sh" >/dev/null 2>&1 && bad "GA_TASKS empty dies" || ok "GA_TASKS empty dies"
 # smoke
 rm -f "$tmp/calls"; rm -rf "$tmp/root/runs"
 cenv $SH "$tmp/home/campaign.sh" --smoke >/dev/null 2>&1

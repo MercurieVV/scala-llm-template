@@ -38,6 +38,12 @@ mkdir -p "$GA_ROOT/runs"
 reps=${GA_REPS:-1 2 3}
 [ -n "$(echo $reps)" ] || ga_die "GA_REPS is empty"
 for r in $reps; do case $r in 1|2|3) ;; *) ga_die "GA_REPS: invalid rep '$r' (want 1, 2 or 3)" ;; esac; done
+# Gate ablation: GA_ARMS (default "g u", each g, u or t) and GA_TASKS (default all 8, each a known task).
+arms=${GA_ARMS:-g u}
+[ -n "$(echo $arms)" ] || ga_die "GA_ARMS is empty"
+for a in $arms; do case $a in g|u|t) ;; *) ga_die "GA_ARMS: invalid arm '$a' (want g, u or t)" ;; esac; done
+[ -n "$(echo $GA_TASKS)" ] || ga_die "GA_TASKS is empty"
+for t in $GA_TASKS; do case " $GA_ALL_TASKS " in *" $t "*) ;; *) ga_die "GA_TASKS: unknown task '$t'" ;; esac; done
 if [ "${1:-}" = --smoke ]; then tasks=midi-synth; else tasks=$GA_TASKS; fi
 
 # Preflight: readable dirs, every needed task prepared and validated, HEAD baseline cached, gated settings snapshotted.
@@ -60,4 +66,4 @@ done
 [ -f "$GA_ROOT/head-baseline.json" ] || $bl || ga_die "HEAD baseline failed"
 
 if [ "${1:-}" = --smoke ]; then one midi-synth g 9; one midi-synth u 9; exit 0; fi
-for rep in $reps; do for task in $tasks; do for arm in g u; do one "$task" "$arm" "$rep"; done; done; done
+for rep in $reps; do for task in $tasks; do for arm in $arms; do one "$task" "$arm" "$rep"; done; done; done
