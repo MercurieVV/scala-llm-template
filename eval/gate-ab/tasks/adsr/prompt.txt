@@ -1,0 +1,1 @@
+The implementation of the ADSR envelope shape ADSR in signals/src/com/github/mercurievv/skreeep2/signals/envelopes/ADSR.scala has been removed: its members are ???. Implement it as its scaladoc and the project's docs describe. The existing tests must keep passing. Stop when you are done.
