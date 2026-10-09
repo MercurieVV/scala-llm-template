@@ -91,5 +91,60 @@ class EndToEnd(unittest.TestCase):
             self.assertIn("| turn-end | 2 | 1 |", s)
             self.assertIn("| median turns (n) | 10.0 (1) | 10.0 (1) |", s)
 
+class AblationVerdict(unittest.TestCase):
+    def test_bands(self):
+        v = report.ablation_verdict
+        self.assertEqual(v(0, 8), "turn-end carries the gain")
+        self.assertEqual(v(5, 8), "turn-end carries the gain")
+        self.assertEqual(v(6, 8), "unclear")
+        self.assertEqual(v(7, 8), "unclear")
+        self.assertEqual(v(8, 8), "the gain comes without turn-end")
+
+    def test_incomplete(self):  # an excluded run must not let 7 runs fall into a band
+        self.assertEqual(report.ablation_verdict(7, 7), "incomplete (7 of 8)")
+        self.assertEqual(report.ablation_verdict(0, 0), "incomplete (0 of 8)")
+
+
+class AblationSection(unittest.TestCase):
+    def write(self, d, runs):
+        for r in runs:
+            os.makedirs(os.path.join(d, r["run_id"]))
+            with open(os.path.join(d, r["run_id"], "score.json"), "w") as f:
+                json.dump(r, f)
+        report.main(d)
+        with open(os.path.join(d, "summary.md")) as f:
+            return f.read()
+
+    def base(self):
+        return [rec("a-g-1", "a", "g", 1, solved=True, wall_seconds=200), rec("a-u-1", "a", "u", 1, wall_seconds=50),
+                rec("b-g-1", "b", "g", 1, solved=True), rec("b-u-1", "b", "u", 1, solved=True)]
+
+    def test_no_t_runs_no_section(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = self.write(d, self.base())
+        self.assertNotIn("Ablation", s)
+        self.assertIn("| metric | gated | ungated |", s)
+        self.assertTrue(s.rstrip("\n").splitlines()[-1].startswith("false_done: gated"))  # A/B summary ends as before
+
+    def test_section_restricted_to_t_tasks(self):
+        t_runs = [rec("a-t-%d" % i, "a", "t", i, solved=(i <= 6), wall_seconds=60) for i in range(1, 9)]
+        with tempfile.TemporaryDirectory() as d:
+            s = self.write(d, self.base() + t_runs)
+        self.assertIn("## Ablation: gate without turn-end (t)", s)
+        self.assertIn("Tasks: a", s)
+        self.assertIn("| n (headline) | 1 | 8 | 1 |", s)          # g, t, u over task a only (b excluded)
+        self.assertIn("| solved | 1 | 6 | 0 |", s)
+        self.assertIn("| median wall s | 200 | 60 | 50 |", s)
+        self.assertIn("\nAblation verdict: unclear\n", s)
+        self.assertIn("\nVerdict: ", s)                            # the A/B verdict is still there
+
+    def test_contaminated_t_run_makes_incomplete(self):
+        t_runs = [rec("a-t-%d" % i, "a", "t", i, solved=True) for i in range(1, 9)]
+        t_runs[0]["contaminated"] = True
+        with tempfile.TemporaryDirectory() as d:
+            s = self.write(d, self.base() + t_runs)
+        self.assertIn("\nAblation verdict: incomplete (7 of 8)\n", s)
+
+
 if __name__ == "__main__":
     unittest.main()

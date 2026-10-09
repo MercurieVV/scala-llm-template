@@ -19,6 +19,21 @@ RULE = ("pays off if (g.solve_rate - u.solve_rate >= 0.20 or (u.false_done >= 3 
         "(a timeout is neither solved nor false_done)")
 FALSE_DONE_MIN = 3  # Ruling 21: fewer ungated false_done runs cannot show a halving
 
+ABLATION_RUNS = 8  # gate ablation spec §4: 4 tasks x 2 reps of arm t
+ABLATION_RULE = ("over %d counted runs of arm t (gate without the turn-end Stop hook): solved <= 5 -> turn-end carries the gain; "
+                 "solved = 8 -> the gain comes without turn-end; 6 or 7 -> unclear; fewer than %d counted runs -> incomplete"
+                 % (ABLATION_RUNS, ABLATION_RUNS))
+
+
+def ablation_verdict(solved, n):
+    if n != ABLATION_RUNS:
+        return "incomplete (%d of %d)" % (n, ABLATION_RUNS)
+    if solved <= 5:
+        return "turn-end carries the gain"
+    if solved == ABLATION_RUNS:
+        return "the gain comes without turn-end"
+    return "unclear"
+
 
 def wilson(k, n, z=1.96):
     if n == 0:
@@ -226,6 +241,27 @@ def build_summary(runs, smoke, unreadable):
     out += ["", "Verdict: %s" % verdict, "", "Rule: " + RULE, "",
             "false_done: gated %d/%d, ungated %d/%d; timeouts: gated %d, ungated %d" % (
                 st["g"]["false_done"], st["g"]["n"], st["u"]["false_done"], st["u"]["n"], st["g"]["timeouts"], st["u"]["timeouts"]), ""]
+    t_runs = [r for r in runs if r.get("arm") == "t"]
+    if t_runs:
+        t_tasks = sorted(set(r.get("task") for r in t_runs))
+        on = {a: [r for r in runs if r.get("arm") == a and r.get("task") in t_tasks] for a in ("g", "t", "u")}
+        ab = {a: arm_stats(on[a]) for a in on}
+        out += ["## Ablation: gate without turn-end (t)", "", "Tasks: " + ", ".join(t_tasks), "",
+                "| metric | gated | no turn-end | ungated |", "|---|---|---|---|"]
+
+        def arow(label, f):
+            out.append("| %s | %s | %s | %s |" % (label, f(ab["g"]), f(ab["t"]), f(ab["u"])))
+        arow("n (headline)", lambda s: s["n"])
+        arow("solved", lambda s: s["solved"])
+        arow("solve rate [Wilson 95%]", lambda s: "%.2f [%.2f, %.2f]" % ((s["solve_rate"],) + s["ci"]))
+        arow("false_done", lambda s: s["false_done"])
+        arow("timeouts (counted, unsolved)", lambda s: s["timeouts"])
+        arow("contaminated (excluded)", lambda s: s["contaminated"])
+        arow("error (excluded)", lambda s: s["errors"])
+        arow("median wall s", lambda s: fmt(s["median_wall"], 0))
+        arow("median cost USD", lambda s: fmt(s["median_cost"], 2))
+        out += ["", "Ablation verdict: %s" % ablation_verdict(ab["t"]["solved"], ab["t"]["n"]), "",
+                "Ablation rule: " + ABLATION_RULE, ""]
     return "\n".join(out)
 
 
