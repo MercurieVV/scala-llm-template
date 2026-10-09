@@ -179,3 +179,24 @@ the guard blocked one text Edit and one Bash on a .scala path. Holdout passed, n
 
 The first smoke (before the fix: 195 s / 60 s, both solved) ran with the operator's user plugins, hooks and MCP servers
 in both arms and the semantic guard down; its numbers are superseded.
+
+## Gate ablation (arm t)
+
+Arm `t` is the gated arm without the turn-end Stop hook: `run.sh` copies the campaign's gated snapshot and deletes
+`hooks.Stop` (it dies if the snapshot has none); every other hook, the sandbox and `out-agent` stay. Spec:
+`docs/superpowers/specs/2026-10-08-gate-ablation-turn-end-design.md` in scala-coding-guidelines.
+
+```sh
+GA_ARMS=t GA_REPS="1 2" GA_TASKS="backpressure mcu mixer-modes scope-view" sh eval/gate-ab/campaign.sh
+python3 eval/gate-ab/report.py ~/gate-eval/runs
+```
+
+`campaign.sh` reads `GA_ARMS` (default `g u`, each `g`, `u` or `t`) and `GA_TASKS` (default all eight tasks).
+`summary.md` gets an "Ablation" section comparing g, t and u on the tasks `t` ran, with the pre-registered verdict:
+over 8 counted `t` runs, solved ≤ 5 → "turn-end carries the gain"; 8 → "the gain comes without turn-end"; 6 or 7 →
+"unclear"; fewer than 8 counted → "incomplete".
+
+The verdict is printed twice: strict (contaminated runs excluded) and audited. For the audited one, list the ids of runs
+whose contamination flag you reviewed and found to be a false positive, one per line, in `<runs-root>/audit-cleared.txt`
+(`#` comments and blank lines ignored). A listed run counts if it has no `error`; errors are never cleared. Without the
+file, only the strict verdict is shown.

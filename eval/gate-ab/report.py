@@ -19,6 +19,21 @@ RULE = ("pays off if (g.solve_rate - u.solve_rate >= 0.20 or (u.false_done >= 3 
         "(a timeout is neither solved nor false_done)")
 FALSE_DONE_MIN = 3  # Ruling 21: fewer ungated false_done runs cannot show a halving
 
+ABLATION_RUNS = 8  # gate ablation spec §4: 4 tasks x 2 reps of arm t
+ABLATION_RULE = ("over %d counted runs of arm t (gate without the turn-end Stop hook): solved <= 5 -> turn-end carries the gain; "
+                 "solved = 8 -> the gain comes without turn-end; 6 or 7 -> unclear; fewer than %d counted runs -> incomplete"
+                 % (ABLATION_RUNS, ABLATION_RUNS))
+
+
+def ablation_verdict(solved, n):
+    if n != ABLATION_RUNS:
+        return "incomplete (%d of %d)" % (n, ABLATION_RUNS)
+    if solved <= 5:
+        return "turn-end carries the gain"
+    if solved == ABLATION_RUNS:
+        return "the gain comes without turn-end"
+    return "unclear"
+
 
 def wilson(k, n, z=1.96):
     if n == 0:
@@ -97,8 +112,18 @@ def gate_total(r):
     return sum((r.get("gate_blocks") or {}).values())
 
 
-def arm_stats(rs):
-    c = [r for r in rs if counted(r)]
+def load_audit_cleared(root):
+    """<root>/audit-cleared.txt -> set of run ids, or None when the file does not exist."""
+    try:
+        with open(os.path.join(root, "audit-cleared.txt")) as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        return None
+    return set(l.strip() for l in lines if l.strip() and not l.strip().startswith("#"))
+
+
+def arm_stats(rs, is_counted=counted):
+    c = [r for r in rs if is_counted(r)]
     n = len(c)
     solved = sum(1 for r in c if r.get("solved"))
     return dict(
@@ -139,7 +164,7 @@ def write_csv(runs, path):
             w.writerow(row)
 
 
-def build_summary(runs, smoke, unreadable):
+def build_summary(runs, smoke, unreadable, audit_cleared=None):
     arms = {a: [r for r in runs if r.get("arm") == a] for a in ("g", "u")}
     st = {a: arm_stats(arms[a]) for a in arms}
     out = ["# Gate A/B results", ""]
@@ -226,6 +251,42 @@ def build_summary(runs, smoke, unreadable):
     out += ["", "Verdict: %s" % verdict, "", "Rule: " + RULE, "",
             "false_done: gated %d/%d, ungated %d/%d; timeouts: gated %d, ungated %d" % (
                 st["g"]["false_done"], st["g"]["n"], st["u"]["false_done"], st["u"]["n"], st["g"]["timeouts"], st["u"]["timeouts"]), ""]
+    t_runs = [r for r in runs if r.get("arm") == "t"]
+    if t_runs:
+        t_tasks = sorted(set(r.get("task") for r in t_runs))
+        t_reps = set(r.get("rep") for r in t_runs)
+        on = {a: [r for r in runs if r.get("arm") == a and r.get("task") in t_tasks and r.get("rep") in t_reps] for a in ("g", "t", "u")}
+        out += ["## Ablation: gate without turn-end (t)", "", "Tasks: " + ", ".join(t_tasks), ""]
+
+        def table(is_counted):
+            ab = {a: arm_stats(on[a], is_counted) for a in on}
+            out.extend(["| metric | gated | no turn-end | ungated |", "|---|---|---|---|"])
+
+            def arow(label, f):
+                out.append("| %s | %s | %s | %s |" % (label, f(ab["g"]), f(ab["t"]), f(ab["u"])))
+            arow("n (headline)", lambda s: s["n"])
+            arow("solved", lambda s: s["solved"])
+            arow("solve rate [Wilson 95%]", lambda s: "%.2f [%.2f, %.2f]" % ((s["solve_rate"],) + s["ci"]))
+            arow("false_done", lambda s: s["false_done"])
+            arow("timeouts (counted, unsolved)", lambda s: s["timeouts"])
+            arow("contaminated (excluded)", lambda s: s["contaminated"])
+            arow("error (excluded)", lambda s: s["errors"])
+            arow("median wall s", lambda s: fmt(s["median_wall"], 0))
+            arow("median cost USD", lambda s: fmt(s["median_cost"], 2))
+            return ablation_verdict(ab["t"]["solved"], ab["t"]["n"])
+
+        out += ["Strict (contamination flags excluded):", ""]
+        v = table(counted)
+        out += ["", "Ablation verdict (strict): %s" % v, ""]
+        if audit_cleared is None:
+            out += ["Audited: no audit-cleared.txt; the strict verdict stands.", ""]
+        else:
+            cleared = sorted(r.get("run_id") for r in on["t"] + on["g"] + on["u"]
+                             if r.get("run_id") in audit_cleared and r.get("contaminated"))
+            out += ["Audited (cleared: %s):" % (", ".join(cleared) or "none"), ""]
+            va = table(lambda r: r.get("error") is None and (not r.get("contaminated") or r.get("run_id") in audit_cleared))
+            out += ["", "Ablation verdict (audited): %s" % va, ""]
+        out += ["Ablation rule: " + ABLATION_RULE, ""]
     return "\n".join(out)
 
 
@@ -233,7 +294,7 @@ def main(root):
     runs, smoke, unreadable = load_runs(root)
     write_csv(runs, os.path.join(root, "results.csv"))
     with open(os.path.join(root, "summary.md"), "w") as f:
-        f.write(build_summary(runs, smoke, unreadable))
+        f.write(build_summary(runs, smoke, unreadable, load_audit_cleared(root)))
 
 
 if __name__ == "__main__":

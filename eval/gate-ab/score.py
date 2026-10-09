@@ -131,10 +131,14 @@ def parse_transcript(lines):
     return out
 
 
+def is_turn_end_text(text):
+    return text.startswith("Stop hook feedback") or ("turn-end" in text and "BLOCKED" in text)
+
+
 def env_leaks(t, arm):
     """Ruling 20: what of the operator's own Claude config reached the agent, from the transcript's init event.
     Allowed: MCP servers exactly {scala-semantic}; plugins only Claude Code's built-ins (path "builtin": present with any
-    setting source, identical in both arms); hook events only in the gated arm. -> list of leak descriptions."""
+    setting source, identical in both arms); hook events only in the gated arms (g, and t: the gate without Stop). -> list of leak descriptions."""
     init = t.get("init")
     if init is None:
         return ["no init event"] if t.get("has_result") else []
@@ -145,8 +149,10 @@ def env_leaks(t, arm):
     plugins = [str(p.get("name")) for p in init.get("plugins") or [] if isinstance(p, dict) and p.get("path") != "builtin"]
     if plugins:
         leaks.append("plugins=" + ",".join(plugins))
-    if arm != "g" and t.get("hook_events"):
+    if arm not in ("g", "t") and t.get("hook_events"):
         leaks.append("hooks=" + ",".join(dict.fromkeys(t["hook_events"])))
+    if arm == "t" and any(is_turn_end_text(x) for x in t.get("hook_texts") or []):
+        leaks.append("turn-end in arm t")  # arm t must run without the Stop hook
     return leaks
 
 
@@ -174,7 +180,7 @@ def gate_blocks(tool_calls, hook_texts):
         if "SEALED PATH" in c["result_text"]:
             bump("semantic-guard-sealed")
     for t in hook_texts:
-        if t.startswith("Stop hook feedback") or ("turn-end" in t and "BLOCKED" in t):
+        if is_turn_end_text(t):
             bump("turn-end")
     return counts
 
