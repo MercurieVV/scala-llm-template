@@ -85,6 +85,60 @@ grep -q '???' "$tmp/root/base/t1/tree/m/src/A.scala" && ok "prepare applies stub
 [ ! -e "$tmp/root/cache" ] && ok "prepare never creates cache" || bad "prepare never creates cache"
 rm -rf "$tmp"
 
+# --- prepare.sh: authored hidden spec (HIDDEN_SPEC_SRC) and gate-visible validation
+tmp=$(mktemp -d)
+fake=$tmp/skreeep2; mkdir -p "$fake/m/src" "$fake/d/src" "$tmp/home/tasks/t2/stub/m/src" "$tmp/home/tasks/t2/hidden/m/test/src" "$tmp/root/head" "$tmp/hsrc"
+# fake mill: compile ok; on head everything passes; elsewhere m.test fails iff the hidden spec is present,
+# d.test (downstream) fails iff A.scala is cut (unless NO_DOWN), holdout.test fails iff FAIL_HOLDOUT is set.
+cat >"$fake/mill" <<'MILL'
+#!/bin/sh
+case $PWD in */head|*/head-validate) exit 0 ;; esac
+rc=0
+for a; do case $a in
+  __.compile) ;;
+  m.test) [ -f m/test/src/ASpec.scala ] && rc=1 ;;
+  d.test) [ -z "${NO_DOWN:-}" ] && grep -q '???' m/src/A.scala && rc=1 ;;
+  holdout.test) [ -n "${FAIL_HOLDOUT:-}" ] && rc=1 ;;
+esac; done
+exit $rc
+MILL
+chmod +x "$fake/mill"; cp "$fake/mill" "$tmp/root/head/mill"
+echo 'object A { def f = 1 }' >"$fake/m/src/A.scala"; echo 'object D' >"$fake/d/src/D.scala"
+( cd "$fake" && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm init )
+head=$(git -C "$fake" rev-parse HEAD)
+( cd "$tmp/hsrc" && echo x >x && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm h )
+hhead=$(git -C "$tmp/hsrc" rev-parse HEAD)
+printf '{"modules": {"m.test": true, "d.test": true}}\n' >"$tmp/root/head-baseline.json"
+printf "TASK_MODULE='m.test'\nHIDDEN_SPEC='m/test/src/ASpec.scala'\nHIDDEN_SPEC_SRC='hidden/m/test/src/ASpec.scala'\nGATE_VISIBLE=1\nCUT_FILES='m/src/A.scala'\nFEATURE='f'\n" >"$tmp/home/tasks/t2/task.env"
+echo 'object A { def f = ??? }' >"$tmp/home/tasks/t2/stub/m/src/A.scala"
+echo 'class ASpec' >"$tmp/home/tasks/t2/hidden/m/test/src/ASpec.scala"
+cp "$ga/lib.sh" "$ga/timeout.py" "$ga/prepare.sh" "$tmp/home/" 2>/dev/null
+penv() { GA_HOME=$tmp/home GA_ROOT=$tmp/root GA_SKREEEP2=$fake GA_COMMIT=${PC:-$head} GA_HOLDOUT_SRC=$tmp/hsrc GA_HOLDOUT_COMMIT=$hhead "$@"; }
+penv $SH "$tmp/home/prepare.sh" t2 >/dev/null 2>&1
+check "prepare authored exit 0" "$?" "0"
+check "prepare authored validation" "$(cat "$tmp/root/base/t2/validation.txt" 2>/dev/null | tr '\n' ' ')" "cut_compiles=yes hidden_fails_on_cut=yes hidden_passes_on_head=yes gate_visible_on_cut=yes "
+[ -f "$tmp/root/base/t2/hidden/m/test/src/ASpec.scala" ] && [ ! -e "$tmp/root/base/t2/tree/m/test/src/ASpec.scala" ] && ok "prepare authored spec hidden" || bad "prepare authored spec hidden"
+[ ! -e "$tmp/root/head/m/test/src/ASpec.scala" ] && ok "prepare leaves head untouched" || bad "prepare leaves head untouched"
+# downstream does not see the cut, holdout passes -> not gate-visible -> exit 1, 4th line no
+NO_DOWN=1 penv $SH "$tmp/home/prepare.sh" t2 >/dev/null 2>&1; rc=$?
+[ "$rc" != 0 ] && ok "prepare not gate-visible fails" || bad "prepare not gate-visible fails"
+check "prepare not gate-visible line" "$(sed -n 4p "$tmp/root/base/t2/validation.txt" 2>/dev/null)" "gate_visible_on_cut=no"
+# holdout failing alone is enough
+NO_DOWN=1 FAIL_HOLDOUT=1 penv $SH "$tmp/home/prepare.sh" t2 >/dev/null 2>&1
+check "prepare holdout-visible exit 0" "$?" "0"
+# missing authored spec -> die
+rm "$tmp/home/tasks/t2/hidden/m/test/src/ASpec.scala"
+penv $SH "$tmp/home/prepare.sh" t2 >"$tmp/out" 2>&1; rc=$?
+[ "$rc" != 0 ] && grep -q 'hidden/m/test/src/ASpec.scala' "$tmp/out" && ok "prepare missing authored spec dies" || bad "prepare missing authored spec dies"
+[ ! -f "$tmp/root/base/t2/validation.txt" ] && ok "prepare missing spec leaves no validation" || bad "prepare missing spec leaves no validation"
+# authored spec would shadow a real one -> die
+echo 'class ASpec' >"$tmp/home/tasks/t2/hidden/m/test/src/ASpec.scala"
+mkdir -p "$fake/m/test/src"; echo 'class ASpec' >"$fake/m/test/src/ASpec.scala"
+( cd "$fake" && git add -A && git -c user.name=t -c user.email=t@t commit -qm real )
+PC=$(git -C "$fake" rev-parse HEAD) penv $SH "$tmp/home/prepare.sh" t2 >"$tmp/out" 2>&1; rc=$?
+[ "$rc" != 0 ] && grep -q 'already in the tree' "$tmp/out" && ok "prepare authored shadow dies" || bad "prepare authored shadow dies"
+rm -rf "$tmp"
+
 # --- run.sh against fakes
 tmp=$(mktemp -d)
 mkdir -p "$tmp/home/tasks/t1" "$tmp/root/base/t1/tree/.dsh" "$tmp/skr/.claude" "$tmp/hsrc"
@@ -314,7 +368,11 @@ cenv GA_REPS=2 $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
 check "GA_REPS=2: 16 runs" "$(wc -l <"$tmp/calls" | tr -d ' ')" "16"
 check "GA_REPS=2: order" "$(head -3 "$tmp/calls" | tr '\n' ' ')" "noise-g-2 noise-u-2 mixer-modes-g-2 "
 rm -f "$tmp/calls"; rm -rf "$tmp/root/runs"
-cenv GA_REPS="2 4" $SH "$tmp/home/campaign.sh" >/dev/null 2>&1 && bad "GA_REPS invalid rep dies" || ok "GA_REPS invalid rep dies"
+rm -f "$tmp/calls"; rm -rf "$tmp/root/runs"
+cenv GA_REPS=4 $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
+check "GA_REPS=4: 16 runs" "$(wc -l <"$tmp/calls" | tr -d ' ')" "16"
+rm -f "$tmp/calls"; rm -rf "$tmp/root/runs"
+cenv GA_REPS="2 5" $SH "$tmp/home/campaign.sh" >/dev/null 2>&1 && bad "GA_REPS invalid rep dies" || ok "GA_REPS invalid rep dies"
 [ -s "$tmp/calls" ] && bad "GA_REPS invalid: no runs" || ok "GA_REPS invalid: no runs"
 # gate ablation: GA_ARMS and GA_TASKS
 rm -f "$tmp/calls"; rm -rf "$tmp/root/runs"
@@ -336,10 +394,12 @@ check "campaign smoke" "$(tr '\n' ' ' <"$tmp/calls")" "midi-synth-g-9 midi-synth
 rm -f "$tmp/calls" "$tmp/preps" "$tmp/bases"; rm -rf "$tmp/root/runs" "$tmp/root/head-baseline.json"; mkdir -p "$tmp/root/runs"
 rm -rf "$tmp/root/base/mcu"
 printf 'cut_compiles=yes\nhidden_fails_on_cut=no\nhidden_passes_on_head=yes\n' >"$tmp/root/base/noise/validation.txt"
+printf 'cut_compiles=yes\nhidden_fails_on_cut=yes\nhidden_passes_on_head=yes\ngate_visible_on_cut=yes\n' >"$tmp/root/base/modes/validation.txt"
+printf 'cut_compiles=yes\nhidden_fails_on_cut=yes\nhidden_passes_on_head=yes\ngate_visible_on_cut=no\n' >"$tmp/root/base/note-ring/validation.txt"
 chmod 000 "$tmp/root/base"
 cenv $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
 check "preflight unlocked base" "$(ls "$tmp/root/base" >/dev/null 2>&1; echo $?)" "0"
-check "preflight prepares missing and failed only" "$(sort "$tmp/preps" | tr '\n' ' ')" "mcu noise "
+check "preflight prepares missing and failed only" "$(sort "$tmp/preps" | tr '\n' ' ')" "mcu noise note-ring "
 check "preflight baseline once" "$(wc -l <"$tmp/bases" | tr -d ' ')" "1"
 check "preflight then runs all" "$(wc -l <"$tmp/calls" | tr -d ' ')" "48"
 # smoke preflight touches midi-synth only

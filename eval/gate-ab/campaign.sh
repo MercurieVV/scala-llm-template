@@ -34,10 +34,10 @@ one() {
   printf '%s %s exit=%s solved=%s%s\n' "$(date '+%F %T')" "$id" "$rc" "$s" "$note" >> "$GA_ROOT/campaign.log"
 }
 mkdir -p "$GA_ROOT/runs"
-# Ruling 27: GA_REPS, a space-separated rep list (default "1 2 3"), each 1..3.
+# Ruling 27: GA_REPS, a space-separated rep list (default "1 2 3"), each 1..4 (4: room for a test phase's fresh reps).
 reps=${GA_REPS:-1 2 3}
 [ -n "$(echo $reps)" ] || ga_die "GA_REPS is empty"
-for r in $reps; do case $r in 1|2|3) ;; *) ga_die "GA_REPS: invalid rep '$r' (want 1, 2 or 3)" ;; esac; done
+for r in $reps; do case $r in 1|2|3|4) ;; *) ga_die "GA_REPS: invalid rep '$r' (want 1..4)" ;; esac; done
 # Gate ablation: GA_ARMS (default "g u", each g, u or t) and GA_TASKS (default all 8, each a known task).
 arms=${GA_ARMS:-g u}
 [ -n "$(echo $arms)" ] || ga_die "GA_ARMS is empty"
@@ -58,7 +58,9 @@ if [ ! -f "$snap" ]; then
 fi
 for task in $tasks; do
   v=$GA_ROOT/base/$task/validation.txt
-  if [ "$(grep -c '=yes$' "$v" 2>/dev/null)" != 3 ] || [ "$(wc -l < "$v" | tr -d ' ')" != 3 ]; then
+  # 3 lines, or 4 for a GATE_VISIBLE task (gate_visible_on_cut); every line must be yes.
+  n=$(wc -l < "$v" 2>/dev/null | tr -d ' ')
+  if [ "$(grep -c '=yes$' "$v" 2>/dev/null)" != "$n" ] || { [ "$n" != 3 ] && [ "$n" != 4 ]; }; then
     echo "prepare $task"
     $prep "$task" || ga_die "prepare $task failed (see $GA_ROOT/base/$task)"
   fi
