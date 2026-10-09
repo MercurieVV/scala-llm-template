@@ -154,6 +154,12 @@ class EnvLeak(unittest.TestCase):
         hook = json.dumps({"type": "system", "subtype": "hook_started", "hook_name": "PreToolUse:Bash", "hook_event": "PreToolUse"})
         t = score.parse_transcript(lines("real-init-isolated.jsonl") + [hook])
         self.assertEqual(score.env_leaks(t, "g"), []); self.assertEqual(score.env_leaks(t, "u"), ["hooks=PreToolUse:Bash"])
+    def test_arm_t_hooks_are_not_a_leak(self):
+        # gate ablation: arm t runs the gate's hooks (minus Stop), so its hook events are expected
+        hook = json.dumps({"type": "system", "subtype": "hook_started", "hook_name": "PreToolUse:Bash", "hook_event": "PreToolUse"})
+        t = score.parse_transcript(lines("real-init-isolated.jsonl") + [hook])
+        self.assertEqual(score.env_leaks(t, "t"), [])
+        self.assertEqual(score.env_leaks(t, "u"), ["hooks=PreToolUse:Bash"])
     def test_missing_init_with_result(self):
         t = score.parse_transcript(lines("clean.jsonl"))
         self.assertEqual(score.env_leaks(t, "u"), ["no init event"])

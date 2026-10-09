@@ -1,8 +1,8 @@
 #!/bin/sh
-# One evaluation run: run.sh <task> <g|u> <rep>. Builds the run dir from the task's base tree, runs the agent, collects artefacts.
+# One evaluation run: run.sh <task> <g|u|t> <rep>. Builds the run dir from the task's base tree, runs the agent, collects artefacts.
 set -u
 GA_LIB_PATH=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/lib.sh; . "$GA_LIB_PATH"
-[ $# -eq 3 ] || ga_die "usage: run.sh <task> <g|u> <rep>"
+[ $# -eq 3 ] || ga_die "usage: run.sh <task> <g|u|t> <rep>"
 task=$1; arm=$2; rep=$3; id=$(ga_run_id "$task" "$arm" "$rep") || exit 1
 ga_task_env "$task"
 base=$GA_ROOT/base/$task
@@ -16,7 +16,7 @@ cat > "$rd/repo/.mcp.json" <<'MCP'
 { "mcpServers": { "scala-semantic": { "command": "/Users/viktorskalinins/.local/bin/scalasemantic-mcp", "args": ["serve", "."] } } }
 MCP
 gsha=null
-if [ "$arm" = g ]; then
+if [ "$arm" != u ]; then
   # Ruling 22: the campaign's snapshot of skreeep2's settings (campaign.sh writes it once), never the live file
   snap=$GA_ROOT/gated-settings.json
   [ -f "$snap" ] || ga_die "no gated settings snapshot $snap (campaign.sh writes it)"
@@ -26,6 +26,13 @@ if [ "$arm" = g ]; then
   git -C "$GA_HOLDOUT_SRC" archive "$GA_HOLDOUT_COMMIT" | { mkdir -p "$rd/holdout" && tar -x -C "$rd/holdout"; } || ga_die "holdout export"
   hd=$(CDPATH= cd -- "$rd/holdout" && pwd -P)
   sed "s|$GA_HOLDOUT_SRC|$hd|g" "$snap" > "$rd/repo/.claude/settings.json"
+  if [ "$arm" = t ]; then
+    # gate ablation: arm t is the gated arm without the turn-end Stop hook; no Stop hook means t would equal g
+    python3 -c 'import json,sys
+p=sys.argv[1]; s=json.load(open(p)); h=s.get("hooks")
+if not isinstance(h, dict) or "Stop" not in h: sys.exit("no hooks.Stop in the gated snapshot")
+del h["Stop"]; json.dump(s, open(p, "w"), indent=2)' "$rd/repo/.claude/settings.json" || ga_die "arm t: cannot remove the Stop hook"
+  fi
   sed -i.bak "s|^holdoutDir *=.*|holdoutDir = $hd|" "$rd/repo/.dsh/contract" && rm -f "$rd/repo/.dsh/contract.bak"
   grep -qx "holdoutDir = $hd" "$rd/repo/.dsh/contract" || ga_die "contract rewrite failed (no holdoutDir line?)"
   ! grep -qF "$GA_HOLDOUT_SRC" "$rd/repo/.claude/settings.json" || ga_die "settings still mention $GA_HOLDOUT_SRC"
@@ -37,7 +44,7 @@ cp "$rd/repo/.claude/settings.json" "$rd/settings.json"
 # Ruling 19: compile the run's own tree into the arm's out dir before the agent starts (outside wall time, before
 # locking): classes, test classes, the SemanticDB index the gate's semantic guard and the scala-semantic MCP read, and
 # .scala-semantic/classpath-mill.json for the MCP's presentation compiler. Nothing is copied (Ruling 8).
-[ "$arm" = g ] && pout=out-agent || pout=out
+[ "$arm" = u ] && pout=out || pout=out-agent
 pc=${GA_PRECOMPILE:-__.compile + __.test.compile + __.semanticDbData + scalaSemanticWriteClasspath}
 p0=$(date +%s)
 # shellcheck disable=SC2086

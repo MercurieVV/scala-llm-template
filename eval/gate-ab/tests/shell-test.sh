@@ -14,6 +14,8 @@ out=$($SH -c ". '$ga/lib.sh'; ga_run_id noise g 1")
 check "run id" "$out" "noise-g-1"
 $SH -c ". '$ga/lib.sh'; ga_run_id noise x 1" >/dev/null 2>&1; check "run id rejects arm x" "$?" "1"
 $SH -c ". '$ga/lib.sh'; ga_run_id noise g 0" >/dev/null 2>&1; check "run id rejects rep 0" "$?" "1"
+out=$($SH -c ". '$ga/lib.sh'; ga_run_id noise t 1")
+check "run id arm t" "$out" "noise-t-1"
 out=$($SH -c "GA_ROOT=/tmp/x; . '$ga/lib.sh'; echo \$GA_ROOT")
 check "GA_ROOT override" "$out" "/tmp/x"
 out=$($SH -c ". '$ga/lib.sh'; echo \$GA_TASKS" | wc -w | tr -d ' ')
@@ -171,6 +173,32 @@ grep -q '"timed_out":true' "$rd/t1-u-2/run.json" && ok "run timeout recorded" ||
 [ -f "$rd/t1-u-2/final.diff" ] && [ -f "$rd/t1-u-2/final-tree.tar.gz" ] && ok "run timeout keeps artefacts" || bad "run timeout keeps artefacts"
 readable=yes; for p in $probe; do ls "$p" >/dev/null 2>&1 || readable=no; done
 check "isolation restored after timeout" "$readable" "yes"
+# Arm t: the gated snapshot without the Stop hook (gate ablation spec §3)
+cp "$tmp/root/gated-settings.json" "$tmp/snap.keep"; cp "$tmp/root/gated-settings.json.sha256" "$tmp/snap.keep.sha256"
+cat >"$tmp/root/gated-settings.json" <<EOF
+{"sandbox":{"denyRead":"$tmp/hsrc/bin/check","denyWrite":"$tmp/hsrc"},"env":{"MILL_OUTPUT_DIR":"out-agent"},
+ "hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"tool-policy"}]}],
+          "Stop":[{"hooks":[{"type":"command","command":"turn-end"}]}]}}
+EOF
+python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$tmp/root/gated-settings.json" >"$tmp/root/gated-settings.json.sha256"
+n0=$(grep -c '^out-agent --no-daemon ' "$tmp/mill.log")
+runenv FAKE_ARGS=$tmp/args-tt.txt FAKE_PROBE="$probe" FAKE_PROBED=$tmp/probed-tt.txt FAKE_LS=$tmp/ls-tt.txt $SH "$tmp/home/run.sh" t1 t 1 >/dev/null 2>&1; check "run t exit 0" "$?" "0"
+python3 -c 'import json,sys;s=json.load(open(sys.argv[1]));h=s["hooks"];sys.exit(0 if "Stop" not in h and h["PreToolUse"] and s["env"]["MILL_OUTPUT_DIR"]=="out-agent" else 1)' "$rd/t1-t-1/repo/.claude/settings.json" \
+  && ok "run t settings: no Stop, rest kept" || bad "run t settings: no Stop, rest kept" "$(cat "$rd/t1-t-1/repo/.claude/settings.json")"
+hdt=$(CDPATH= cd -- "$rd/t1-t-1/holdout" && pwd -P)
+grep -q "$hdt" "$rd/t1-t-1/repo/.claude/settings.json" && ! grep -q "$tmp/hsrc" "$rd/t1-t-1/repo/.claude/settings.json" && ok "run t holdout paths rewritten" || bad "run t holdout paths rewritten"
+check "run t contract holdoutDir" "$(cat "$rd/t1-t-1/repo/.dsh/contract")" "holdoutDir = $hdt"
+check "run t precompile into out-agent" "$(grep -c '^out-agent --no-daemon ' "$tmp/mill.log")" "$((n0 + 1))"
+grep -q '"arm":"t"' "$rd/t1-t-1/run.json" && grep -q "\"gated_settings_sha256\":\"$(cat "$tmp/root/gated-settings.json.sha256")\"" "$rd/t1-t-1/run.json" \
+  && ok "run t run.json arm and snapshot hash" || bad "run t run.json arm and snapshot hash" "$(cat "$rd/t1-t-1/run.json")"
+cmp -s "$tmp/args-g.txt" "$tmp/args-tt.txt" && ok "agent command line identical in arm t" || bad "agent command line identical in arm t"
+# a snapshot without a Stop hook would make t identical to g: die before the agent starts
+cp "$tmp/snap.keep" "$tmp/root/gated-settings.json"; cp "$tmp/snap.keep.sha256" "$tmp/root/gated-settings.json.sha256"
+rm -f "$tmp/ls-t2.txt"
+runenv FAKE_ARGS=$tmp/args-t2.txt FAKE_PROBE="$probe" FAKE_PROBED=$tmp/probed-t2.txt FAKE_LS=$tmp/ls-t2.txt $SH "$tmp/home/run.sh" t1 t 2 >/dev/null 2>&1 \
+  && bad "run t without Stop hook dies" || ok "run t without Stop hook dies"
+[ ! -e "$tmp/ls-t2.txt" ] && ok "run t without Stop hook: agent not started" || bad "run t without Stop hook: agent not started"
+
 # gated rewrite must verify itself: a contract without holdoutDir aborts before the agent starts
 rm -f "$tmp/ls-bad.txt"
 ( cd "$tmp/root/base/t1/tree" && git checkout -q -b nohd && printf 'other = 1\n' >.dsh/contract && git -c user.name=t -c user.email=t@t commit -qam nohd )

@@ -17,7 +17,7 @@ ga_task_env() {
 }
 
 ga_run_id() {
-  case $2 in g|u) ;; *) ga_die "arm must be g or u, got $2" ;; esac
+  case $2 in g|u|t) ;; *) ga_die "arm must be g, u or t, got $2" ;; esac
   case $3 in [1-9]) ;; *) ga_die "rep must be 1..9, got $3" ;; esac
   printf '%s-%s-%s\n' "$1" "$2" "$3"
 }
