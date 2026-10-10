@@ -1,0 +1,69 @@
+diff --git a/score/src/com/github/mercurievv/skreeep2/score/Notes.scala b/score/src/com/github/mercurievv/skreeep2/score/Notes.scala
+index 888b5a4..f6e4ccd 100644
+--- a/score/src/com/github/mercurievv/skreeep2/score/Notes.scala
++++ b/score/src/com/github/mercurievv/skreeep2/score/Notes.scala
+@@ -5,12 +5,12 @@ import spire.math.ConvertableTo
+ import spire.syntax.field.*
+ 
+ /** Optional vocabulary: note names as frequencies. Equal temperament: one semitone is a factor of 2^(1/12), counted from `f0`. Taken as a *value*,
+-  * not mixed in (`val notes = Notes[V]; import notes.*`), since a tuning is a choice among several (see [[justPitch]]), not a supertype to acquire.
++  * not mixed in (`val notes = Notes[V](440.0); import notes.*`), since a tuning is a choice among several (see [[justPitch]]), not a supertype to acquire.
+   */
+-final class Notes[V](using convert: ConvertableTo[V], field: Field[V]) {
++final class Notes[V](a4: Double)(using convert: ConvertableTo[V], field: Field[V]) {
+ 
+-  /** Reference pitch: A, three octaves below A440. */
+-  lazy val f0: V = convert.fromDouble(440.0 / 8)
++  /** Reference pitch: A, three octaves below `a4` (A440 unless a song chooses another). */
++  lazy val f0: V = convert.fromDouble(a4 / 8)
+ 
+   def pitch(semitonesFromA: Int): V = convert.fromDouble(Math.pow(2.0, semitonesFromA / 12.0)) * f0
+ 
+diff --git a/song/src/com/github/mercurievv/skreeep2/song/Modulated.scala b/song/src/com/github/mercurievv/skreeep2/song/Modulated.scala
+index 77c150c..29f4d80 100644
+--- a/song/src/com/github/mercurievv/skreeep2/song/Modulated.scala
++++ b/song/src/com/github/mercurievv/skreeep2/song/Modulated.scala
+@@ -92,7 +92,7 @@ object Modulated extends SingleTrackOf:
+   def score(a: SignalAlgebra): a.Score[Ctl] =
+     import a.*
+ 
+-    val notes = Notes[V](using convert, field)
++    val notes = Notes[V](440.0)(using convert, field)
+     import notes.*
+ 
+     val twoPi: V = convert.fromDouble(2 * Math.PI)
+diff --git a/song/src/com/github/mercurievv/skreeep2/song/Song.scala b/song/src/com/github/mercurievv/skreeep2/song/Song.scala
+index 50998a3..6ecbc36 100644
+--- a/song/src/com/github/mercurievv/skreeep2/song/Song.scala
++++ b/song/src/com/github/mercurievv/skreeep2/song/Song.scala
+@@ -69,7 +69,7 @@ object Melody extends SingleTrackOf:
+   def score(a: SignalAlgebra): a.Score[Bridged] =
+     import a.*
+ 
+-    val notes = Notes[V](using convert, field)
++    val notes = Notes[V](440.0)(using convert, field)
+     import notes.*
+ 
+     /* Two four-note phrases, chosen per group by `parts`. `IndexedSeq` because slot `i` is also read out of the
+@@ -143,7 +143,7 @@ object Wobble:
+ 
+   def apply(a: SignalAlgebra): a.Score[VoiceParams.Pitch] =
+     import a.*
+-    val notes = Notes[V](using convert, field)
++    val notes = Notes[V](440.0)(using convert, field)
+     import notes.*
+ 
+     val cell = 250.millis
+diff --git a/song/src/com/github/mercurievv/skreeep2/song/TemperamentCompare.scala b/song/src/com/github/mercurievv/skreeep2/song/TemperamentCompare.scala
+index 15d7e6b..b8cde8c 100644
+--- a/song/src/com/github/mercurievv/skreeep2/song/TemperamentCompare.scala
++++ b/song/src/com/github/mercurievv/skreeep2/song/TemperamentCompare.scala
+@@ -15,7 +15,7 @@ object TemperamentCompare extends SingleTrack:
+ 
+   def score(a: SignalAlgebra): a.Score[VoiceParams.Pitch] =
+     import a.*
+-    val notes = Notes[V](using a.convert, a.field)
++    val notes = Notes[V](440.0)(using a.convert, a.field)
+ 
+     /** The phrase, as semitones from A. Kept as offsets, not note names, since it's read twice: through `pitch` (ET) and `justPitch` (JI). A
+       * major-sixth arpeggio — thirds and sixths are where ET drifts most from JI (13-18 cents vs ~2 for a 4th/5th), so overlapping notes beat audibly

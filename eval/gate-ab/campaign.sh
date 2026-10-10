@@ -41,7 +41,7 @@ for r in $reps; do case $r in 1|2|3|4) ;; *) ga_die "GA_REPS: invalid rep '$r' (
 # Gate ablation: GA_ARMS (default "g u", each g, u or t) and GA_TASKS (default all 8, each a known task).
 arms=${GA_ARMS:-g u}
 [ -n "$(echo $arms)" ] || ga_die "GA_ARMS is empty"
-for a in $arms; do case $a in g|u|t) ;; *) ga_die "GA_ARMS: invalid arm '$a' (want g, u or t)" ;; esac; done
+for a in $arms; do case $a in g|u|t|gf|gs) ;; *) ga_die "GA_ARMS: invalid arm '$a' (want g, u, t, gf or gs)" ;; esac; done
 [ -n "$(echo $GA_TASKS)" ] || ga_die "GA_TASKS is empty"
 for t in $GA_TASKS; do case " $GA_ALL_TASKS " in *" $t "*) ;; *) ga_die "GA_TASKS: unknown task '$t'" ;; esac; done
 if [ "${1:-}" = --smoke ]; then tasks=midi-synth; else tasks=$GA_TASKS; fi

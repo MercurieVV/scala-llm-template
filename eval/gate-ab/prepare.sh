@@ -3,7 +3,7 @@
 set -u
 GA_LIB_PATH=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/lib.sh; . "$GA_LIB_PATH"
 [ $# -eq 1 ] || ga_die "usage: prepare.sh <task>"
-task=$1; HIDDEN_SPEC_SRC=; GATE_VISIBLE=; ga_task_env "$task"
+task=$1; HIDDEN_SPEC_SRC=; GATE_VISIBLE=; REFERENCE_PATCH=; ga_task_env "$task"
 base=$GA_ROOT/base/$task
 rm -rf "$base"; mkdir -p "$base/tree" "$base/hidden"
 git -C "$GA_SKREEEP2" archive "$GA_COMMIT" | tar -x -C "$base/tree" || ga_die "git archive failed"
@@ -31,11 +31,28 @@ mkdir -p "$v/$(dirname "$HIDDEN_SPEC")"; cp "$base/hidden/$HIDDEN_SPEC" "$v/$HID
 mill_in 600 "$v" "$TASK_MODULE" >"$base/hidden-on-cut.log" 2>&1 && f=no || f=yes
 h=$GA_ROOT/head
 [ -d "$h" ] || ga_die "no $h — run warm-cache.sh first"
+rp=
 if [ -n "${HIDDEN_SPEC_SRC:-}" ]; then
   # A throwaway copy of HEAD with the authored spec added; HEAD itself stays as exported.
   hv=$base/head-validate; rm -rf "$hv"; cp -R "$h" "$hv"; rm -rf "$hv/out"
+  if [ -n "${REFERENCE_PATCH:-}" ]; then
+    # FR (spec 2026-10-10 §3): "head" is HEAD + the reference solution; the agent's base stays plain HEAD.
+    ga_check_patch "$task" "$hv"
+    git -C "$hv" apply "$GA_HOME/tasks/$task/$REFERENCE_PATCH" || ga_die "apply reference patch"
+  fi
   mkdir -p "$hv/$(dirname "$HIDDEN_SPEC")"; cp "$base/hidden/$HIDDEN_SPEC" "$hv/$HIDDEN_SPEC"
   mill_in 1800 "$hv" "$TASK_MODULE" >"$base/hidden-on-head.log" 2>&1 && p=yes || p=no
+  if [ -n "${REFERENCE_PATCH:-}" ]; then
+    # Spec 2026-10-10 §3: with the reference applied, every existing test module and the holdout pass.
+    mods=$(python3 -c 'import json,sys;print(" + ".join(sorted(json.load(open(sys.argv[1]))["modules"])))' "$GA_ROOT/head-baseline.json") || ga_die "read $GA_ROOT/head-baseline.json"
+    ho=$base/holdout-ref; rm -rf "$ho"; mkdir -p "$ho"
+    git -C "$GA_HOLDOUT_SRC" archive "$GA_HOLDOUT_COMMIT" | tar -x -C "$ho" || ga_die "holdout export"
+    hod=$(CDPATH= cd -- "$ho" && pwd -P)
+    # shellcheck disable=SC2086
+    mill_in 1800 "$hv" -k $mods >"$base/reference-all.log" 2>&1 &&
+      ( export DSH_HOLDOUT_DIR="$hod"; mill_in 600 "$hv" holdout.test ) >>"$base/reference-all.log" 2>&1 && rp=yes || rp=no
+    rm -rf "$ho"
+  fi
   rm -rf "$hv"
 else
   mill_in 600 "$h" "$TASK_MODULE" >"$base/hidden-on-head.log" 2>&1 && p=yes || p=no
@@ -65,5 +82,6 @@ fi
 rm -rf "$v"
 printf 'cut_compiles=%s\nhidden_fails_on_cut=%s\nhidden_passes_on_head=%s\n' "$c" "$f" "$p" > "$base/validation.txt"
 [ -z "$g" ] || printf 'gate_visible_on_cut=%s\n' "$g" >> "$base/validation.txt"
+[ -z "$rp" ] || printf 'reference_passes_all=%s\n' "$rp" >> "$base/validation.txt"
 cat "$base/validation.txt"
-[ "$c$f$p" = yesyesyes ] && [ "${g:-yes}" = yes ]
+[ "$c$f$p" = yesyesyes ] && [ "${g:-yes}" = yes ] && [ "${rp:-yes}" = yes ]

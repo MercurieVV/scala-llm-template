@@ -1,0 +1,1 @@
+Show which mode is current on the desk. Modes.switching lights the mode keys: its enter output also contains Feedback.Led(Button.ModeKey(i), i == current) for every mode index i. Switching modes repaints those lamps too. Modes.single and everything else keep behaving as today. Stop when you are done.

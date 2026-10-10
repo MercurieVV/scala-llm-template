@@ -1,0 +1,16 @@
+diff --git a/control/src/com/github/mercurievv/skreeep2/control/Modes.scala b/control/src/com/github/mercurievv/skreeep2/control/Modes.scala
+index fd6ad40..15186af 100644
+--- a/control/src/com/github/mercurievv/skreeep2/control/Modes.scala
++++ b/control/src/com/github/mercurievv/skreeep2/control/Modes.scala
+@@ -20,8 +20,10 @@ object Modes:
+ 
+       val initial: Switching = Switching(0, modes.map(m => Held(m)(m.initial)))
+ 
++      /** The current mode's repaint, then one lamp per mode key: lit for the current mode, dark for the rest. */
+       def enter(state: Switching): List[Feedback] =
+-        state.held.lift(state.current).toList.flatMap(h => h.mode.enter(h.state))
++        state.held.lift(state.current).toList.flatMap(h => h.mode.enter(h.state)) ++
++          modes.indices.toList.map(i => Feedback.Led(Button.ModeKey(i), i == state.current))
+ 
+       def step(state: Switching, control: Control): (Switching, List[Command], List[Feedback]) =
+         control match

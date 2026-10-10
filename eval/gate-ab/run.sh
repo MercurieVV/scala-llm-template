@@ -1,8 +1,8 @@
 #!/bin/sh
-# One evaluation run: run.sh <task> <g|u|t> <rep>. Builds the run dir from the task's base tree, runs the agent, collects artefacts.
+# One evaluation run: run.sh <task> <g|u|t|gf|gs> <rep>. Builds the run dir from the task's base tree, runs the agent, collects artefacts.
 set -u
 GA_LIB_PATH=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/lib.sh; . "$GA_LIB_PATH"
-[ $# -eq 3 ] || ga_die "usage: run.sh <task> <g|u|t> <rep>"
+[ $# -eq 3 ] || ga_die "usage: run.sh <task> <g|u|t|gf|gs> <rep>"
 task=$1; arm=$2; rep=$3; id=$(ga_run_id "$task" "$arm" "$rep") || exit 1
 ga_task_env "$task"
 base=$GA_ROOT/base/$task
@@ -33,6 +33,7 @@ p=sys.argv[1]; s=json.load(open(p)); h=s.get("hooks")
 if not isinstance(h, dict) or "Stop" not in h: sys.exit("no hooks.Stop in the gated snapshot")
 del h["Stop"]; json.dump(s, open(p, "w"), indent=2)' "$rd/repo/.claude/settings.json" || ga_die "arm t: cannot remove the Stop hook"
   fi
+  case $arm in gf) ga_install_engine "$rd/repo" full ;; gs) ga_install_engine "$rd/repo" safety ;; esac
   sed -i.bak "s|^holdoutDir *=.*|holdoutDir = $hd|" "$rd/repo/.dsh/contract" && rm -f "$rd/repo/.dsh/contract.bak"
   grep -qx "holdoutDir = $hd" "$rd/repo/.dsh/contract" || ga_die "contract rewrite failed (no holdoutDir line?)"
   ! grep -qF "$GA_HOLDOUT_SRC" "$rd/repo/.claude/settings.json" || ga_die "settings still mention $GA_HOLDOUT_SRC"

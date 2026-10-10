@@ -203,5 +203,13 @@ class AblationSection(unittest.TestCase):
         self.assertIn("| solved | 1 | 2 | 0 |", s)
 
 
+class UnknownArmTest(unittest.TestCase):
+    def test_feature_study_arms_are_refused_not_bucketed_silently(self):
+        # review Important 3: gf/gs runs would land in no bucket and read as "inconclusive"
+        runs = [{"run_id": "fr-pan-gf-3", "arm": "gf", "task": "fr-pan", "rep": 3}]
+        with self.assertRaises(ValueError) as e:
+            report.build_summary(runs, [], [])
+        self.assertIn("gf", str(e.exception))
+
 if __name__ == "__main__":
     unittest.main()

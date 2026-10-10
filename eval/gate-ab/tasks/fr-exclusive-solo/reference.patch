@@ -1,0 +1,41 @@
+diff --git a/control/src/com/github/mercurievv/skreeep2/control/MixerMode.scala b/control/src/com/github/mercurievv/skreeep2/control/MixerMode.scala
+index bdeeb19..610ed41 100644
+--- a/control/src/com/github/mercurievv/skreeep2/control/MixerMode.scala
++++ b/control/src/com/github/mercurievv/skreeep2/control/MixerMode.scala
+@@ -8,7 +8,11 @@ package com.github.mercurievv.skreeep2.control
+   * Commands are the **difference between two level maps**, not the control that arrived — what makes solo expressible at all: pressing one strip's
+   * solo changes every other instrument's level, which "what I was just told" could not say.
+   */
+-final class MixerMode(strips: Vector[String], perBank: Int) extends Mode:
++final class MixerMode(strips: Vector[String], perBank: Int, exclusiveSolo: Boolean) extends Mode:
++
++  /** Today's mixer: solos add up. */
++  def this(strips: Vector[String], perBank: Int) = this(strips, perBank, false)
++
+   import MixerMode.*
+ 
+   type State = Mixer
+@@ -56,8 +60,11 @@ final class MixerMode(strips: Vector[String], perBank: Int) extends Mode:
+ 
+       case Control.Press(Button.Solo(strip), true) =>
+         visible(state, strip).fold(quiet(state)) { name =>
+-          val next = state.copy(soloed = toggle(state.soloed, name))
+-          changed(state, next, List(Feedback.Led(Button.Solo(strip), next.soloed(name))))
++          /* Exclusive: a new solo replaces every other; un-soloing the current one still just toggles it. */
++          val cleared = if exclusiveSolo && !state.soloed(name) then state.soloed else Set.empty[String]
++          val next = state.copy(soloed = toggle(state.soloed -- cleared, name))
++          val dark = (0 until perBank).toList.flatMap(s => visible(state, s).filter(cleared).map(_ => Feedback.Led(Button.Solo(s), false)))
++          changed(state, next, dark :+ Feedback.Led(Button.Solo(strip), next.soloed(name)))
+         }
+ 
+       case Control.Press(Button.BankLeft, true)  => bank(state, -1)
+@@ -90,6 +97,9 @@ final class MixerMode(strips: Vector[String], perBank: Int) extends Mode:
+ 
+ object MixerMode:
+ 
++  /** A mixer whose solo is exclusive: a new solo replaces every other. */
++  def exclusive(strips: Vector[String], perBank: Int): MixerMode = new MixerMode(strips, perBank, true)
++
+   /** The desk's state, and nothing else's: which instrument is loud is a fact about this mixer, not about the song. */
+   final case class Mixer(faders: Map[String, Double], muted: Set[String], soloed: Set[String], bank: Int) derives CanEqual
+ 

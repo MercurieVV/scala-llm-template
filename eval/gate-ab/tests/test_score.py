@@ -154,6 +154,12 @@ class EnvLeak(unittest.TestCase):
         hook = json.dumps({"type": "system", "subtype": "hook_started", "hook_name": "PreToolUse:Bash", "hook_event": "PreToolUse"})
         t = score.parse_transcript(lines("real-init-isolated.jsonl") + [hook])
         self.assertEqual(score.env_leaks(t, "g"), []); self.assertEqual(score.env_leaks(t, "u"), ["hooks=PreToolUse:Bash"])
+    def test_arms_gf_gs_hooks_are_not_a_leak(self):
+        # feature study: gf and gs run the template engine's hooks (SessionStart included)
+        hook = json.dumps({"type": "system", "subtype": "hook_started", "hook_name": "SessionStart:startup", "hook_event": "SessionStart"})
+        t = score.parse_transcript(lines("real-init-isolated.jsonl") + [hook])
+        self.assertEqual(score.env_leaks(t, "gf"), []); self.assertEqual(score.env_leaks(t, "gs"), [])
+        self.assertEqual(score.env_leaks(t, "u"), ["hooks=SessionStart:startup"])
     def test_arm_t_hooks_are_not_a_leak(self):
         # gate ablation: arm t runs the gate's hooks (minus Stop), so its hook events are expected
         hook = json.dumps({"type": "system", "subtype": "hook_started", "hook_name": "PreToolUse:Bash", "hook_event": "PreToolUse"})
@@ -731,6 +737,33 @@ class BaselineMode(FakeBase):
         os.environ["FAKE_RESOLVE_FAIL"] = "1"
         r = subprocess.run([sys.executable, str(HERE.parent / "score.py"), "--baseline"], capture_output=True, text=True)
         self.assertNotEqual(r.returncode, 0); self.assertTrue(r.stderr.strip())
+
+class RegressionCountTest(unittest.TestCase):
+    def test_counts_failing_tests_not_modules(self):
+        # review Important 1: a module with 7 failing tests is 7 regressions, plus holdout scenarios
+        self.assertEqual(score.regression_count(["control.test"], 7, 2), 9)
+
+    def test_unparsed_test_count_falls_back_to_modules(self):
+        self.assertEqual(score.regression_count(["control.test", "app.test"], 0, 2), 4)
+
+    def test_baseline_failures_do_not_count_without_a_regression(self):
+        self.assertEqual(score.regression_count([], 3, 0), 0)
+
+    def test_clean(self):
+        self.assertEqual(score.regression_count([], 0, 0), 0)
+
+    def test_marker_is_uncountable(self):
+        self.assertEqual(score.regression_count(["<build>"], 0, 0), -1)
+        self.assertEqual(score.regression_count(["app.test", "<tests did not run>"], 0, 1), -1)
+
+    def test_uncounted_holdout_is_uncountable(self):
+        # review Important 2: holdout did not compile or timed out
+        self.assertEqual(score.regression_count([], 0, -1), -1)
+
+    def test_holdout_failed_count(self):
+        self.assertEqual(score.holdout_failed_count(3, True, False), 3)
+        self.assertEqual(score.holdout_failed_count(0, False, False), -1)
+        self.assertEqual(score.holdout_failed_count(0, True, True), -1)
 
 if __name__ == "__main__":
     unittest.main()

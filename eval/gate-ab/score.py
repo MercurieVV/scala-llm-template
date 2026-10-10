@@ -138,7 +138,7 @@ def is_turn_end_text(text):
 def env_leaks(t, arm):
     """Ruling 20: what of the operator's own Claude config reached the agent, from the transcript's init event.
     Allowed: MCP servers exactly {scala-semantic}; plugins only Claude Code's built-ins (path "builtin": present with any
-    setting source, identical in both arms); hook events only in the gated arms (g, and t: the gate without Stop). -> list of leak descriptions."""
+    setting source, identical in both arms); hook events only in the gated arms (g, gf, gs, and t: the gate without Stop). -> list of leak descriptions."""
     init = t.get("init")
     if init is None:
         return ["no init event"] if t.get("has_result") else []
@@ -149,7 +149,7 @@ def env_leaks(t, arm):
     plugins = [str(p.get("name")) for p in init.get("plugins") or [] if isinstance(p, dict) and p.get("path") != "builtin"]
     if plugins:
         leaks.append("plugins=" + ",".join(plugins))
-    if arm not in ("g", "t") and t.get("hook_events"):
+    if arm not in ("g", "t", "gf", "gs") and t.get("hook_events"):
         leaks.append("hooks=" + ",".join(dict.fromkeys(t["hook_events"])))
     if arm == "t" and any(is_turn_end_text(x) for x in t.get("hook_texts") or []):
         leaks.append("turn-end in arm t")  # arm t must run without the Stop hook
@@ -337,6 +337,20 @@ def parse_mill_failures(log_text, modules, all_modules=()):
 def is_solved(hidden_compiled, hidden_passed, hidden_failed, holdout_passed, regressions, timed_out):
     return bool(hidden_compiled and hidden_passed > 0 and hidden_failed == 0 and holdout_passed
                 and not regressions and not timed_out)
+
+
+def regression_count(regressions, failed_tests, holdout_failed):
+    """Spec 2026-10-10 §4: failing existing tests plus failing holdout scenarios. Tests come from Mill's `N FAILED]`
+    total, counted only when a module regressed, and never fewer than the regressed modules; -1 when a `<…>` marker
+    (compile break, timeout, tests did not run) or an uncounted holdout makes it uncountable."""
+    if holdout_failed < 0 or any(r.startswith("<") for r in regressions):
+        return -1
+    return (max(failed_tests, len(regressions)) if regressions else 0) + holdout_failed
+
+
+def holdout_failed_count(failed, compiled, timed_out):
+    """Failing holdout scenarios; -1 when the holdout did not compile or timed out (nothing was counted)."""
+    return -1 if timed_out or not compiled else failed
 
 
 def is_false_done(solved, timed_out, exit_code):
@@ -724,7 +738,7 @@ def _read_baseline(ga_root):
 def main(run_dir):
     rd = os.path.abspath(run_dir)
     rec = dict(run_id=os.path.basename(rd), task=None, arm=None, rep=None, solved=False, hidden_pass_ratio=0.0,
-               hidden_compiled=False, holdout_passed=False, regressions=[], test_tampering=[], hardcoding_suspects=[],
+               hidden_compiled=False, holdout_passed=False, holdout_failed=0, regressions=[], regressed_modules=[], regression_count=0, test_tampering=[], hardcoding_suspects=[],
                build_edits=[], false_done=False, timed_out=False, contaminated=False, contamination=[], gate_blocks={},
                wall_seconds=0, turns=None, input_tokens=None, output_tokens=None, cache_read_tokens=None, cost_usd=None,
                first_clean_compile_turn=None, score_timeouts=[], error="scoring incomplete")
@@ -808,7 +822,9 @@ def main(run_dir):
         if hrc != 0 and not hto and hc and hp + hf == 0:
             errors.append("mill failed (holdout): " + _last_line(os.path.join(rd, "holdout-score.log")))
         rec["holdout_passed"] = hrc == 0 and hc and hf == 0 and hp == HOLDOUT_EXPECTED
+        rec["holdout_failed"] = holdout_failed_count(hf, hc, hto)
 
+        reg_failed = 0
         # regressions: ONE invocation, -k, every test module; the task module via its other suites (Ruling 12)
         loaded = _read_baseline(ga_root)
         regress_ok = True
@@ -861,11 +877,14 @@ def main(run_dir):
                     rec["regressions"] = sorted(i for i in ids if base.get(i, True)) or ["<unattributed>"]
                 else:
                     rec["regressions"] = sorted(i for i in ids if base.get(i, True))
+                    reg_failed = r["failed"]
                     invoked = [e[0].replace(".testOnly", "") for e in entries]
                     expected = sum(base_passes.get(m, 0) for m in invoked)
                     if expected and sum(suite_passes(text).values()) < 0.5 * expected:
                         rec["regressions"].append("<tests did not run>")
 
+        rec["regressed_modules"] = list(rec["regressions"])
+        rec["regression_count"] = regression_count(rec["regressions"], reg_failed, rec["holdout_failed"])
         rec["solved"] = bool(hidden_ok and regress_ok and is_solved(compiled, passed, failed, rec["holdout_passed"],
                                                                    rec["regressions"], rec["timed_out"]))
         rec["false_done"] = is_false_done(rec["solved"], rec["timed_out"], run["exit_code"])

@@ -165,6 +165,9 @@ def write_csv(runs, path):
 
 
 def build_summary(runs, smoke, unreadable, audit_cleared=None):
+    unknown = sorted({str(r.get("arm")) for r in runs} - {"g", "u", "t"})
+    if unknown:  # gf/gs (feature study, 2026-10-10) have no verdict here; tabulate them by hand from score.json
+        raise ValueError("report.py summarises arms g, u, t only; found " + ", ".join(unknown))
     arms = {a: [r for r in runs if r.get("arm") == a] for a in ("g", "u")}
     st = {a: arm_stats(arms[a]) for a in arms}
     out = ["# Gate A/B results", ""]

@@ -22,6 +22,13 @@ out=$($SH -c ". '$ga/lib.sh'; echo \$GA_TASKS" | wc -w | tr -d ' ')
 check "eight tasks" "$out" "8"
 out=$(env -u GA_TASKS $SH -c ". '$ga/lib.sh'; echo \$GA_TASKS")
 check "default GA_TASKS is all tasks" "$out" "noise mixer-modes mcu note-ring backpressure scope-view modes midi-synth"
+out=$($SH -c ". '$ga/lib.sh'; ga_run_id fr-pan gf 1")
+check "run id arm gf" "$out" "fr-pan-gf-1"
+out=$($SH -c ". '$ga/lib.sh'; ga_run_id fr-pan gs 2")
+check "run id arm gs" "$out" "fr-pan-gs-2"
+out=$($SH -c ". '$ga/lib.sh'; case \" \$GA_ALL_TASKS \" in *' fr-exclusive-solo '*) echo yes;; *) echo no;; esac")
+check "FR tasks known" "$out" "yes"
+GA_ROOT=$(mktemp -d) GA_CAFFEINATED=1 GA_ARMS="gf x" $SH "$ga/campaign.sh" >/dev/null 2>&1; check "campaign rejects arm x beside gf" "$?" "1"
 
 # --- timeout.py
 python3 "$ga/timeout.py" 5 -- sh -c 'exit 3'; check "timeout passes exit code" "$?" "3"
@@ -430,6 +437,32 @@ check "campaign re-execs under caffeinate once" "$(wc -l <"$tmp/cafs" | tr -d ' 
 check "campaign under caffeinate ran smoke" "$(tr '\n' ' ' <"$tmp/calls")" "midi-synth-g-9 midi-synth-u-9 "
 chmod -R 755 "$tmp/root" 2>/dev/null
 rm -rf "$tmp"
+
+# --- ga_install_engine
+r=$(mktemp -d); ( cd "$r" && git init -q && mkdir .dsh && printf 'build.mill\tbuild\n' > .dsh/frozen-paths && echo x > f && git add -A && git -c user.name=t -c user.email=t@l commit -qm b )
+$SH -c "GA_LIB_PATH='$ga/lib.sh'; . '$ga/lib.sh'; ga_install_engine '$r' safety" >/dev/null 2>&1; check "install engine exit" "$?" "0"
+check "engine vendored" "$([ -f "$r/.dsh/engine/gate.sh" ] && echo y)" "y"
+check "mode safety" "$(awk -F'\t' '$1=="mode"{print $2}' "$r/.dsh/policy/turn-end.tsv" 2>/dev/null)" "safety"
+check "mode frozen" "$(grep -c '^\.dsh/policy/turn-end\.tsv	' "$r/.dsh/frozen-paths")" "1"
+check "install committed" "$(git -C "$r" status --porcelain | wc -l | tr -d ' ')" "0"
+$SH -c "GA_LIB_PATH='$ga/lib.sh'; . '$ga/lib.sh'; ga_install_engine '$r' full" >/dev/null 2>&1
+check "mode full replaces" "$(awk -F'\t' '$1=="mode"{print $2}' "$r/.dsh/policy/turn-end.tsv" 2>/dev/null)" "full"
+check "frozen row once" "$(grep -c '^\.dsh/policy/turn-end\.tsv	' "$r/.dsh/frozen-paths")" "1"
+$SH -c "GA_LIB_PATH='$ga/lib.sh'; . '$ga/lib.sh'; ga_install_engine '$r' fast" >/dev/null 2>&1; check "install rejects mode fast" "$?" "1"
+rm -rf "$r"
+
+# --- prepare.sh: reference patch that does not apply
+fr=$(mktemp -d); mkdir -p "$fr/tasks/fr-x/hidden/a" "$fr/head"
+printf "TASK_MODULE='a.test'\nHIDDEN_SPEC='a/S.scala'\nHIDDEN_SPEC_SRC='hidden/a/S.scala'\nCUT_FILES=''\nREFERENCE_PATCH='reference.patch'\nFEATURE='x'\n" > "$fr/tasks/fr-x/task.env"
+echo 'object S extends Suite' > "$fr/tasks/fr-x/hidden/a/S.scala"
+printf -- '--- a/nope.scala\n+++ b/nope.scala\n@@ -1 +1 @@\n-a\n+b\n' > "$fr/tasks/fr-x/reference.patch"
+out=$($SH -c "GA_LIB_PATH='$ga/lib.sh'; . '$ga/lib.sh'; GA_HOME='$fr'; REFERENCE_PATCH=reference.patch; ga_check_patch fr-x '$fr/head'" 2>&1); rc=$?
+check "non-applying reference patch refused" "$rc" "1"
+case $out in *"does not apply"*) ok "patch refusal names the cause" ;; *) bad "patch refusal names the cause" "$out" ;; esac
+echo a > "$fr/head/nope.scala"
+$SH -c "GA_LIB_PATH='$ga/lib.sh'; . '$ga/lib.sh'; GA_HOME='$fr'; REFERENCE_PATCH=reference.patch; ga_check_patch fr-x '$fr/head'" >/dev/null 2>&1
+check "applying reference patch accepted" "$?" "0"
+rm -rf "$fr"
 
 echo "shell-test: $passed passed, $failed failed"
 [ "$failed" -eq 0 ]

@@ -1,0 +1,68 @@
+diff --git a/control/midi/src/com/github/mercurievv/skreeep2/control/midi/MixerSurface.scala b/control/midi/src/com/github/mercurievv/skreeep2/control/midi/MixerSurface.scala
+index 602ba3b..1c59162 100644
+--- a/control/midi/src/com/github/mercurievv/skreeep2/control/midi/MixerSurface.scala
++++ b/control/midi/src/com/github/mercurievv/skreeep2/control/midi/MixerSurface.scala
+@@ -54,4 +54,9 @@ object MixerSurface:
+     }
+ 
+   private def apply[F[_]](cell: Ref[F, Map[String, Double]], commands: List[Command]): F[Unit] =
+-    cell.update(levels => commands.foldLeft(levels) { case (acc, Command.SetLevel(instrument, level)) => acc.updated(instrument, level) })
++    cell.update(levels =>
++      commands.foldLeft(levels) {
++        case (acc, Command.SetLevel(instrument, level)) => acc.updated(instrument, level)
++        case (acc, Command.SetPan(_, _))                => acc // no engine reads pan yet
++      },
++    )
+diff --git a/control/src/com/github/mercurievv/skreeep2/control/Command.scala b/control/src/com/github/mercurievv/skreeep2/control/Command.scala
+index ec077aa..7589420 100644
+--- a/control/src/com/github/mercurievv/skreeep2/control/Command.scala
++++ b/control/src/com/github/mercurievv/skreeep2/control/Command.scala
+@@ -10,3 +10,6 @@ package com.github.mercurievv.skreeep2.control
+ enum Command derives CanEqual:
+   /** An instrument's level, `0.0 .. 1.0`, absolute not a delta: a fader is a position, and a lost message must not leave the mix offset forever. */
+   case SetLevel(instrument: String, level: Double)
++
++  /** An instrument's pan, `-1.0` (left) `.. 1.0` (right), absolute like a level. */
++  case SetPan(instrument: String, pan: Double)
+diff --git a/control/src/com/github/mercurievv/skreeep2/control/MixerMode.scala b/control/src/com/github/mercurievv/skreeep2/control/MixerMode.scala
+index bdeeb19..e220cc4 100644
+--- a/control/src/com/github/mercurievv/skreeep2/control/MixerMode.scala
++++ b/control/src/com/github/mercurievv/skreeep2/control/MixerMode.scala
+@@ -13,7 +13,7 @@ final class MixerMode(strips: Vector[String], perBank: Int) extends Mode:
+ 
+   type State = Mixer
+ 
+-  val initial: Mixer = Mixer(strips.map(_ -> 1.0).toMap, Set.empty, Set.empty, 0)
++  val initial: Mixer = Mixer(strips.map(_ -> 1.0).toMap, Set.empty, Set.empty, 0, Map.empty)
+ 
+   private def visible(state: Mixer, strip: Int): Option[String] =
+     Option.when(strip >= 0 && strip < perBank)(state.bank * perBank + strip).flatMap(strips.lift)
+@@ -60,10 +60,18 @@ final class MixerMode(strips: Vector[String], perBank: Int) extends Mode:
+           changed(state, next, List(Feedback.Led(Button.Solo(strip), next.soloed(name))))
+         }
+ 
++      case Control.Encoder(strip, delta) =>
++        visible(state, strip).fold(quiet(state)) { name =>
++          val before = state.pans.getOrElse(name, 0.0)
++          val now = math.max(-1.0, math.min(1.0, before + delta * 0.05))
++          if now == before then quiet(state)
++          else (state.copy(pans = state.pans.updated(name, now)), List(Command.SetPan(name, now)), Nil)
++        }
++
+       case Control.Press(Button.BankLeft, true)  => bank(state, -1)
+       case Control.Press(Button.BankRight, true) => bank(state, 1)
+ 
+-      /* A release, a select, a mode key, an encoder, the jog wheel: a mixer has nothing to say about any of them.
++      /* A release, a select, a mode key, the jog wheel: a mixer has nothing to say about any of them.
+        * Silence rather than a fallback, so that a mode which *does* use them reads as an addition, not a change. */
+       case _ => quiet(state)
+ 
+@@ -91,7 +99,7 @@ final class MixerMode(strips: Vector[String], perBank: Int) extends Mode:
+ object MixerMode:
+ 
+   /** The desk's state, and nothing else's: which instrument is loud is a fact about this mixer, not about the song. */
+-  final case class Mixer(faders: Map[String, Double], muted: Set[String], soloed: Set[String], bank: Int) derives CanEqual
++  final case class Mixer(faders: Map[String, Double], muted: Set[String], soloed: Set[String], bank: Int, pans: Map[String, Double]) derives CanEqual
+ 
+   /** Solo wins over mute, and a solo anywhere silences everything it does not name — the standard console rule, stated once so both `enter` and
+     * `step` agree on it.
