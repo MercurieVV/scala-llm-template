@@ -148,6 +148,10 @@ sh kit/harness/install.sh <target-dir>
   (the human's: frozen, root-relative paths). The gate then guards the file's `require`/`ensuring`/`decreases`
   and runs `<module>.stainlessVerify` on it at turn-end; the agent follows the `vericoding` skill. The engine
   README's "Vericoding" section has the rules.
+- **Turn-end mode.** The install seeds `.dsh/policy/turn-end.tsv` with `mode safety`: the Stop hook keeps the
+  frozen-path check, diff-scoped verification and vericoding, and leaves compile and tests to post-edit and the
+  agent. The human sets `mode full` to run compile, turnEndTests and downstream tests at turn-end too. The engine
+  README's "Turn-end mode" section has the evidence.
 
 **Stop condition:** `sh .dsh/engine/check-harness.sh --project .` reports
 `ok   vendored engine matches its STAMP`, every other FAIL it prints is written into step 3's baseline with its

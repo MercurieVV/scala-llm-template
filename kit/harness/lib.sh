@@ -1007,6 +1007,41 @@ dsh_semantic_launcher() {
   printf '%s\n' "$_sl"
 }
 
+# .dsh/policy/turn-end.tsv — the human's frozen choice of how much the Stop hook runs (spec 2026-10-10):
+# one `mode TAB <full|safety>` row. `safety` runs only the frozen-path check, diff-scoped verification and
+# vericoding; `full` adds format, scalafix, compile, turnEndTests, purrism and downstream turnEndTests.
+# Prints the raw mode value (CR and surrounding blanks stripped; the last `mode` row wins), empty when
+# there is no table or no mode row. The caller decides what a value it does not know means (full).
+dsh_turn_end_mode() {
+  _tm_tsv="${1:-$(gate_root)}/.dsh/policy/turn-end.tsv"
+  [ -f "$_tm_tsv" ] || return 0
+  awk -F'\t' '
+    { sub(/\r$/, "") }
+    !/^#/ && NF == 2 {
+      k = $1; v = $2
+      gsub(/^ +| +$/, "", k); gsub(/^ +| +$/, "", v)
+      if (k == "mode") r = v
+    }
+    END { print r }' "$_tm_tsv" 2>/dev/null
+}
+
+# dsh_turn_end_mode_checks [root]: one `ok|FAIL|note` TAB <message> row; exit 1 on FAIL. Same shape as
+# dsh_kernel_checks; check-harness.sh maps it. A value turn-end does not know runs full there, but is
+# a FAIL here: the human meant something, and full is not necessarily it.
+dsh_turn_end_mode_checks() {
+  _tc_root=${1:-$(gate_root)}
+  if [ ! -f "$_tc_root/.dsh/policy/turn-end.tsv" ]; then
+    printf 'note\tno .dsh/policy/turn-end.tsv — the Stop hook runs in full mode\n'
+    return 0
+  fi
+  _tc_v=$(dsh_turn_end_mode "$_tc_root")
+  case "$_tc_v" in
+    full|safety) printf 'ok\tturn-end mode: %s\n' "$_tc_v" ;;
+    '') printf 'note\t.dsh/policy/turn-end.tsv has no mode row — the Stop hook runs in full mode\n' ;;
+    *) printf 'FAIL\t.dsh/policy/turn-end.tsv: mode "%s" is neither full nor safety (turn-end runs full)\n' "$_tc_v"; return 1 ;;
+  esac
+}
+
 # .dsh/policy/kernels.tsv — the human's frozen registry of verified kernel files (spec 2026-09-27 §1):
 # `<file> TAB <module> TAB <reason>`. Prints `<file>\t<module>` per well-formed row. One leading `./` is
 # stripped, so `./core/src/K.scala` names the same file git reports as `core/src/K.scala` (a spelling

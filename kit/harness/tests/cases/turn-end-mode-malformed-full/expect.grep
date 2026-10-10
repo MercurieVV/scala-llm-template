@@ -1,0 +1,4 @@
+app.compile (failed; names a file this turn touched)
+DIAGNOSTIC: app/src/A.scala:4:21 [scalac.not-found] Not found: undefinedName
+INSTRUCTION: Check the spelling against the definition
+turn-end mode: .dsh/policy/turn-end.tsv names mode "fast", which is neither full nor safety — ran in full mode

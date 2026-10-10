@@ -52,7 +52,7 @@ else
   printf 'seeded   .dsh/engine (template %s%s)\n' "$sha" "$([ "$dirty" = 1 ] && echo ', dirty')"
 fi
 
-for rel in contract frozen-paths hooks.json cc-settings.json policy/allowed-types.tsv policy/memorisation.tsv policy/kernels.tsv instructions/local.tsv instructions/scalac-kinds.tsv; do
+for rel in contract frozen-paths hooks.json cc-settings.json policy/allowed-types.tsv policy/memorisation.tsv policy/kernels.tsv policy/turn-end.tsv instructions/local.tsv instructions/scalac-kinds.tsv; do
   if [ -e "$dst/.dsh/$rel" ]; then
     printf 'kept     .dsh/%s\n' "$rel"
   else

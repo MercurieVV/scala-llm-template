@@ -2231,6 +2231,20 @@ is "dsh_memo_judge: no test literals means nothing overlaps" "" \
 
 rm -rf "$mj_tmp"
 
+# --- dsh_turn_end_mode / dsh_turn_end_mode_checks: the Stop hook's mode table (spec 2026-10-10)
+tm_tmp=$(mktemp -d)
+is "dsh_turn_end_mode: no table prints nothing" "" "$(dsh_turn_end_mode "$tm_tmp")"
+has "dsh_turn_end_mode_checks: no table is a note (full)" "note	no .dsh/policy/turn-end.tsv" "$(dsh_turn_end_mode_checks "$tm_tmp")"
+mkdir -p "$tm_tmp/.dsh/policy"
+printf '# c\nmode\t safety \r\n' > "$tm_tmp/.dsh/policy/turn-end.tsv"
+is "dsh_turn_end_mode: CR and blanks stripped" safety "$(dsh_turn_end_mode "$tm_tmp")"
+has "dsh_turn_end_mode_checks: safety is ok" "ok	turn-end mode: safety" "$(dsh_turn_end_mode_checks "$tm_tmp")"
+printf 'mode\tfast\n' > "$tm_tmp/.dsh/policy/turn-end.tsv"
+has "dsh_turn_end_mode_checks: an unknown mode FAILs" "FAIL	.dsh/policy/turn-end.tsv: mode \"fast\"" "$(dsh_turn_end_mode_checks "$tm_tmp")"
+printf '# only a comment\n' > "$tm_tmp/.dsh/policy/turn-end.tsv"
+has "dsh_turn_end_mode_checks: no mode row is a note (full)" "note	.dsh/policy/turn-end.tsv has no mode row" "$(dsh_turn_end_mode_checks "$tm_tmp")"
+rm -rf "$tm_tmp"
+
 # --- dsh_memo_policy: a malformed threshold falls back to its default, never a silent string compare
 mpv_tmp=$(mktemp -d)
 mkdir -p "$mpv_tmp/.dsh/policy"

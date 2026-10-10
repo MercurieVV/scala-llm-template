@@ -1,0 +1,11 @@
+# .dsh/policy/turn-end.tsv — how much the Stop hook (turn-end) runs (spec 2026-10-10).
+#
+# One row, TAB-separated; blank and #-led lines are ignored.
+#   mode TAB safety   the frozen-path check, diff-scoped verification and vericoding only
+#   mode TAB full     also format, scalafix, compile, turnEndTests, purrism and downstream turnEndTests
+#
+# No table means full. A value that is neither runs full, named. Measured on skreeep2 (2026-10-09):
+# without the turn-end hook the gated arm still solved 8 of 8, median wall 80 s against 200 s with it.
+#
+# This table is the HUMAN's and frozen: an agent that could switch off its own checks has none.
+mode	safety

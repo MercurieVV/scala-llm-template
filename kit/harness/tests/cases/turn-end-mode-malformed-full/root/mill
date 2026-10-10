@@ -1,0 +1,9 @@
+#!/bin/sh
+printf 'mill %s\n' "$*" >> "${MILL_STUB_LOG:-/dev/null}"
+case "$*" in
+  *app.compile*)
+    printf 'compiling 1 Scala source to out/app/compile.dest/classes ...\n'
+    printf '[error] app/src/A.scala:4:21\n  def broken: Int = undefinedName + 1\n                    ^^^^^^^^^^^^^\nNot found: undefinedName\n\n[error] one error found\n[error] app.compile Compilation failed\n'
+    exit 1 ;;
+esac
+exit 0

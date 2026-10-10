@@ -1,0 +1,2 @@
+#!/bin/sh
+printf '\n// touched\n' >> app/src/A.scala

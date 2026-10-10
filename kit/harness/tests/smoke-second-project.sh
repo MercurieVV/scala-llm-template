@@ -135,7 +135,19 @@ is "semantic-guard (unhealthy): stands down" yes "$(yn has "$out" 'stands down|s
 # --- 8. turn-end over a real edit to a mapped module ------------------------------------------------------------
 printf '%s' "$start" | gate baseline >/dev/null 2>&1
 printf 'package a\nobject A { val x: Int = 1; val y: Int = 2 }\n' > "$w/core/src/A.scala"
-say "turn-end over core/src/A.scala (real Mill checks)"
+say "turn-end over core/src/A.scala, seeded mode safety (no Mill checks)"
+is "install seeded turn-end mode safety" yes "$(yn grep -qx "$(printf 'mode\tsafety')" "$w/.dsh/policy/turn-end.tsv")"
+: > "$log"
+out=$(printf '%s' "$stop" | gate turn-end 2>&1); code=$?
+is "turn-end (safety): exit" 0 "$code"
+is "turn-end (safety): names the mode" yes "$(yn hasF "$out" 'turn-end mode safety (.dsh/policy/turn-end.tsv)')"
+is "turn-end (safety): no test claim" no "$(yn has "$out" '[Tt][Ee][Ss][Tt][Ss]? ([Pp][Aa][Ss][Ss]|[Rr][Aa][Nn]|[Rr][Uu][Nn])')"
+is "turn-end (safety): ran none of core's checks" no "$(yn grep -q 'core\.' "$log")"
+[ "$code" = 0 ] || printf '%s\n' "$out" | tail -25
+# the human's change to a frozen file clears the freeze only once committed
+printf 'mode\tfull\n' > "$w/.dsh/policy/turn-end.tsv"
+git -C "$w" commit -q -m 'turn-end mode full' -- .dsh/policy/turn-end.tsv
+say "turn-end over core/src/A.scala, mode full (real Mill checks)"
 : > "$log"
 out=$(printf '%s' "$stop" | gate turn-end 2>&1); code=$?
 is "turn-end (mapped edit): exit" 0 "$code"
