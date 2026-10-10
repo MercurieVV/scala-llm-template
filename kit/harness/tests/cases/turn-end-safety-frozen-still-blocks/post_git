@@ -1,0 +1,3 @@
+#!/bin/sh
+# A committed frozen file deleted by an ungated route: git reports the deletion.
+rm -f engine/details/A.scala

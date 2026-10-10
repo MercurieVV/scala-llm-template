@@ -32,3 +32,4 @@
 .dsh/policy/allowed-types.tsv	the module policy is the human's: an agent that may widen its own allowlist has none
 .dsh/policy/memorisation.tsv	the memorisation thresholds and exemptions are the human's: an agent may not exempt its own reward hacking
 .dsh/policy/kernels.tsv	the verified-kernel registry is the human's: an agent that may unregister a kernel has no proof obligation
+.dsh/policy/turn-end.tsv	the turn-end mode is the human's: an agent that may switch off its own checks has none

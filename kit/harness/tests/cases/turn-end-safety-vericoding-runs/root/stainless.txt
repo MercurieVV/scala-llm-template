@@ -1,0 +1,12 @@
+stainless-verify: verifying core/src/K.scala (timeout 10s/VC)
+[[34m  Info  [0m] Compiling with standard Scala 3.7.2 compiler front end...
+[[31m Error  [0m] core/src/K.scala:5:24: Found:    (r : Short)
+[[31m Error  [0m] Required: Boolean
+               (v >= 32767.0  ==> r == 32767) &&
+                                  ^
+[[33mWarning [0m] 1 error found
+[[34m  Info  [0m] Finished compiling
+[[31m Error  [0m] Stainless terminated with an error.
+stainless-verify: SETUP — no Stainless summary in the output (tool or compile error above)
+[error] core.stainlessVerify
+java.lang.RuntimeException: stainlessVerify failed (exit 2)

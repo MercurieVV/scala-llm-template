@@ -48,7 +48,7 @@ sh kit/harness/install.sh <project>      # run from a scala-llm-template checkou
   copy that fails part-way leaves the previous `.dsh/engine/` untouched and complete.
 - **Project state is seeded only where absent, never overwritten.** The seeds (`seed/`): `contract`,
   `frozen-paths` (containing `.dsh/engine/**`), `hooks.json`, `cc-settings.json`, `policy/allowed-types.tsv`,
-  `policy/memorisation.tsv`, `policy/kernels.tsv` (header-only), `instructions/local.tsv` (with a `scalac.<kind>` row for each of the seven kinds in
+  `policy/memorisation.tsv`, `policy/kernels.tsv` (header-only), `policy/turn-end.tsv` (`mode safety`), `instructions/local.tsv` (with a `scalac.<kind>` row for each of the seven kinds in
   `instructions/scalac-kinds.tsv`), `instructions/scalac-kinds.tsv`. The seeded `frozen-paths` covers every path the
   installation checks require frozen (the self-freeze, `.ignore`, the instruction tables and `purrism.tsv`), so a
   fresh install's only installation FAIL is the absent `purrism.tsv` — `sh .dsh/engine/instructions-sync.sh` writes
@@ -859,6 +859,20 @@ metadata the presentation compiler cannot start, and the one-shot call exits 1 f
 — `resolve_references needs the presentation compiler` — which `verify-diff.sh` notes. It quotes
 that reason, not the JVM warnings printed above it. Generate the metadata with the build's
 `scalaSemanticWriteClasspath` task.
+
+## Turn-end mode: `safety` or `full`
+
+`.dsh/policy/turn-end.tsv` (frozen, the human's) holds one `mode TAB <safety|full>` row. A fresh install seeds
+`safety`: the Stop hook runs the frozen-path check, diff-scoped verification and vericoding, and skips format,
+scalafix, compile, turnEndTests (owners and downstream) and the purrism rewrites — post-edit compiles each edit and
+the agent runs its own tests. `full` runs everything below. No table means `full`, so a project installed before the
+table existed keeps its behaviour; a value that is neither runs `full` with a named note, and `check-harness.sh`
+FAILs it. In `safety` mode every verdict carries the line `turn-end mode safety (.dsh/policy/turn-end.tsv): …`.
+
+Why the default changed (skreeep2, sonnet, 2026-10-09): with turn-end removed the gated arm solved 8 of 8 on the
+four tasks where the A/B arms differed, median wall 80 s against 200 s with it; a same-day ungated control also
+solved 8 of 8, and an ungated screen on four tasks whose cut the downstream tests and holdout could see solved 8
+of 8. No study showed turn-end's checks changing an outcome.
 
 ## Turn-end purrism rewrites and the memorisation check
 

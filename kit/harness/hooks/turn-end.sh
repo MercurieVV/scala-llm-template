@@ -690,6 +690,27 @@ elif [ -n "$vd_out" ]; then
   vd_note=$vd_out
 fi
 
+# --- turn-end mode (.dsh/policy/turn-end.tsv, spec 2026-10-10) ------------------------------------
+# `safety` keeps the checks a session cannot run on itself — the frozen-path check above, diff-scoped
+# verification above, vericoding below — and drops the ones the agent's own test runs and post-edit
+# already cover: format, scalafix, compile, turnEndTests, purrism and downstream turnEndTests. No table
+# means `full` (a project installed before the table existed keeps what it had). A value that is
+# neither fails closed to `full`, named. The note rides on `vd_note`, which every exit flushes.
+te_mode=full
+te_mode_raw=$(dsh_turn_end_mode "$root")
+case "$te_mode_raw" in
+  safety)
+    te_mode=safety
+    te_mode_note="turn-end mode safety (.dsh/policy/turn-end.tsv): compile, format, scalafix, turnEndTests, purrism and downstream checks were not run — post-edit and your own checks carry them; the human sets mode full to run them here." ;;
+  full|'') te_mode_note='' ;;
+  *) te_mode_note="turn-end mode: .dsh/policy/turn-end.tsv names mode \"$te_mode_raw\", which is neither full nor safety — ran in full mode." ;;
+esac
+[ -n "$te_mode_note" ] && vd_note="${vd_note:+$vd_note
+}$te_mode_note"
+: > "$tmpd/none"
+te_check_mods="$tmpd/mods"
+[ "$te_mode" = safety ] && te_check_mods="$tmpd/none"
+
 # A project with positive evidence of another build tool (plan ruling, spec §3): the engine's checks are
 # Mill tasks, so it stands down, named, instead of blocking on "no Mill". It sits here, not beside
 # `resolve_mill` below, because the module-map lookup that follows already runs ./mill and fails closed;
@@ -893,7 +914,9 @@ if [ "$baseline_state" != session ]; then
 elif [ "$count" -ge "$max_attempts" ]; then
   rw_skip="this turn-end is at the attempt cap ($count blocked attempts) and would release the turn, so a rewrite now would end it unreviewed; nothing was rewritten."
 fi
-if [ -n "$rw_skip" ]; then
+if [ "$te_mode" = safety ]; then
+  : > "$tmpd/rw-mods"
+elif [ -n "$rw_skip" ]; then
   : > "$tmpd/rw-mods"
   if awk -F"$tab" '(","$2",") ~ /,scalafix,/ { f = 1 } END { exit !f }' "$tmpd/mods"; then
     rw_note="--- purrism rewrites skipped ---
@@ -1086,7 +1109,7 @@ while IFS="$tab" read -r module caps; do
     remedies="$remedies
 $module: $remedy"
   fi
-done < "$tmpd/mods"
+done < "$te_check_mods"
 
 # vk_add <title> <body>: files a named note on `vk_note` -- shared by the turnEndTests time cap below
 # and the vericoding stage further down, both bounded by the same Stop-hook budget. Flushed like
@@ -1190,7 +1213,7 @@ while IFS="$tab" read -r te_mod te_caps; do
   [ -n "$te_mod" ] || continue
   case ",$te_caps," in *,tests,*) ;; *) continue ;; esac
   te_run "$te_mod" ''
-done < "$tmpd/mods"
+done < "$te_check_mods"
 [ "$te_left" -gt 0 ] && report="$report
 $te_left modules not run — fix this one first"
 
@@ -1446,7 +1469,7 @@ done < "$tmpd/vk-mods"
 # of DSH_STOP_BUDGET on a kernel edit, and vericoding's inputs do not change (dependents are untouched
 # modules, so they own no touched kernel). te_run charges what is left of the budget; with ten seconds
 # or less left a dependent is "not started", a named note.
-if [ -s "$tmpd/ds" ]; then
+if [ "$te_mode" != safety ] && [ -s "$tmpd/ds" ]; then
   ds_n=$(awk 'END { print NR }' "$tmpd/ds")
   if [ "$blocked" -gt 0 ]; then
     ds_first=$te_failed

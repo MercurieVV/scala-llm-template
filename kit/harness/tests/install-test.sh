@@ -12,7 +12,7 @@ scratch() { _d=$(mktemp -d); git -C "$_d" init -q; printf '%s\n' "$_d"; }
 p=$(scratch)
 out=$(sh "$engine/install.sh" "$p" 2>&1); code=$?
 is "fresh_install_seeds: exit" 0 "$code"
-for f in contract frozen-paths hooks.json cc-settings.json policy/allowed-types.tsv policy/memorisation.tsv policy/kernels.tsv instructions/local.tsv instructions/scalac-kinds.tsv; do
+for f in contract frozen-paths hooks.json cc-settings.json policy/allowed-types.tsv policy/memorisation.tsv policy/kernels.tsv policy/turn-end.tsv instructions/local.tsv instructions/scalac-kinds.tsv; do
   is "fresh_install_seeds: seeded $f" yes "$([ -f "$p/.dsh/$f" ] && echo yes || echo no)"
 done
 is "fresh_install_seeds: seeded settings enable the sandbox" true "$(dsh_json_get "$p/.dsh/cc-settings.json" sandbox.enabled)"

@@ -698,6 +698,20 @@ done <<EOF
 $kk_rows
 EOF
 
+# The Stop hook's mode table (spec 2026-10-10): same shape, one lib.sh function.
+tm_rows=$(dsh_turn_end_mode_checks "$repo" 2>&1) || :
+while IFS="$tab" read -r tm_kind tm_msg; do
+  [ -n "$tm_kind" ] || continue
+  case "$tm_kind" in
+    ok) ok "$tm_msg" ;;
+    FAIL) bad "$tm_msg" ;;
+    note) note "$tm_msg" ;;
+    *) bad "dsh_turn_end_mode_checks printed a row this check does not understand: $tm_kind $tm_msg" ;;
+  esac
+done <<EOF
+$tm_rows
+EOF
+
 # The git-ignored frozen-file record (spec 2026-09-28 §1 item 2): same shape again -- one lib.sh
 # function, unit-tested in lib-test.sh, mapped here.
 fr_rows=$(dsh_frozen_record_checks "$repo" 2>&1) || :

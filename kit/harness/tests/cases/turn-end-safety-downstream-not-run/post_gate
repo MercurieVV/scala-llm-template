@@ -1,0 +1,3 @@
+#!/bin/sh
+# safety mode runs no turnEndTests, owner or downstream
+! grep -q "turnEndTests:" "$GATE_OUT_FILE"
