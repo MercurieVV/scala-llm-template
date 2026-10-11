@@ -33,7 +33,7 @@ ga_install_engine() {
 
 
 ga_run_id() {
-  case $2 in g|u|t|gf|gs) ;; *) ga_die "arm must be g, u, t, gf or gs, got $2" ;; esac
+  case $2 in g|u|t|gf|gs|p) ;; *) ga_die "arm must be g, u, t, gf, gs or p, got $2" ;; esac
   case $3 in [1-9]) ;; *) ga_die "rep must be 1..9, got $3" ;; esac
   printf '%s-%s-%s\n' "$1" "$2" "$3"
 }
@@ -44,6 +44,19 @@ ga_unlock_all() {
     [ -d "$d" ] && chmod 755 "$d"
   done
   return 0
+}
+
+# Arm p (spec 2026-10-11): the tool-policy hook alone -- no sandbox, no other hook event, no other PreToolUse entry.
+ga_policy_only_settings() {  # <settings.json>, rewritten in place
+  python3 - "$1" <<'PY' || ga_die "arm p: no tool-policy PreToolUse entry in $1"
+import json, sys
+p = sys.argv[1]; s = json.load(open(p))
+pre = [e for e in (s.get("hooks") or {}).get("PreToolUse", [])
+       if any('gate.sh" tool-policy' in h.get("command", "") for h in e.get("hooks", []))]
+if not pre: sys.exit(1)
+s["hooks"] = {"PreToolUse": pre}; s.pop("sandbox", None)
+json.dump(s, open(p, "w"), indent=2)
+PY
 }
 
 # FR tasks: the reference patch must apply to <dir> (a HEAD copy) before any Mill run.

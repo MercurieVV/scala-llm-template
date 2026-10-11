@@ -1,0 +1,6 @@
+{
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "python3 - <<'EOF'\np='control/src/MixerMode.scala'\ns=open(p).read().replace('        case', '      case')\nopen(p,'w').write(s)\nEOF"
+  }
+}

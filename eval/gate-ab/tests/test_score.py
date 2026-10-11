@@ -154,6 +154,11 @@ class EnvLeak(unittest.TestCase):
         hook = json.dumps({"type": "system", "subtype": "hook_started", "hook_name": "PreToolUse:Bash", "hook_event": "PreToolUse"})
         t = score.parse_transcript(lines("real-init-isolated.jsonl") + [hook])
         self.assertEqual(score.env_leaks(t, "g"), []); self.assertEqual(score.env_leaks(t, "u"), ["hooks=PreToolUse:Bash"])
+    def test_arm_p_hooks_are_not_a_leak(self):
+        hook = json.dumps({"type": "system", "subtype": "hook_started", "hook_name": "PreToolUse:Bash", "hook_event": "PreToolUse"})
+        t = score.parse_transcript(lines("real-init-isolated.jsonl") + [hook])
+        self.assertEqual(score.env_leaks(t, "p"), [])
+        self.assertEqual(score.env_leaks(t, "u"), ["hooks=PreToolUse:Bash"])
     def test_arms_gf_gs_hooks_are_not_a_leak(self):
         # feature study: gf and gs run the template engine's hooks (SessionStart included)
         hook = json.dumps({"type": "system", "subtype": "hook_started", "hook_name": "SessionStart:startup", "hook_event": "SessionStart"})

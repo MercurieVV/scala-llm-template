@@ -1,0 +1,6 @@
+{
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "grep -n x a/A.scala | sed 's/ -Xfatal-warnings//'"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "perl -pi -e 's/a/b/' a/build.sc"
+  }
+}

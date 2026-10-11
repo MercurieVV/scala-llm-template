@@ -302,6 +302,32 @@ check_frozen_interp_text() { # [sealed]: with `sealed`, only sealed rows, and th
   fi
 }
 
+# The Scala-source edit verdict (spec 2026-10-11). An interpreter or `sed -i` that edits a .scala/.sc
+# file through text replacement fails SILENTLY when its search text does not match: nothing changes,
+# everything still compiles, and the agent reports done (measured: 3 of 8 ungated screen runs in the
+# feature-request study, 2026-10-10). The Edit tool refuses a non-matching edit, so the same mistake
+# is loud there. Text, not semantics: fires when the WHOLE command text (heredoc bodies included)
+# names a .scala/.sc path token; `.scalafmt.conf` and `.scala-build/x` are longer tokens and do not.
+# It runs after the frozen verdict, so a frozen file is still reported as frozen.
+deny_scala_interp() { # <path token>
+  printf 'BLOCKED by tool-policy: %s is Scala source, and editing Scala source through an interpreter or sed can fail silently.\n' \
+    "$(bound_bytes "${1:-}" 240)" >&2
+  cat >&2 <<'MSG'
+A text replace that matches nothing changes nothing and raises no error, and the code still compiles.
+Use the Edit tool (it refuses an edit whose text is not found), or the MCP write path the semantic
+guard names where that guard is active. Use Read or Grep to read.
+NOT covered: a file name the program computes at run time, and an interpreter run from a script file.
+MSG
+  exit 2
+}
+
+check_scala_interp_text() {
+  # One token per line: every character that cannot be part of a bare path word ends a token.
+  _si_hit=$(printf '%s\n' "$cmd" | tr -c 'A-Za-z0-9._/~+-' '\n' | grep -E '\.(scala|sc)$' | head -1) || :
+  [ -n "$_si_hit" ] && deny_scala_interp "$_si_hit"
+  return 0
+}
+
 # The write side of the directory-change rule: this hook resolves a relative operand against the
 # repository root, so an operand that follows a `cd` this layer cannot resolve is undecided -- and
 # undecided is denied rather than guessed, because the guess is the permissive direction.
@@ -981,7 +1007,20 @@ Fetch to a file, inspect it, then run it deliberately." ;;
       while [ $# -gt 0 ] && [ "$(command_position_words "$*")" = "$_it_word" ]; do shift; done
     done
     _it_interp=0
+    _it_sedi=0
     case "$_it_word" in
+      sed|gsed)
+        # In place only through an OPTION word: a sed script (`s/i/x/`) never starts with `-`. Quoted
+        # spans are dropped first: `$_part` was split on blanks without regard to quotes, so a script
+        # such as `'s/ -i/x/p'` would otherwise yield a word `-i/x/p'` (final review I1, measured).
+        # Globbing is already off here (see above), so the unquoted expansion only splits.
+        for _it_a in $(printf '%s\n' "$_part" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g'); do
+          case "$_it_a" in
+            --in-place*) _it_sedi=1; break ;;
+            --*) ;;
+            -i*|-[!-]*i*) _it_sedi=1; break ;;
+          esac
+        done ;;
       sh|bash|zsh|dash)
         # A COMBINED short-option cluster (fix round 1, item 2, measured: `bash -lc`, `sh -ec` and
         # `bash -xc` were all allowed) carries `-c` inside a cluster of other short flags, never as
@@ -1036,6 +1075,7 @@ Fetch to a file, inspect it, then run it deliberately." ;;
         esac ;;
     esac
     [ "$_it_interp" = 1 ] && check_frozen_interp_text
+    { [ "$_it_interp" = 1 ] || [ "$_it_sedi" = 1 ]; } && check_scala_interp_text
 
     # History rewriting: the command word is `git`, its first argument is `push`, and a force
     # flag is among the arguments.

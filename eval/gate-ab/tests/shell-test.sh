@@ -29,6 +29,22 @@ check "run id arm gs" "$out" "fr-pan-gs-2"
 out=$($SH -c ". '$ga/lib.sh'; case \" \$GA_ALL_TASKS \" in *' fr-exclusive-solo '*) echo yes;; *) echo no;; esac")
 check "FR tasks known" "$out" "yes"
 GA_ROOT=$(mktemp -d) GA_CAFFEINATED=1 GA_ARMS="gf x" $SH "$ga/campaign.sh" >/dev/null 2>&1; check "campaign rejects arm x beside gf" "$?" "1"
+out=$($SH -c ". '$ga/lib.sh'; ga_run_id fr-pan p 1")
+check "run id arm p" "$out" "fr-pan-p-1"
+GA_ROOT=$(mktemp -d) GA_CAFFEINATED=1 GA_ARMS="p x" $SH "$ga/campaign.sh" >/dev/null 2>&1; check "campaign rejects arm x beside p" "$?" "1"
+pf=$(mktemp)
+cat > "$pf" <<'J'
+{"env":{"MILL_OUTPUT_DIR":"out-agent"},"sandbox":{"enabled":true},"permissions":{"deny":["Read(./holdout/**)"]},
+ "hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"sh \"$CLAUDE_PROJECT_DIR/.dsh/engine/gate.sh\" baseline"}]}],
+  "PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"sh \"$CLAUDE_PROJECT_DIR/.dsh/engine/gate.sh\" tool-policy","timeout":30}]},
+   {"matcher":"Read|Bash","hooks":[{"type":"command","command":"sh \"$CLAUDE_PROJECT_DIR/.dsh/engine/gate.sh\" semantic-guard"}]}],
+  "Stop":[{"hooks":[{"type":"command","command":"sh \"$CLAUDE_PROJECT_DIR/.dsh/engine/gate.sh\" turn-end"}]}]}}
+J
+$SH -c ". '$ga/lib.sh'; ga_policy_only_settings '$pf'"
+out=$(python3 -c 'import json,sys;s=json.load(open(sys.argv[1]));h=s["hooks"];print(sorted(h), len(h["PreToolUse"]), "tool-policy" in h["PreToolUse"][0]["hooks"][0]["command"], "sandbox" in s, s["env"]["MILL_OUTPUT_DIR"], s["permissions"]["deny"][0])' "$pf" 2>&1)
+check "policy-only settings keep only tool-policy" "$out" "['PreToolUse'] 1 True False out-agent Read(./holdout/**)"
+printf '{"hooks":{"Stop":[]}}' > "$pf"
+$SH -c ". '$ga/lib.sh'; ga_policy_only_settings '$pf'" >/dev/null 2>&1; check "policy-only settings refuse a snapshot without tool-policy" "$?" "1"
 
 # --- timeout.py
 python3 "$ga/timeout.py" 5 -- sh -c 'exit 3'; check "timeout passes exit code" "$?" "3"
