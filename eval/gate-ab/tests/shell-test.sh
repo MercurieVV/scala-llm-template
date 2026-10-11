@@ -28,6 +28,13 @@ out=$($SH -c ". '$ga/lib.sh'; ga_run_id fr-pan gs 2")
 check "run id arm gs" "$out" "fr-pan-gs-2"
 out=$($SH -c ". '$ga/lib.sh'; case \" \$GA_ALL_TASKS \" in *' fr-exclusive-solo '*) echo yes;; *) echo no;; esac")
 check "FR tasks known" "$out" "yes"
+# Seeded gs steps re-install an identical engine: the commit must not fail on an unchanged tree
+eng=$(mktemp -d); mkdir -p "$eng/t/kit/harness" "$eng/r"
+printf '#!/bin/sh\nmkdir -p "$1/.dsh/policy"; : >"$1/.dsh/frozen-paths"; echo engine >"$1/.dsh/engine.txt"\n' >"$eng/t/kit/harness/install.sh"
+( cd "$eng/r" && git init -q && echo x >x && git add -A && git -c user.name=t -c user.email=t@t commit -qm r )
+$SH -c "GA_TEMPLATE='$eng/t'; . '$ga/lib.sh'; ga_install_engine '$eng/r' safety && ga_install_engine '$eng/r' safety" >/dev/null 2>&1
+check "engine install twice" "$?" "0"
+rm -rf "$eng"
 GA_ROOT=$(mktemp -d) GA_CAFFEINATED=1 GA_ARMS="gf x" $SH "$ga/campaign.sh" >/dev/null 2>&1; check "campaign rejects arm x beside gf" "$?" "1"
 out=$($SH -c ". '$ga/lib.sh'; ga_run_id fr-pan p 1")
 check "run id arm p" "$out" "fr-pan-p-1"
@@ -238,6 +245,27 @@ grep -q "\"gated_settings_sha256\":\"$snapsha\"" "$rd/t1-g-1/run.json" && ok "ru
 ! grep -q 'not the snapshot' "$rd/t1-g-1/repo/.claude/settings.json" && ok "run g uses the snapshot, not live settings" || bad "run g uses the snapshot, not live settings"
 tr '\n' ' ' <"$tmp/args-g.txt" | grep -q -e ' --setting-sources project --strict-mcp-config --mcp-config .mcp.json ' && ok "run g agent isolation flags" || bad "run g agent isolation flags" "$(tr '\n' ' ' <"$tmp/args-g.txt")"
 check "run g outer Claude Code env not inherited" "$(cat "$tmp/ls-g.txt.env")" "0"
+# Chained runs (spec 2026-10-11): GA_SEED_TREE starts the repo from the previous step's final tree, as a fresh repository
+seed=$rd/t1-g-1/final-tree.tar.gz
+runenv GA_SEED_TREE="$seed" FAKE_MILL_LOG=$tmp/mill-seed.log FAKE_ARGS=$tmp/args-s.txt FAKE_PROBE= FAKE_PROBED=$tmp/probed-s.txt FAKE_LS=$tmp/ls-s.txt $SH "$tmp/home/run.sh" t1 u 2 >/dev/null 2>&1; check "seeded run exit 0" "$?" "0"
+check "seeded run keeps the previous step's work" "$(grep -c 'agent wrote this' "$rd/t1-u-2/repo/agent-note.txt")" "2"
+check "seeded run diff holds only this step's work" "$(grep -c '^+agent wrote this' "$rd/t1-u-2/final.diff")" "1"
+check "seeded run history is fresh (base + arm)" "$(git -C "$rd/t1-u-2/repo" rev-list --count HEAD)" "2"
+git -C "$rd/t1-u-2/repo" rev-parse -q --verify refs/tags/base >/dev/null && ok "seeded run base tag" || bad "seeded run base tag"
+check "seeded u run settings rewritten" "$(cat "$rd/t1-u-2/repo/.claude/settings.json")" '{"permissions":{}}'
+runenv GA_SEED_TREE="$tmp/nope.tar.gz" FAKE_MILL_LOG=$tmp/mill-seed.log FAKE_ARGS=$tmp/args-s2.txt FAKE_PROBE= FAKE_PROBED=$tmp/probed-s2.txt FAKE_LS=$tmp/ls-s2.txt $SH "$tmp/home/run.sh" t1 u 3 >/dev/null 2>&1; check "missing seed tree fails" "$?" "1"
+# Final review C1: a seeded tree that does not compile still gets its agent (the chain goes on), recorded in run.json
+runenv GA_SEED_TREE="$seed" FAKE_MILL_FAIL=1 FAKE_MILL_LOG=$tmp/mill-seed.log FAKE_ARGS=$tmp/args-s3.txt FAKE_PROBE= FAKE_PROBED=$tmp/probed-s3.txt FAKE_LS=$tmp/ls-s3.txt $SH "$tmp/home/run.sh" t1 u 4 >/dev/null 2>&1; check "seeded run with a broken build exit 0" "$?" "0"
+grep -q '"precompile_ok":false' "$rd/t1-u-4/run.json" && ok "seeded broken build recorded" || bad "seeded broken build recorded" "$(cat "$rd/t1-u-4/run.json")"
+grep -q '"precompile_ok":true' "$rd/t1-u-2/run.json" && ok "seeded good build recorded" || bad "seeded good build recorded"
+# Final review I2: run.json names the seed it started from
+check "seeded run records its seed hash" "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["seed_sha256"])' "$rd/t1-u-2/run.json")" "$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$seed")"
+# Final review I1: the previous step's gate state and .claude never reach the next step; .dsh comes from the task's base tree
+sd=$tmp/seedx; mkdir -p "$sd/repo/.dsh/.state" "$sd/repo/.claude"; echo v >"$sd/repo/.dsh/.state/verdict"; echo '{}' >"$sd/repo/.claude/junk.json"
+echo 'holdoutDir = changed-by-agent' >"$sd/repo/.dsh/contract"; echo old >"$sd/repo/agent-note.txt"; cp "$tmp/root/base/t1/tree/mill" "$sd/repo/"; tar -czf "$tmp/seedx.tar.gz" -C "$sd" repo
+runenv GA_SEED_TREE="$tmp/seedx.tar.gz" FAKE_MILL_LOG=$tmp/mill-seed.log FAKE_ARGS=$tmp/args-s4.txt FAKE_PROBE= FAKE_PROBED=$tmp/probed-s4.txt FAKE_LS=$tmp/ls-s4.txt $SH "$tmp/home/run.sh" t1 u 5 >/dev/null 2>&1; check "seeded run x exit 0" "$?" "0"
+[ ! -e "$rd/t1-u-5/repo/.dsh/.state" ] && [ ! -e "$rd/t1-u-5/repo/.claude/junk.json" ] && ok "seeded run drops gate state and .claude" || bad "seeded run drops gate state and .claude"
+check "seeded run .dsh from the base tree" "$(cat "$rd/t1-u-5/repo/.dsh/contract")" "holdoutDir = ../x"
 [ ! -e "$tmp/cfg/projects/$slug" ] && [ -d "$tmp/cfg/projects/-other-project" ] && ok "run g removes its own Claude project dir only" || bad "run g removes its own Claude project dir only"
 runenv FAKE_ARGS=$tmp/args-u.txt FAKE_PROBE="$probe" FAKE_PROBED=$tmp/probed-u.txt FAKE_LS=$tmp/ls-u.txt $SH "$tmp/home/run.sh" t1 u 1 >/dev/null 2>&1; check "run u exit 0" "$?" "0"
 check "run u settings" "$(cat "$rd/t1-u-1/repo/.claude/settings.json")" '{"permissions":{}}'
@@ -479,6 +507,96 @@ echo a > "$fr/head/nope.scala"
 $SH -c "GA_LIB_PATH='$ga/lib.sh'; . '$ga/lib.sh'; GA_HOME='$fr'; REFERENCE_PATCH=reference.patch; ga_check_patch fr-x '$fr/head'" >/dev/null 2>&1
 check "applying reference patch accepted" "$?" "0"
 rm -rf "$fr"
+
+# --- campaign.sh chain mode (spec 2026-10-11 chained feature work)
+tmp=$(mktemp -d); croot=$tmp/root; mkdir -p "$croot/runs" "$tmp/home"
+cp "$ga/lib.sh" "$ga/campaign.sh" "$tmp/home/"
+for t in fr-pan fr-exclusive-solo fr-mode-leds fr-tuning; do
+  mkdir -p "$croot/base/$t" "$tmp/home/tasks/$t"; printf 'a=yes\nb=yes\nc=yes\n' >"$croot/base/$t/validation.txt"; : >"$tmp/home/tasks/$t/task.env"
+done
+echo '{}' >"$croot/gated-settings.json"; echo '{}' >"$croot/head-baseline.json"
+printf 'patches_apply=yes\nreference_passes_all=yes\n' >"$croot/chain-validation.txt"
+cat >"$tmp/run" <<'FAKE'
+#!/bin/sh
+echo "$1 $2 $3 seed=${GA_SEED_TREE:-}" >>"$FAKE_RUNLOG"; d=$GA_ROOT/runs/$1-$2-$3; rm -rf "$d"; mkdir -p "$d"; s=null; [ -n "${GA_SEED_TREE:-}" ] && s=\"$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$GA_SEED_TREE")\"; echo "{\"seed_sha256\":$s}" >"$d/run.json"; echo "$1 $2 $3 $(date +%s%N)" >"$d/final-tree.tar.gz"
+FAKE
+cat >"$tmp/score" <<'FAKE'
+#!/bin/sh
+echo '{"solved": true, "error": null}' >"$1/score.json"
+FAKE
+cat >"$tmp/chk" <<'FAKE'
+#!/bin/sh
+echo "$*" >>"$FAKE_CHKLOG"; echo '{"chain_regressions": 0, "error": null}' >"$1/chain.json"
+FAKE
+chmod +x "$tmp/run" "$tmp/score" "$tmp/chk"
+cenv() { env GA_CAFFEINATED=1 GA_HOME=$tmp/home GA_ROOT=$croot GA_RUN=$tmp/run GA_SCORE=$tmp/score GA_CHAINCHECK=$tmp/chk \
+  GA_PREPARE=false GA_PREPARE_CHAIN=false GA_BASELINE=false FAKE_RUNLOG=$tmp/runlog FAKE_CHKLOG=$tmp/chklog \
+  GA_CHAIN="fr-pan fr-exclusive-solo fr-mode-leds fr-tuning" GA_ARMS="u gs" GA_REPS=1 "$@"; }
+cenv $SH "$tmp/home/campaign.sh" >/dev/null 2>&1; check "chain campaign exit 0" "$?" "0"
+check "chain runs in order with seeds" "$(cat "$tmp/runlog")" "fr-pan u 1 seed=
+fr-exclusive-solo u 1 seed=$croot/runs/fr-pan-u-1/final-tree.tar.gz
+fr-mode-leds u 1 seed=$croot/runs/fr-exclusive-solo-u-1/final-tree.tar.gz
+fr-tuning u 1 seed=$croot/runs/fr-mode-leds-u-1/final-tree.tar.gz
+fr-pan gs 1 seed=
+fr-exclusive-solo gs 1 seed=$croot/runs/fr-pan-gs-1/final-tree.tar.gz
+fr-mode-leds gs 1 seed=$croot/runs/fr-exclusive-solo-gs-1/final-tree.tar.gz
+fr-tuning gs 1 seed=$croot/runs/fr-mode-leds-gs-1/final-tree.tar.gz"
+check "chain check gets the earlier steps" "$(sed -n 3p "$tmp/chklog")" "$croot/runs/fr-mode-leds-u-1 $croot/runs/fr-pan-u-1 $croot/runs/fr-exclusive-solo-u-1"
+check "chain check on step 1 has no earlier steps" "$(sed -n 1p "$tmp/chklog")" "$croot/runs/fr-pan-u-1"
+# resume: step 2 of the u chain lost its score -> steps 2..4 of that chain are redone, the gs chain is skipped
+rm "$croot/runs/fr-exclusive-solo-u-1/score.json"; : >"$tmp/runlog"
+cenv $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
+check "chain resume redoes the rest of that chain only" "$(cut -d' ' -f1-3 "$tmp/runlog" | tr '\n' ';')" "fr-exclusive-solo u 1;fr-mode-leds u 1;fr-tuning u 1;"
+# a chain check with an error is redone without re-running the agent
+echo '{"error": "boom"}' >"$croot/runs/fr-tuning-gs-1/chain.json"; : >"$tmp/runlog"; : >"$tmp/chklog"
+cenv $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
+check "chain check redone after an error" "$(cat "$tmp/runlog")|$(cut -d' ' -f1 "$tmp/chklog")" "|$croot/runs/fr-tuning-gs-1"
+# Final review I2: step 2's tree changed under a complete step 3 (re-run interrupted before rescoring) -> steps 3..4 redone
+echo different >"$croot/runs/fr-exclusive-solo-gs-1/final-tree.tar.gz"; : >"$tmp/runlog"
+cenv $SH "$tmp/home/campaign.sh" >/dev/null 2>&1
+check "chain redoes steps seeded from a replaced tree" "$(cut -d' ' -f1-3 "$tmp/runlog" | tr '\n' ';')" "fr-mode-leds gs 1;fr-tuning gs 1;"
+# a chain whose validation is not all yes does not start
+printf 'patches_apply=no\n' >"$croot/chain-validation.txt"; : >"$tmp/runlog"
+cenv $SH "$tmp/home/campaign.sh" >/dev/null 2>&1; check "chain refuses an invalid chain" "$?" "1"
+check "chain refusal ran nothing" "$(cat "$tmp/runlog")" ""
+rm -rf "$tmp"
+
+# --- prepare-chain.sh (spec 2026-10-11 chained feature work §3)
+tmp=$(mktemp -d); proot=$tmp/root; mkdir -p "$proot/head/m/src" "$tmp/home/tasks/c1" "$tmp/home/tasks/c2" "$tmp/hsrc"
+cp "$ga/lib.sh" "$ga/prepare-chain.sh" "$ga/timeout.py" "$tmp/home/"
+cat >"$proot/head/mill" <<'MILL'
+#!/bin/sh
+echo "$*" >>"$FAKE_MILL_LOG"
+[ -n "${FAKE_MILL_FAIL:-}" ] && { echo "[error] m.test 1 tests failed:"; exit 1; }
+exit 0
+MILL
+chmod +x "$proot/head/mill"
+printf 'object A {\n  def f = 1\n}\n' >"$proot/head/m/src/A.scala"
+( cd "$proot/head" && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm head )
+echo '{"modules": {"m.test": true, "n.test": true}}' >"$proot/head-baseline.json"
+( cd "$tmp/hsrc" && echo spec >HSpec.scala && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm h )
+mkpatch() {  # <task> <old line> <new line>
+  w=$(mktemp -d); cp -R "$proot/head/." "$w/"; [ -n "${PREV:-}" ] && ( cd "$w" && git apply "$PREV" )
+  ( cd "$w" && git add -A && git -c user.name=t -c user.email=t@t commit -qm p >/dev/null 2>&1; sed -i.bak "s/$2/$3/" m/src/A.scala && rm m/src/A.scala.bak && git diff >"$tmp/home/tasks/$1/ref.patch" )
+  rm -rf "$w"
+  printf "TASK_MODULE='m.test'\nHIDDEN_SPEC='m/test/src/%sSpec.scala'\nREFERENCE_PATCH='ref.patch'\nFEATURE='f'\n" "$1" >"$tmp/home/tasks/$1/task.env"
+  mkdir -p "$proot/base/$1/hidden/m/test/src"; echo "object ${1}Spec" >"$proot/base/$1/hidden/m/test/src/${1}Spec.scala"
+}
+mkpatch c1 'def f = 1' 'def f = 2'
+PREV=$tmp/home/tasks/c1/ref.patch mkpatch c2 'def f = 2' 'def f = 3'
+printf '#!/bin/sh\necho "{\\"methods\\": 1, \\"total_mass\\": 1.0, \\"erosion\\": 0.0}"\n' >"$tmp/ero"; chmod +x "$tmp/ero"
+penv2() { env GA_HOME=$tmp/home GA_ROOT=$proot GA_HOLDOUT_SRC=$tmp/hsrc GA_HOLDOUT_COMMIT=HEAD GA_EROSION=$tmp/ero FAKE_MILL_LOG=$tmp/pmill.log "$@"; }
+penv2 $SH "$tmp/home/prepare-chain.sh" c1 c2 >/dev/null 2>&1; check "prepare-chain exit 0" "$?" "0"
+check "prepare-chain validation" "$(cat "$proot/chain-validation.txt")" "patches_apply=yes
+reference_passes_all=yes"
+check "prepare-chain reference erosion per step" "$(python3 -c 'import json,sys;print(" ".join(e["task"] for e in json.load(open(sys.argv[1]))))' "$proot/chain-reference-erosion.json")" "c1 c2"
+grep -q 'm.test + n.test' "$tmp/pmill.log" && grep -q 'holdout.test' "$tmp/pmill.log" && ok "prepare-chain runs all modules and the holdout" || bad "prepare-chain runs all modules and the holdout" "$(cat "$tmp/pmill.log")"
+check "prepare-chain leaves head untouched" "$(cat "$proot/head/m/src/A.scala" | sed -n 2p)" "  def f = 1"
+penv2 FAKE_MILL_FAIL=1 $SH "$tmp/home/prepare-chain.sh" c1 c2 >/dev/null 2>&1; check "prepare-chain failing tests exit 1" "$?" "1"
+check "prepare-chain failing tests recorded" "$(sed -n 2p "$proot/chain-validation.txt")" "reference_passes_all=no"
+penv2 $SH "$tmp/home/prepare-chain.sh" c2 c1 >/dev/null 2>&1; check "prepare-chain conflicting order exit 1" "$?" "1"
+check "prepare-chain conflicting order recorded" "$(sed -n 1p "$proot/chain-validation.txt")" "patches_apply=no"
+rm -rf "$tmp"
 
 echo "shell-test: $passed passed, $failed failed"
 [ "$failed" -eq 0 ]

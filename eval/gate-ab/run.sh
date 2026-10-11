@@ -9,7 +9,20 @@ base=$GA_ROOT/base/$task
 [ -d "$base/tree/.git" ] || ga_die "task $task not prepared (run prepare.sh $task)"
 rd=$GA_ROOT/runs/$id
 rm -rf "$rd"; mkdir -p "$rd"
-cp -R "$base/tree" "$rd/repo"
+if [ -n "${GA_SEED_TREE:-}" ]; then
+  # Chained runs (spec 2026-10-11 chained feature work): the previous step's final tree, re-based as a fresh repository.
+  [ -f "$GA_SEED_TREE" ] || ga_die "seed tree $GA_SEED_TREE missing"
+  tar -xzf "$GA_SEED_TREE" -C "$rd" || ga_die "unpack $GA_SEED_TREE"
+  [ -d "$rd/repo" ] || ga_die "seed tree $GA_SEED_TREE has no repo/"
+  # Final review I1: the previous step's gate state, caches and .claude stay behind; .dsh and .claude are the task base's.
+  rm -rf "$rd/repo/.git" "$rd/repo/.dsh" "$rd/repo/.claude"
+  for d in .dsh .claude; do [ ! -d "$base/tree/$d" ] || cp -R "$base/tree/$d" "$rd/repo/$d" || ga_die "restore $d from $base/tree"; done
+  ssha="\"$(ga_sha256 "$GA_SEED_TREE")\"" || ga_die "hash $GA_SEED_TREE"
+  ( cd "$rd/repo" && git init -q && git add -A && git -c user.name=gate-eval -c user.email=gate-eval@local -c commit.gpgsign=false commit -qm base ) ||
+    ga_die "seed tree: git init failed"
+else
+  cp -R "$base/tree" "$rd/repo"; ssha=null
+fi
 cp "$GA_HOME/tasks/$task/prompt.txt" "$rd/prompt.txt"
 mkdir -p "$rd/repo/.claude"
 cat > "$rd/repo/.mcp.json" <<'MCP'
@@ -51,7 +64,9 @@ pc=${GA_PRECOMPILE:-__.compile + __.test.compile + __.semanticDbData + scalaSema
 p0=$(date +%s)
 # shellcheck disable=SC2086
 ( cd "$rd/repo" && set -f && MILL_OUTPUT_DIR=$pout python3 "$GA_HOME/timeout.py" "${GA_PRECOMPILE_CAP:-1800}" -- \
-    ./mill --no-daemon -j 1 --ticker false --color false $pc ) > "$rd/precompile.log" 2>&1 || ga_die "precompile failed (see $rd/precompile.log)"
+    ./mill --no-daemon -j 1 --ticker false --color false $pc ) > "$rd/precompile.log" 2>&1 && pok=true || pok=false
+# Final review C1: a chained step whose inherited tree does not build still gets its agent (spec §2: the chain goes on).
+[ "$pok" = true ] || [ -n "${GA_SEED_TREE:-}" ] || ga_die "precompile failed (see $rd/precompile.log)"
 pcs=$(( $(date +%s) - p0 ))
 # Isolation: while the agent runs, base/ (hidden specs), head/ (the solution) and other runs are unreadable.
 modes=$rd/modes.txt; : > "$modes"
@@ -87,8 +102,8 @@ start=$(date +%s)
 rc=$?; end=$(date +%s)
 ga_restore
 to=false; [ "$rc" -eq 124 ] && to=true
-printf '{"run_id":"%s","task":"%s","arm":"%s","rep":%s,"start_epoch":%s,"end_epoch":%s,"exit_code":%s,"timed_out":%s,"precompile_seconds":%s,"gated_settings_sha256":%s}\n' \
-  "$id" "$task" "$arm" "$rep" "$start" "$end" "$rc" "$to" "$pcs" "$gsha" > "$rd/run.json"
+printf '{"run_id":"%s","task":"%s","arm":"%s","rep":%s,"start_epoch":%s,"end_epoch":%s,"exit_code":%s,"timed_out":%s,"precompile_seconds":%s,"precompile_ok":%s,"seed_sha256":%s,"gated_settings_sha256":%s}\n' \
+  "$id" "$task" "$arm" "$rep" "$start" "$end" "$rc" "$to" "$pcs" "$pok" "$ssha" "$gsha" > "$rd/run.json"
 ( cd "$rd/repo" && git add -A -N . && git diff base -- . ':!out' ':!out-agent' ':!out-holdout' > "$rd/final.diff" )
 tar -czf "$rd/final-tree.tar.gz" -C "$rd" --exclude 'repo/out' --exclude 'repo/out-agent' --exclude 'repo/out-holdout' repo
 echo "run $id: exit $rc, $((end-start)) s (precompile $pcs s)"

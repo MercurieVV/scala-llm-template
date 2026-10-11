@@ -27,10 +27,14 @@ ga_install_engine() {
   printf '# gate-eval arm\nmode\t%s\n' "$2" > "$1/.dsh/policy/turn-end.tsv"
   grep -q '^\.dsh/policy/turn-end\.tsv	' "$1/.dsh/frozen-paths" 2>/dev/null ||
     printf '.dsh/policy/turn-end.tsv\tthe turn-end mode is the human'"'"'s\n' >> "$1/.dsh/frozen-paths"
-  ( cd "$1" && git add .dsh && git -c user.name=gate-eval -c user.email=gate-eval@local -c commit.gpgsign=false commit -qm "engine, turn-end mode $2" ) ||
+  ( cd "$1" && git add .dsh && git -c user.name=gate-eval -c user.email=gate-eval@local -c commit.gpgsign=false commit -qm "engine, turn-end mode $2" --allow-empty ) ||
     ga_die "commit engine in $1 failed"
 }
 
+
+ga_sha256() {  # <file>
+  python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"
+}
 
 ga_run_id() {
   case $2 in g|u|t|gf|gs|p) ;; *) ga_die "arm must be g, u, t, gf, gs or p, got $2" ;; esac

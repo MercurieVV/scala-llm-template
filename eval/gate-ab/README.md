@@ -217,3 +217,17 @@ GA_ROOT=$R/test GA_ARMS="g u" GA_REPS="1 2" GA_TASKS="<kept>" sh eval/gate-ab/ca
 
 The test root links `base` and `head` from `$R`; its `u` runs are the fresh ungated runs (screen runs are not
 counted, they were selected for failing).
+
+## Chained feature work (spec 2026-10-11)
+
+Four feature requests land one after another on the same tree: `GA_CHAIN="fr-pan fr-exclusive-solo fr-mode-leds fr-tuning"`.
+Step k starts from step k-1's `final-tree.tar.gz` (`GA_SEED_TREE`), as a fresh repository; a failed step does not stop the chain.
+After each step `chaincheck.py` re-runs every earlier step's hidden spec on the tree (`chain.json`: pass / fail / na) and records
+the erosion figure (`erosion.py` + `erosion.scala`: share of CC x sqrt(SLOC) mass in methods with CC > 10, changed main files).
+`prepare-chain.sh` validates the chain on HEAD + the reference patches and writes the reference erosion line.
+Re-running a step redoes the rest of its chain. `chain_report.py <root> <task>...` prints the table and the verdicts.
+
+    GA_ROOT=~/gate-eval-chain sh warm-cache.sh
+    GA_ROOT=~/gate-eval-chain python3 score.py --baseline
+    GA_ROOT=~/gate-eval-chain GA_CHAIN="fr-pan fr-exclusive-solo fr-mode-leds fr-tuning" GA_ARMS="u gs" GA_REPS="1 2" sh campaign.sh
+    python3 chain_report.py ~/gate-eval-chain fr-pan fr-exclusive-solo fr-mode-leds fr-tuning
