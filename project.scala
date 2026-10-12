@@ -8,7 +8,6 @@
 //> using exclude mdoc-docs
 //> using exclude website
 //> using exclude kit
-//> using exclude eval
 //> using resourceDirs app/resources
 //> using dep ch.qos.logback:logback-classic:1.5.38
 //> using dep org.slf4j:slf4j-api:2.0.18

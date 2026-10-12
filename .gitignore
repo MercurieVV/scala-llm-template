@@ -120,5 +120,3 @@ project/metals.sbt
 /.scala-build/ide-launcher-options.json
 /.scala-build/ide-options-v2.json
 
-# gate-ab evaluation harness
-eval/gate-ab/**/__pycache__/

@@ -76,3 +76,9 @@ even when a step reported `failed`, so check the JSON's per-step `status` on std
 
 The procedure that follows the install — read the ground and get the module list approved, baseline the gate,
 reshape one module through the four skills, record, repeat to the exit condition — is [`kit/apply.md`](kit/apply.md).
+
+## Agent evaluation
+
+The gate A/B harness (`eval/gate-ab`, sh + python) was retired on 2026-10-12. Its successor, generalized to any
+agent and ported to scala-cli, is `harness/` in [scala-coding-guidelines](https://github.com/MercurieVV/scala-coding-guidelines);
+gate-ab's last version is at commit `98f5652` of this repository.
