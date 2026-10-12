@@ -62,6 +62,7 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
       "sdkmanrc" -> "no",
       "logging" -> "no",
       "scoverage" -> "no",
+      "kit" -> "no",
       "config-loader" -> "no",
       "docker" -> "no"
     )
@@ -251,6 +252,7 @@ class SetupGenerationSpec extends munit.ScalaCheckSuite:
     "sdkmanrc" -> "no",
     "logging" -> "no",
     "scoverage" -> "no",
+    "kit" -> "no",
     "config-loader" -> "no",
     "docker" -> "no"
   )
